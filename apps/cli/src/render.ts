@@ -126,7 +126,7 @@ export class EventRenderer {
       case "input.requested":
         this.progress(c.yellow(c.bold("? Needs your input")) + c.dim(` (request ${shortId(e.payload.request_id)})`));
         for (const l of promptLines(e.payload.prompt)) this.progress(`  ${l}`);
-        this.progress(c.dim(`  ${answerHint(e.payload.prompt, this.opts.role)}`));
+        this.progress(c.dim(`  ${answerHint(e.payload.prompt, this.opts.role, e.payload.request_id)}`));
         return;
       case "input.resolved": {
         const p = e.payload;
@@ -191,8 +191,14 @@ export function promptLines(p: InputPrompt): string[] {
   }
 }
 
-/** Where a prompt can be answered from (INPUT_ANSWER_RIGHTS). The CLI cannot answer anything yet. */
-export function answerHint(p: InputPrompt, role: CallerRole): string {
+/** Whether this CLI can answer the prompt: "Did this happen?" in a development build (INPUT_ANSWER_RIGHTS). */
+export function cliAnswers(p: InputPrompt, role: CallerRole): boolean {
+  return p.type === "ambiguous_tool_call" && mayAnswer(role, p.type);
+}
+
+/** Where a prompt can be answered from (INPUT_ANSWER_RIGHTS). */
+export function answerHint(p: InputPrompt, role: CallerRole, requestId: string): string {
+  if (cliAnswers(p, role)) return `Answer it in the Homerun app, or here: homerun answer ${shortId(requestId)} --completed | --not-run`;
   if (!mayAnswer(role, p.type)) return "Answer it in the Homerun app; the CLI may not answer this kind of request.";
   return "Answer it in the Homerun app. Answering from the CLI arrives in a later version.";
 }

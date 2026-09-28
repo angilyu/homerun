@@ -1,11 +1,11 @@
 import { openSync, closeSync, writeSync } from "node:fs";
 import {
   ACTIVE_RUN_STATES,
-  INPUT_ANSWER_RIGHTS,
   RPC_ERROR,
   RunState,
   TaskKind,
   upgradeSpec,
+  type CallerRole,
   type InputRequest,
   type Run,
   type TaskSpec,
@@ -17,7 +17,7 @@ import { readAll, type Ctx } from "../context";
 import { CliError, EXIT, usageError } from "../exit";
 import { ago, oneLine, shortId, table, truncate, usd } from "../format";
 import { allThreadIds, isFullId, matchPrefix, resolveRun, resolveTask, resolveThread } from "../ids";
-import { EventRenderer, promptLines } from "../render";
+import { cliAnswers, EventRenderer, promptLines } from "../render";
 
 export async function status(x: Ctx, socketPath: string): Promise<number> {
   const { c, o } = x;
@@ -268,9 +268,9 @@ export async function tasksCreate(x: Ctx): Promise<number> {
 
 // ---------------------------------------------------------------- input
 
-/** Where a request can be answered, from INPUT_ANSWER_RIGHTS: the release CLI answers questions only. */
-function answerableFrom(req: InputRequest): string {
-  return INPUT_ANSWER_RIGHTS.cli.includes(req.prompt.type) ? "app, cli" : "app";
+/** Where a request can be answered from this CLI's role (INPUT_ANSWER_RIGHTS). */
+function answerableFrom(req: InputRequest, role: CallerRole): string {
+  return cliAnswers(req.prompt, role) ? "app, cli" : "app";
 }
 
 export async function inputList(x: Ctx): Promise<number> {
@@ -285,10 +285,43 @@ export async function inputList(x: Ctx): Promise<number> {
   const k = o.c;
   const now = Date.now();
   const rows = [["REQUEST", "RUN", "ASKED", "ANSWER IN", "WHAT"].map((h) => k.dim(h))];
-  for (const req of r.requests) rows.push([shortId(req.request_id), shortId(req.run_id), ago(req.requested_at, now), answerableFrom(req), truncate(promptLines(req.prompt)[0] ?? "", 80)]);
+  for (const req of r.requests) rows.push([shortId(req.request_id), shortId(req.run_id), ago(req.requested_at, now), answerableFrom(req, x.role), truncate(promptLines(req.prompt)[0] ?? "", 80)]);
   o.out(table(rows));
-  o.note(k.dim("The CLI cannot answer yet; answer in the Homerun app."));
+  if (r.requests.some((req) => cliAnswers(req.prompt, x.role))) o.note(k.dim('Answer "Did this happen?" with: homerun answer REQUEST --completed | --not-run'));
+  if (r.requests.some((req) => !cliAnswers(req.prompt, x.role))) o.note(k.dim("Answer the others in the Homerun app."));
   return EXIT.OK;
+}
+
+/**
+ * `answer REQUEST --completed | --not-run`: the user's answer to "Did this happen?" (§5.4). The
+ * runtime checks authority: only the development CLI (cli_dev) may give it.
+ */
+export async function answer(x: Ctx): Promise<number> {
+  const { c, o, values } = x;
+  const completed = values.completed === true;
+  const notRun = values["not-run"] === true;
+  if (completed === notRun) throw usageError("give exactly one of --completed or --not-run", "usage: homerun answer REQUEST (--completed | --not-run)");
+  const arg = x.positionals[0]!;
+  const { requests } = await c.call("input.list_pending", {});
+  const request_id = matchPrefix("pending request", arg, requests.map((r) => r.request_id));
+  const req = requests.find((r) => r.request_id === request_id);
+  if (req && req.prompt.type !== "ambiguous_tool_call") throw new CliError("The CLI answers only \"Did this happen?\" so far; answer this one in the Homerun app.", EXIT.ERROR);
+  const outcome = completed ? "completed" : "not_run";
+  let r;
+  try {
+    r = await c.call("input.answer", { request_id: request_id as never, response: { type: "ambiguous_tool_call", outcome }, via: "app" });
+  } catch (e) {
+    if (e instanceof RpcCallError && e.code === RPC_ERROR.NOT_FOUND) throw new CliError(`no input request ${shortId(request_id)}`, EXIT.ERROR);
+    if (e instanceof RpcCallError && e.code === RPC_ERROR.AUTHORITY_INSUFFICIENT) throw new CliError(`${e.message}: answer it in the Homerun app`, EXIT.NOPERM);
+    throw e;
+  }
+  if (o.json) o.value(r);
+  if (r.status === "applied") {
+    if (!o.json) o.note(outcome === "completed" ? "Recorded: the call completed. The run resumes and will not run it again." : "Recorded: the call did not run. The run resumes and may run it again.");
+    return EXIT.OK;
+  }
+  if (!o.json) o.note(`Already ${r.state}${r.answered_by ? ` by device ${shortId(r.answered_by)}` : ""}; this answer was not used.`);
+  return EXIT.ERROR;
 }
 
 // ---------------------------------------------------------------- blobs
