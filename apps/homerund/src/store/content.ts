@@ -22,9 +22,9 @@ export function toContent(store: Store, value: unknown, now = Date.now()): Conte
   const text = typeof v === "string" ? v : JSON.stringify(v);
   const bytes = Buffer.from(text, "utf8");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  store.db
-    .query("INSERT OR IGNORE INTO blobs (sha256, bytes, size, created_at, expires_at) VALUES (?, ?, ?, ?, NULL)")
-    .run(sha256, bytes, bytes.length, now);
+  store.tx(() =>
+    store.db.query("INSERT OR IGNORE INTO blobs (sha256, bytes, size, created_at, expires_at) VALUES (?, ?, ?, ?, NULL)").run(sha256, bytes, bytes.length, now),
+  );
   return Content.parse({ kind: "blob", sha256, size: bytes.length, preview: preview(text), expired: false });
 }
 
