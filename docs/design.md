@@ -10,18 +10,18 @@ that you control from anywhere.*
 > **Changes from milestone 0.** The Agent SDK and packaging spike
 > ([results](spike-results.md), entries 1–25 of its
 > [Design impact](spike-results.md#design-impact)) revised these sections:
-> §5.1 (process tree, `claude` signature, process groups, secrets from the
-> shell), §5.2 (socket path fallback, `secrets.set`), §5.3 (SQLite store as a
+> §4 (the shell holds the keychain), §5.1 (process tree, `claude` signature,
+> process groups, secrets from the shell), §5.2 (socket path fallback,
+> `secrets.set` and `secrets.persist`, the CLI's own token), §5.3 (SQLite store as a
 > mirror of a disposable local cache, isolation list: clean `/bin/bash`,
 > background tasks off, built-in skills), §5.4 (resume procedure for ambiguous
 > calls), §5.5 (Node and `uv` as on-demand components, registries, CPython
 > pre-fetch), §5.6 (`defer` with parallel tool calls, idempotent decisions),
-> §6 (`runs.claude_pid`, `sdk_transcripts.uuid`), §11 (hybrid signing,
-> entitlements, keychain owned by the shell), §14 (install size, components in
-> updates), §16.1 (results per item) and §16.2 (SDK upgrade tests).
-> Not yet updated: §4, §9.6 and §10.4 still describe the runtime holding
-> keychain items. Read them with §11: the shell holds every secret and hands it
-> to the runtime.
+> §6 (`runs.claude_pid`, `sdk_transcripts.uuid`), §9.6 (the pairing key is
+> stored by the shell), §10.4 (the refresh token is stored by the shell),
+> §11 (hybrid signing, entitlements, keychain owned by the shell), §14 (install
+> size, components in updates), §16.1 (results per item) and §16.2 (SDK upgrade
+> tests).
 
 ---
 
@@ -205,6 +205,7 @@ touching the scheduler, storage, protocol, or clients.
 │  │  │ Shell (Rust)  │──supervises──►│ homerund — runtime process  │  │  │
 │  │  │ tray, login   │◄─── socket ──►│ Claude SDK · scheduler      │  │  │
 │  │  │ item, updater │ launch token  │ tools · storage · relay     │  │  │
+│  │  │ keychain      │ secrets.set   │                             │  │  │
 │  │  └───────▲───────┘               └──────────────┬──────────────┘  │  │
 │  │          │ Tauri commands                       │                 │  │
 │  │  ┌───────┴───────┐ (no socket access)           │                 │  │
@@ -214,9 +215,10 @@ touching the scheduler, storage, protocol, or clients.
 │  │  └───────────────┘                              │                 │  │
 │  └─────────────────────────────────────────────────┼─────────────────┘  │
 │                                                    │                    │
-│   CLI ◄──── same socket · keychain token ──────────┤                    │
+│   CLI ◄── same socket · token in ──────────────────┤                    │
+│           CLI's own keychain item                  │                    │
 │                                                    │                    │
-│   SQLite · MCP servers (children) · Keychain ◄─────┘                    │
+│   SQLite · MCP servers (children) ◄────────────────┘                    │
 │                                                                         │
 │                          ▲ outbound WSS only                            │
 └──────────────────────────┼──────────────────────────────────────────────┘
@@ -241,7 +243,8 @@ One desktop install, three hosted-or-remote surfaces:
 
 1. **Homerun.app** — the single desktop application. Inside it:
    - **Shell** (Rust, Tauri) — menu-bar / tray presence, login item, window
-     management, updater. Spawns and supervises the runtime.
+     management, updater, and the keychain (§11). Spawns and supervises the
+     runtime, and hands it secrets.
    - **`homerund`** — the runtime, a child process of the app. Owns everything
      that matters: scheduling, storage, tools, the agent loop, and the relay
      connection.
@@ -351,7 +354,7 @@ LaunchAgent without code changes.
 | Consumer | Transport |
 |---|---|
 | Desktop UI | Webview → Tauri commands → Rust shell → local socket. The webview never touches the socket. |
-| CLI | Local socket, with a keychain-stored token |
+| CLI | Local socket, with a token in the CLI's own keychain item |
 | iOS, anywhere | Outbound WSS to the relay; E2E encrypted frames (§9.4) |
 
 The runtime **never opens an inbound listener reachable from the internet** (§9.2).
@@ -383,15 +386,31 @@ do not stop same-user processes. Every local connection therefore authenticates.
   key is normally present. A headless runtime (the escape hatch in §5.1) has no
   shell; there, runs that need the key wait in `waiting_input` with *"Open
   Homerun to unlock"*.
+- **The runtime writes secrets back through the shell.** Some secrets are
+  created or changed by the runtime: the device keypair (§9.6) and rotated
+  refresh tokens (§10.4). It sends them to the shell with a `secrets.persist`
+  request, allowed only on the shell's connection. The shell stores the value
+  in the keychain and acknowledges. Until the acknowledgement arrives, the value
+  is *pending*:
+  - The runtime keeps a pending value in memory and uses it. It retries
+    `secrets.persist` when the shell reconnects. A `secrets.set` from the shell
+    never overwrites a newer pending value.
+  - If the runtime restarts before a pending refresh token is persisted, the
+    shell still holds the old token, which rotation has invalidated. The
+    runtime then falls back to a fresh sign-in (§10.4), and remote access is
+    paused until the user signs in again.
+  - A device keypair is never used for pairing until the shell has confirmed
+    storing it.
 - **The webview has no socket access.** It calls Tauri commands; the shell
   forwards an allowlisted set of methods to the runtime. A compromised webview
   can do only what the UI can do, and approvals are still enforced by the
   runtime.
 - **The CLI is approved once.** On first use, `homerun` asks the app for
   access. The app shows *"Allow the Homerun CLI to control your agents?"*. On
-  approval, the runtime issues a CLI token, stored in the keychain, where macOS
-  ties access to the CLI's code signature. The token can be revoked in
-  settings.
+  approval, the runtime issues a CLI token. The **CLI** stores it in its own
+  keychain item, where macOS ties access to the CLI's code signature. The
+  runtime keeps only what it needs to check the token, and never touches the
+  keychain. The token can be revoked in settings.
 - **Unauthenticated connections** get nothing: they are closed after the
   handshake times out.
 
@@ -1445,8 +1464,10 @@ carries the desktop's key directly, so it skips the matching-code comparison of
 remote device linking (§10.5). Both methods produce the same pinned keys, and
 both require signing in, because all phone traffic goes through the relay.
 
-1. The runtime generates a static keypair at install; the private key goes in
-   the OS keychain.
+1. The runtime generates a static keypair at install. It hands the private key
+   to the shell with `secrets.persist`, and the shell stores it in the keychain
+   (§11). At every launch the shell restores it to the runtime with
+   `secrets.set` (§5.2).
 2. Desktop displays a QR code: `{device_id, static public key, one-time pairing
    code}`.
 3. Phone scans, completes the handshake, and proves possession of the pairing
@@ -1657,9 +1678,14 @@ configuration change plus a user migration, not a rewrite.
 ### 10.4 Sign-in flows
 
 - **Desktop:** the *runtime* (not the UI) runs Authorization Code + PKCE through
-  the **system browser** with a loopback redirect (RFC 8252). The refresh token
-  lives in the OS keychain, owned by the runtime — so remote access keeps working
-  with the window closed.
+  the **system browser** with a loopback redirect (RFC 8252). The runtime keeps
+  the refresh token in memory; the **shell** persists it in the keychain (§11)
+  and restores it with `secrets.set` at every launch. Remote access keeps
+  working with the window closed, because the shell stays running in the tray.
+  When the provider rotates the refresh token, the runtime writes the new one
+  back with `secrets.persist`. If the shell is not connected at that moment,
+  the §5.2 rules apply: hold it in memory and retry on reconnect, and fall back
+  to a fresh sign-in if the runtime restarts first.
 - **iOS:** `ASWebAuthenticationSession` + PKCE; tokens in the iOS Keychain.
 - **Relay:** verifies short-lived access tokens against the provider's JWKS on
   connect. No session state on our side.
@@ -1811,7 +1837,8 @@ What it takes to put this in other people's hands.
     update that changes a signature prompts *"Homerun wants to access your
     keychain"*.
   - The runtime never calls Security.framework. The shell hands it secrets over
-    the authenticated channel (`secrets.set`, §5.2).
+    the authenticated channel (`secrets.set`, §5.2), and stores the ones the
+    runtime creates or rotates (`secrets.persist`).
   - **Keychain reads never block.** A read from the legacy keychain can show a
     modal dialog and block the calling thread, even when told not to. The shell
     reads off the main thread with a timeout, and on timeout shows *"Keychain
