@@ -23,6 +23,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Packages resolve from registry.npmjs.org only
+        run: scripts/check-registry.sh
       # Root devDependency `bun` pins the Bun version used by `bun test`.
       - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/core..." --filter "@homerun/homerund"
       - name: Typecheck
@@ -31,3 +33,29 @@ jobs:
         run: pnpm --filter @homerun/core test
       - name: Generated JSON Schema and vectors are up to date
         run: pnpm --filter @homerun/core schema:check
+
+  homerund:
+    name: apps/homerund
+    # Linux: the runtime's process-group, ps and socket code is POSIX, and the SDK ships a
+    # linux-x64 claude (in the lockfile), so replay runs the real bundled claude here too.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/spike-sdk" --filter "@homerun/spike-homerund-m0"
+      - name: No secrets in the repository
+        run: scripts/check-no-secrets.sh
+      - name: Typecheck (homerund and the milestone 0 spikes it replaced)
+        run: pnpm --filter @homerun/homerund --filter @homerun/spike-sdk --filter @homerun/spike-homerund-m0 typecheck
+      - name: Unit tests
+        run: pnpm --filter @homerun/homerund test:unit
+      # Recorded cassettes, real bundled claude, no API key and no network to the API (§16.2).
+      - name: Replay tests
+        run: pnpm --filter @homerun/homerund test:replay
+        env:
+          ANTHROPIC_API_KEY: ""

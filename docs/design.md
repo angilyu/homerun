@@ -23,6 +23,19 @@ that you control from anywhere.*
 > size, components in updates), §16.1 (results per item) and §16.2 (SDK upgrade
 > tests).
 
+> **Changes from milestone 2.** The bundle identifier is `com.angilyu.homerun`,
+> replacing the milestone 0 placeholder. The iOS app will use
+> `com.angilyu.homerun.ios`, and the shared keychain access group is
+> `<TEAMID>.com.angilyu.homerun.shared` (§11). No migration is needed,
+> since there were no users.
+>
+> The data directory is `~/Library/Application Support/Homerun/`, named separately from the
+> bundle identifier. Under the milestone 0 placeholder the folder ended in `.app`, macOS treated
+> it as an app bundle, and once npm had written a native `.node` add-on into it, XProtect / App
+> Management intermittently denied Homerun's own writes with EPERM (spike entry 26: 5 of 10 runs
+> lost writes, against 0 of 10 with `…/Homerun`). The runtime and the shell share it; logs stay
+> in its `logs/` folder.
+
 ---
 
 ## 1. Purpose
@@ -637,7 +650,7 @@ shows a one-time *"Downloading tools (about 60 MB)"* step.
   certificate leaf[subject.OU] = "<TEAMID>" and cdhash H"<cdhash>"'`, or
   `SecStaticCodeCheckValidity` with that requirement); remove any
   `com.apple.quarantine` attribute; then rename the directory atomically to
-  `~/Library/Application Support/dev.homerun.app/components/<name>/<version>/`,
+  `~/Library/Application Support/Homerun/components/<name>/<version>/`,
   owned by the user with mode `0700`. The previous version is kept until the new
   one passes a smoke test (`node -e`, `uv --version`).
 - **Launched** only by the hardened runtime, by absolute path. Never on the
@@ -1832,9 +1845,9 @@ What it takes to put this in other people's hands.
   such as the runtime cannot carry.
   - The shell, the bundle's main executable, carries the app's
     `embedded.provisionprofile` and the `keychain-access-groups` entitlement.
-    Items live in the data-protection keychain, in a shared access group tied
-    to our Team ID rather than to one binary's code signature. Otherwise an
-    update that changes a signature prompts *"Homerun wants to access your
+    Items live in the data-protection keychain, in a shared access group
+    (`<TEAMID>.com.angilyu.homerun.shared`) tied to our Team ID rather than to
+    one binary's code signature. Otherwise an update that changes a signature prompts *"Homerun wants to access your
     keychain"*.
   - The runtime never calls Security.framework. The shell hands it secrets over
     the authenticated channel (`secrets.set`, §5.2), and stores the ones the
@@ -1851,7 +1864,7 @@ What it takes to put this in other people's hands.
   contains a symlink (for example `/tmp`, which links to `/private/tmp`). A
   crash during launch leaves AppKit's *"reopen windows?"* alert, which blocks
   the next unattended launch, so test harnesses clear
-  `~/Library/Saved Application State/dev.homerun.app.savedState`.
+  `~/Library/Saved Application State/com.angilyu.homerun.savedState`.
 
 **Branding (all platforms):** "Homerun, powered by Claude" is allowed. "Claude
 Code", and visuals imitating it, are not (§3.4).

@@ -5,6 +5,11 @@ the measurements it asks for, and the design changes the results imply. `design.
 **not** edited here; every proposed change is listed in [Design impact](#design-impact) with the
 section it touches.
 
+> **Identifier renamed.** These results were recorded under the bundle identifier `dev.homerun.app`
+> (keychain group `TEAMID.dev.homerun.shared`, data dir `~/Library/Application Support/dev.homerun.app`).
+> It is now `com.angilyu.homerun` (see the "Changes from milestone 2" note in `design.md`). The old
+> identifier is left as-is below because it is what the evidence was captured with.
+
 Environment: macOS 26.7 on Apple silicon (arm64). Bun 1.4.2 (pinned). `@anthropic-ai/claude-agent-sdk` 0.3.278,
 bundled `claude` 2.1.278. Tauri 2 (CLI 2.11.5). Node 24.21.0, uv 0.12.19.
 
@@ -146,7 +151,8 @@ HOMERUN_SPIKE_NS=real-haiku-bash-nobg HOMERUN_MODEL=claude-haiku-4-5 HOMERUN_CHI
 ## Repository layout
 
 ```
-apps/homerund/            TypeScript runtime, compiled with `bun build --compile`
+spikes/homerund-m0/       the milestone 0 spike runtime, compiled with `bun build --compile`
+                          (was apps/homerund; moved in milestone 2, when apps/homerund became the real runtime)
   src/main.ts             serve (socket + stdin token), run supervisor, keychain, selftests
   src/agent/run.ts        query() wrapper: isolation options, env scrubbing, hooks
   src/store/              SQLite schema (§6 subset) + SessionStore adapter on sdk_transcripts
@@ -216,7 +222,7 @@ Caveats (not leaks of `~/.claude`, but relevant to §5.3):
 
 **Command:** `bun run spikes/sdk/src/orchestrate.ts 2` → `.spike/results/item2.json`.
 
-The adapter is [`sqlite-session-store.ts`](../apps/homerund/src/store/sqlite-session-store.ts): `append`, `load`,
+The adapter is [`sqlite-session-store.ts`](../spikes/homerund-m0/src/store/sqlite-session-store.ts): `append`, `load`,
 `listSessions`, `listSessionSummaries`, `delete`, `listSubkeys` on the §6 `sdk_transcripts` table, plus a `uuid`
 column with a unique index (F2).
 

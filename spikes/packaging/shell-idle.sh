@@ -12,7 +12,7 @@ rm -rf "$W" && mkdir -p "$W/d"
 ditto "$SRC" "$W/Homerun.app"
 wk() { ps -axo pid=,comm= | awk '/com\.apple\.WebKit\./{print $1}' | sort -n; }
 wk > "$W/wk.before"
-rm -rf "$HOME/Library/Saved Application State/dev.homerun.app.savedState"
+rm -rf "$HOME/Library/Saved Application State/com.angilyu.homerun.savedState"
 env -i HOME="$HOME" USER="$USER" TMPDIR="$TMPDIR" PATH=/usr/bin:/bin HOMERUN_DATA_DIR="$W/d" "$W/Homerun.app/Contents/MacOS/homerun" > "$W/stdout" 2>&1 &
 PID=$!
 sleep 20

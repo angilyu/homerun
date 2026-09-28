@@ -9,7 +9,7 @@
  */
 import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
-import { startRun, InputQueue, PROJECT_DIR_NAME } from "../../../apps/homerund/src/agent/run";
+import { startRun, InputQueue, PROJECT_DIR_NAME } from "../../homerund-m0/src/agent/run";
 import { emit, openState, recordingHooks, summarize, type Policy } from "./common";
 
 const { positionals, values: a } = parseArgs({

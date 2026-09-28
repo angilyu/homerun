@@ -10,7 +10,7 @@ for v in HOMERUN_NPM_REGISTRY HOMERUN_UV_INDEX_URL HOMERUN_SELFTEST_NPX_PKG ANTH
   [[ -n "$val" ]] && ENVV+=("$v=$val")
 done
 # A crashed earlier launch leaves AppKit crash-restore state that shows a blocking modal alert.
-rm -rf "$HOME/Library/Saved Application State/dev.homerun.app.savedState"
+rm -rf "$HOME/Library/Saved Application State/com.angilyu.homerun.savedState"
 env -i "${ENVV[@]}" "$APP/Contents/MacOS/homerun" --autotest "$WHAT" > "$D.stdout" 2>&1 &
 PID=$!
 for ((i = 0; i < TIMEOUT; i++)); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
