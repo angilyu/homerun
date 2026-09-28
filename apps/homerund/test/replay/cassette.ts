@@ -143,7 +143,8 @@ export function loadCassette(path: string): Cassette | null {
 }
 
 /** Known dummy keys that may appear in the repository. Anything else shaped like a key is a leak. */
-export const ALLOWED_KEYS = ["sk-ant-replay-not-a-key", "sk-ant-mock-not-a-real-key"];
+/** Kept in sync with scripts/check-no-secrets.sh. */
+export const ALLOWED_KEYS = ["sk-ant-replay-not-a-key", "sk-ant-mock-not-a-real-key", "sk-ant-mock-not-a-key", "sk-ant-TEST-not-a-real-key"];
 export const KEY_PATTERN = /sk-ant-[A-Za-z0-9_-]{8,}/g;
 
 /** Scrub secrets and machine-specific strings from everything written to a cassette. */
