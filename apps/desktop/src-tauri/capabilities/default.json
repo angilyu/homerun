@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Webview gets only Homerun's own allowlisted commands; no shell, fs, or socket access.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
