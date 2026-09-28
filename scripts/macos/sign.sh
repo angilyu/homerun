@@ -11,9 +11,9 @@
 #                   Developer ID signature on claude/node/uv untouched) | hybrid (recommended:
 #                   keep Anthropic's signature on claude, re-sign node and uv with ours)
 #   TEAM_ID + PROVISIONING_PROFILE
-#                   (Developer ID only) add keychain-access-groups "<TEAM_ID>.com.angilyu.homerun.shared"
-#                   to homerund — see docs/spike-results.md item 7 for why this also needs
-#                   homerund wrapped in its own nested bundle before it can work.
+#                   (Developer ID only) embed the profile and give the shell (the bundle's main
+#                   executable) keychain-access-groups "<TEAM_ID>.com.angilyu.homerun.shared".
+#                   The shell owns all keychain access (design §11); homerund gets none.
 #
 # Order: nested code first (Resources Mach-Os, then Contents/MacOS helpers), the bundle last.
 # Never uses --deep for signing (Apple: --deep is for verification only).
@@ -66,21 +66,27 @@ for h in claude node uv; do
   fi
 done
 
-# 3. Our runtime.
-HOMERUND_ENT="$ENT/homerund.plist"
+# 3. Our runtime. Plain entitlements: the runtime never calls Security.framework (design §11, entry 15).
+sign "$MACOS/homerund" "com.angilyu.homerun.homerund" "$ENT/homerund.plist"
+
+# 4. The bundle (signs the shell's main executable and seals Resources). No exceptions on the shell.
+# With TEAM_ID + PROVISIONING_PROFILE the shell gets the data-protection keychain group. These are
+# restricted entitlements: without a matching embedded profile AMFI kills the app at launch.
+SHELL_ENT="$ENT/shell.plist"
 if [[ -n "${TEAM_ID:-}" ]]; then
-  HOMERUND_ENT="$(mktemp -t homerund-ent).plist"
-  cp "$ENT/homerund.plist" "$HOMERUND_ENT"
+  [[ -f "${PROVISIONING_PROFILE:-}" ]] || { echo "TEAM_ID needs PROVISIONING_PROFILE (a Developer ID profile)" >&2; exit 1; }
+  PROF="$(mktemp -t hr-profile).plist"; security cms -D -i "$PROVISIONING_PROFILE" > "$PROF"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$PROF")" == "$TEAM_ID.com.angilyu.homerun" ]] \
+    || { echo "profile is not for $TEAM_ID.com.angilyu.homerun" >&2; exit 1; }
+  SHELL_ENT="$(mktemp -t shell-ent).plist"
+  cp "$ENT/shell.plist" "$SHELL_ENT"
   /usr/libexec/PlistBuddy -c "Add :keychain-access-groups array" \
     -c "Add :keychain-access-groups:0 string $TEAM_ID.com.angilyu.homerun.shared" \
     -c "Add :com.apple.application-identifier string $TEAM_ID.com.angilyu.homerun" \
-    -c "Add :com.apple.developer.team-identifier string $TEAM_ID" "$HOMERUND_ENT"
-  [[ -n "${PROVISIONING_PROFILE:-}" ]] && cp "$PROVISIONING_PROFILE" "$APP/Contents/embedded.provisionprofile"
+    -c "Add :com.apple.developer.team-identifier string $TEAM_ID" "$SHELL_ENT"
+  cp "$PROVISIONING_PROFILE" "$APP/Contents/embedded.provisionprofile"
 fi
-sign "$MACOS/homerund" "com.angilyu.homerun.homerund" "$HOMERUND_ENT"
-
-# 4. The bundle (signs the shell's main executable and seals Resources). No exceptions on the shell.
-codesign --force --sign "$IDENTITY" --options runtime "${TS[@]}" --entitlements "$ENT/shell.plist" "$APP"
+codesign --force --sign "$IDENTITY" --options runtime "${TS[@]}" --entitlements "$SHELL_ENT" "$APP"
 
 codesign --verify --deep --strict --verbose=2 "$APP"
 echo "signed $APP (identity=$IDENTITY third_party=$THIRD_PARTY)"
