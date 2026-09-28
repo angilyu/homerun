@@ -45,11 +45,11 @@ bundled `claude` 2.1.278. Tauri 2 (CLI 2.11.5). Node 24.21.0, uv 0.12.19.
 | 3 | `defer` from `PreToolUse`; process exits; resume hours later with the answer | **PASS (mock API) for defer → exit → resume** (Bash approval and `AskUserQuestion`), 6/6 immediate resumes. **PASS (real API)** on Haiku and Sonnet 5 (immediate resume); the F3 mitigation also passes on both. **Long gap: see [item 3](#3-defer-and-resume-later)** (**PASS (mock API) after a 189-minute gap**: bash approval, `AskUserQuestion` and the parallel batch all resumed). Needs **design changes** in §5.6 (F3, F6) | `stop_reason: tool_deferred`, exit code 0, no `claude` left running, victim file untouched until approval |
 | 4 | Kill mid-tool-call; resume; ambiguous call detected; "did / did not happen" injected | **PASS (mock API)** · **PASS (real API, Haiku and Sonnet 5)**, both **with a required design change** to §5.4. The real models confirm F7, and Haiku adds F10 (background Bash) | Detection works from `thread_events` and from the store. Three injection methods work. **But `claude` auto-answers the dangling call as "interrupted" on resume, and a naive resume re-ran the side effect** (F7). The tool process also outlives both a runtime and a `claude` SIGKILL (F8) |
 | 5 | Steering message mid-run is seen at the next step | **PASS (mock API)** · **PASS (real API, Haiku)** | Pushed while Bash ran; delivered inside the next `tool_result` as a system-reminder; the model acted on it in the same run |
-| 6 | One bundle, all binaries hardened-runtime, JIT entitlements on runtime and Node only; notarizes; Gatekeeper launches it on a clean machine | **FAIL as written** (claude needs `allow-jit` too; Node also needs `disable-library-validation`) + **BLOCKED** (notarization and clean-machine Gatekeeper need the Developer ID) | 5 binaries, all `flags=runtime`, `codesign --verify --deep --strict` OK. Self-signed bundle is rejected by `spctl` as expected |
+| 6 | One bundle, all binaries hardened-runtime, JIT entitlements on runtime and Node only; notarizes; Gatekeeper launches it on a clean machine | **FAIL as written** (claude needs `allow-jit` too; Node also needs `disable-library-validation`) + **BLOCKED** (notarization and clean-machine Gatekeeper need the Developer ID) | 5 binaries, all `flags=runtime`, `codesign --verify --deep --strict` OK. Self-signed bundle is rejected by `spctl` as expected. Clean VM: quarantined launch held at the Gatekeeper prompt (expected, blocked on Developer ID) |
 | 7 | Runtime reads/writes a keychain item in the shared access group | **BLOCKED** (Team ID + provisioning profile) | Legacy login keychain read/write from the bundle: OK. Data-protection keychain: `errSecMissingEntitlement` (-34018) without an access-group entitlement, which needs a provisioning profile |
 | 8 | Auto-update to a newly signed build; no keychain prompt; in-progress run resumes | **Update + resume: PASS. "No keychain prompt": FAIL for self-signed and ad-hoc, BLOCKED for Developer ID** | 0.0.1 → 0.0.2 mid-tool-call: run `completed`, `resumes=1`, both steps done. The post-update keychain read **shows a prompt** (timed out at 5 s) in both variants; the creating binary reads with no prompt |
 | 9 | `SMAppService.mainApp`: launches at login; shows as "Homerun" in Login Items | **PARTIAL**: registration PASS; launch at login **untested** (needs a logout/login) | Background Task Management lists it as `Name: Homerun`, `enabled, allowed`; `Developer Name: (null)` without a Team ID |
-| 10 | Bundled Node runs an `npx` MCP server with a native add-on; bundled `uv` runs a `uvx` server; from inside the signed app on a clean machine | **PASS on this machine** (signed bundle, scrubbed PATH); **clean machine: scripted, not run** (Tart not installed) | `better-sqlite3` server returned `sqlite 3.53.2` via bundled `node`; `mcp-server-time` via bundled `uv` |
+| 10 | Bundled Node runs an `npx` MCP server with a native add-on; bundled `uv` runs a `uvx` server; from inside the signed app on a clean machine | **PASS on this machine** (signed bundle, scrubbed PATH) and **PASS on a clean macOS 26.6.2 VM** with quarantine removed (self-signed build; a Gatekeeper-approved launch is blocked on the Developer ID) | `better-sqlite3` server returned `sqlite 3.53.2` via bundled `node`; `mcp-server-time` via bundled `uv`. The clean VM also found two new issues: lost writes under a data dir named `dev.homerun.app` (entry 26) and a CLT install dialog from `uvx` (entry 27) |
 
 Measurements (details in [Measurements](#measurements)):
 
@@ -334,7 +334,7 @@ HOMERUN_DATA_DIR=/tmp/hr-mcp apps/desktop/src-tauri/binaries/homerund-aarch64-ap
   "/tmp/homerun-spike-mcp-native-0.0.1.tgz#homerun-spike-mcp-native"   # populates the better-sqlite3 add-on the matrix loads
 spikes/signing/entitlement-matrix.sh                        # → .spike/results/entitlement-matrix.tsv
 NOTARY_PROFILE=homerun-notary scripts/macos/notarize.sh dist/macos/0.0.2/Homerun.app dist/macos/0.0.2/Homerun.dmg   # BLOCKED: needs Apple account
-scripts/macos/tart-clean-vm.sh dist/macos/0.0.2/Homerun.dmg # clean-VM Gatekeeper + items 10; needs tart (not run)
+scripts/macos/tart-clean-vm.sh dist/macos/0.0.2/Homerun.dmg # clean-VM Gatekeeper + item 10 → .spike/results/tart-clean-vm/report-run5-pass.txt
 ```
 
 Bundle: `Contents/MacOS/{homerun (Tauri shell), homerund, claude, node, uv}` and `Contents/Resources/npm`. Tauri's
@@ -378,6 +378,23 @@ signature anyway.
 Gatekeeper: `spctl --assess` on a quarantined copy of the self-signed bundle → `rejected`, and
 `syspolicy_check distribution` → "Notary Ticket Missing". This is the expected result without a Developer ID and
 notarization. **Blocked on the user's certificate.**
+
+**Clean VM** (`tart-clean-vm.sh`, Tart `macos-tahoe-vanilla`, macOS 26.6.2; see [item 10](#10-mcp-servers-via-bundled-node-and-uv)
+for the functional part). The DMG is copied in with a Safari-style `com.apple.quarantine` flag, mounted, and the
+app is `ditto`ed to `/Applications`, which keeps the flag as a Finder drag would.
+- The vanilla image ships with **Gatekeeper disabled** (`spctl --status`: assessments disabled). The harness
+  enables it (`spctl --global-enable`) before installing; the first run without that step launched the
+  quarantined self-signed app with no prompt, which proves nothing.
+- `spctl --assess`: `rejected`, `origin=Homerun Spike Self-Signed`; `syspolicy_check distribution`: "Notary Ticket
+  Missing". **Expected, blocked on the Developer ID.**
+- Quarantined `open`: the app is translocated and syspolicyd logs `Prompt shown (7, 0), waiting for response`. The
+  process sits at `_dyld_start` until someone answers. Expected for a non-notarized build.
+- Harness trap, fixed: that pending evaluation outlives both its process and the prompt UI (`CoreServicesUIAgent`).
+  Every later launch of the same code, even with quarantine removed, logs "waiting on another evaluation" and
+  also sits at `_dyld_start`. The harness now kills the translocated process as well and restarts syspolicyd
+  before its quarantine-removed phase (`.spike/results/tart-clean-vm/phase2-pending-evaluation.txt`).
+  Not tested: whether a user who answers the prompt and relaunches is affected (answering should resolve the
+  evaluation). It matters for scripted tests.
 
 ### 7. Keychain access group
 
@@ -465,10 +482,32 @@ HOMERUN_SELFTEST_NPX_PKG="/tmp/homerun-spike-mcp-native-0.0.1.tgz#homerun-spike-
 - helpers.check: `claude --version`, `claude mcp list` (empty: isolated config), `node` JIT + WebAssembly loop, and
   `uv --version` all start as children of the hardened `homerund`.
 
-**Clean machine:** [`scripts/macos/tart-clean-vm.sh`](../scripts/macos/tart-clean-vm.sh) runs the same selftest in a
-vanilla macOS VM (no Node, Python or Homebrew; quarantined DMG; `open`-launched). It was not run here because
-`tart` isn't installed. On a non-notarized build Gatekeeper is expected to block the launch, so run it after
-notarization.
+**Clean machine: PASS, with quarantine removed** ([`scripts/macos/tart-clean-vm.sh`](../scripts/macos/tart-clean-vm.sh)
+→ `.spike/results/tart-clean-vm/report-run5-pass.txt`). The VM is Tart's `macos-tahoe-vanilla` (macOS 26.6.2)
+with Gatekeeper enabled. It has no toolchain: `node`, `npx`, `uv`, `uvx` and `claude` are absent,
+`xcode-select -p` has no developer directory, and `/usr/bin/python3` is only the CLT install stub. The quarantined
+launch stops at the Gatekeeper prompt ([item 6](#6-bundle-hardened-runtime-entitlements-notarization-gatekeeper)),
+so the harness removes `com.apple.quarantine` (`xattr -dr`), restarts syspolicyd, and relaunches with `open -n`:
+- ping; helpers.check: `claude --version` 2.1.278, `claude mcp list` (empty), `node` v24.21.0, `uv` 0.12.19, all exit 0;
+- keychain set/get: `errSecSuccess`;
+- **npx:** `{"sqlite":"3.53.2","node":"v24.21.0","execPath":"/Applications/Homerun.app/Contents/MacOS/node"}`;
+- **uvx:** `mcp-server-time` answered `get_current_time` (`isError:false`), after uv downloaded its CPython;
+- the runtime exited 0 on shell shutdown.
+
+The same selftest on a debug VM (0.0.3 = 0.0.2 plus exit logging, unquarantined) passed 10 of 10 cold runs with
+this data dir. Two new problems appeared only on the clean machine:
+- **Lost writes under `…/dev.homerun.app`** ([entry 26](#added-by-the-clean-machine-run)). With the default data dir,
+  5 of 10 cold runs lost log lines from both the shell and the runtime after npm dropped `better_sqlite3.node` into it;
+  0 of 10 with `…/Homerun`. So phase 2 uses `HOMERUN_DATA_DIR=~/Library/Application Support/Homerun`.
+- **The "Install Command Line Developer Tools" dialog** opens during the first `uvx` run ([entry 27](#added-by-the-clean-machine-run)).
+  `uvx` still succeeds. The harness reports it as `clt-prompt after run`; it was `none` before launch.
+
+A Gatekeeper-approved launch (quarantine kept) needs a notarized Developer ID build; rerun the same script on it.
+
+Tooling: the `cirruslabs/cli` Homebrew tap failed to install here, so Tart 2.32.1 was installed from its GitHub
+release (sha256-checked) into `~/.local/bin`. `sshpass` wasn't installable (outdated CLT), so the harness falls
+back to OpenSSH's `SSH_ASKPASS`. `KEEP_VM=1` leaves the VM running for debugging. The base image (≈50 GB) stays in
+Tart's cache for the Developer ID run.
 
 ### Other checks done along the way
 
@@ -732,6 +771,39 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
     only serializes execution. *Change §5.6:* rely on the deny-siblings rule (entry 10). Track an SDK feature
     request for `disable_parallel_tool_use` passthrough.
 
+### Added by the clean-machine run
+
+26. **The data dir must not be named `dev.homerun.app`** (§5.5 components path, §6 storage, §11 identifier). Tauri
+    derives the data dir from the bundle identifier, giving `~/Library/Application Support/dev.homerun.app`, and
+    macOS treats a directory ending in `.app` as an app bundle (`mdls`: `kMDItemContentType =
+    com.apple.application-bundle`). On the clean VM, once npm put `better_sqlite3.node` inside it, XProtect scanned
+    the "bundle", tccd handled a `kTCCServiceSystemPolicyAppBundles` (App Management) request from Homerun, and the
+    shell's next `open(O_WRONLY|O_CREAT|O_APPEND)` of its log **failed with EPERM**. Across 10 interleaved cold
+    selftests, **5 of 10 lost writes** from both the shell and the runtime with `…/dev.homerun.app`, and **0 of 10**
+    with `…/Homerun`; with the latter, all 10 completed and both MCP probes passed. Four runs on the development
+    machine lost nothing, so it doesn't show up there. The same directory will hold `homerun.db`, SDK transcripts
+    and the §5.5 components, so this is a data-loss risk, not a logging nit. Tauri's own CLI (2.11.5) warns that an
+    identifier ending in `.app` "conflicts with the application bundle extension on macOS".
+    *Change:* choose the data dir explicitly, decoupled from the identifier: `~/Library/Application Support/Homerun`
+    (the runtime and the shell already honour `HOMERUN_DATA_DIR`; make it the default). State the location in §6 and
+    update the §5.5 components path to `…/Homerun/components/<name>/<version>/`. Also consider a bundle identifier
+    that doesn't end in `.app` before the first public release (e.g. `dev.homerun.desktop`), since changing it
+    later affects the keychain items and access group (§11), the login item and the updater. The spike did not test
+    whether a new identifier alone avoids the problem; the decoupled data dir is the tested fix.
+    Evidence: `.spike/results/tart-clean-vm/datadir-app-suffix-ab.txt`, `eperm-fs_usage-excerpt.txt`.
+27. **First `uvx` use opens the "Install Command Line Developer Tools" dialog on a clean Mac** (§5.5, entries 21
+    and 22). While installing its managed CPython, uv runs `install_name_tool -id …/libpython3.14.dylib`. It looks
+    next to itself first (`Contents/MacOS/install_name_tool`: ENOENT), then runs `/usr/bin/install_name_tool`,
+    which on a Mac without the CLT is Apple's stub: it exits 1 and opens the install dialog. `uvx` still succeeds.
+    Seen in the formal run (`clt-prompt after run`) and in a uvx-only run on the debug VM. With a no-op
+    `install_name_tool` first on the MCP child's `PATH`, `uvx` still returned `ok:true` and no dialog appeared.
+    *Change:* the uv component ships an `install_name_tool` next to `uv` (a real one, or a no-op that exits 0 since
+    uv's only call rewrites a dylib's install name to the same path; re-sign it with the component). More
+    generally, the MCP child `PATH` must not reach `/usr/bin` CLT stubs (`git`, `python3`, `make`, `clang`,
+    `install_name_tool`…): use a curated directory of allowed tools instead of `/usr/bin`. With the entry 21
+    decision (download CPython in the background right after the uv component installs), the dialog would
+    otherwise appear at that moment, unprompted.
+
 ### §16.1 itself
 
 23. Item 6's wording "JIT on the runtime and Node only" should change per entry 13. Items 7 and 8 should say
@@ -743,8 +815,9 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
 
 | What | Blocked on | How to finish |
 |---|---|---|
-| Item 6 notarization + Gatekeeper | Developer ID + notary credentials | `xcrun notarytool store-credentials homerun-notary …`, `IDENTITY="Developer ID Application: …" VERSION=0.0.1 NOTARY_PROFILE=homerun-notary scripts/macos/package.sh`, then `scripts/macos/tart-clean-vm.sh` |
+| Item 6 notarization + Gatekeeper | Developer ID + notary credentials | `xcrun notarytool store-credentials homerun-notary …`, `IDENTITY="Developer ID Application: …" VERSION=0.0.1 NOTARY_PROFILE=homerun-notary scripts/macos/package.sh`, then `scripts/macos/tart-clean-vm.sh dist/macos/<v>/Homerun.dmg` (Tart and the base image are already installed and cached; expect `accepted` and a launch with quarantine kept) |
 | Item 7 access group | Team ID + Developer ID provisioning profile with `keychain-access-groups` | `TEAM_ID=… PROVISIONING_PROFILE=… scripts/macos/sign.sh`, then `homerund keychain-selftest --data-protection --group <TEAMID>.dev.homerun.shared`. Needs design entry 15 |
 | Item 8 "no prompt" | Developer ID build | package 0.0.1 and 0.0.2 with the Developer ID, `spikes/packaging/update-flow.sh devid` → expect `prompted:false` |
 | Item 9 launch at login | a logout/login | manual steps in item 9 |
-| Item 10 clean machine | `brew install cirruslabs/cli/tart`, ~60 GB disk | `scripts/macos/tart-clean-vm.sh dist/macos/<v>/Homerun.dmg` |
+| Item 10 with quarantine kept | the notarized Developer ID build (item 6) | the same `tart-clean-vm.sh` run: phase 1 then covers item 10 with the default data dir (expect entry 26's lost writes until it is fixed) |
+| Entries 26, 27 fixes | milestone 1 | move the default data dir; add the `install_name_tool` shim and curated `PATH`; rerun `tart-clean-vm.sh` and expect `clt-prompt after run: none` |
