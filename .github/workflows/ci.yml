@@ -54,6 +54,9 @@ jobs:
         run: pnpm --filter @homerun/homerund --filter @homerun/spike-sdk --filter @homerun/spike-homerund-m0 typecheck
       - name: Unit tests
         run: pnpm --filter @homerun/homerund test:unit
+      # Kill homerund at every event boundary and resume, with a simulated claude (§16.2).
+      - name: Crash tests
+        run: pnpm --filter @homerun/homerund test:crash
       # Recorded cassettes, real bundled claude, no API key and no network to the API (§16.2).
       - name: Replay tests
         run: pnpm --filter @homerun/homerund test:replay
