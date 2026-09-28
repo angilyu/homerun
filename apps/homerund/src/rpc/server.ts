@@ -1,0 +1,272 @@
+import { chmodSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { connect } from "node:net";
+import { dirname } from "node:path";
+import type { Socket, TCPSocketListener, UnixSocketListener } from "bun";
+import {
+  MAX_FRAME_BYTES,
+  METHODS,
+  RPC_ERROR,
+  authorize,
+  classifyFrame,
+  mayReceive,
+  type CallerRole,
+  type MethodName,
+  type NotificationName,
+  type RpcId,
+  type RpcRequest,
+} from "@homerun/core";
+import { log, scrub } from "../log";
+import { InvalidRequestError, NotFoundError } from "../runs/manager";
+import { RpcFail, type Conn, type Handlers } from "./handlers";
+
+export const HELLO_TIMEOUT_MS = 2_000;
+/** A client that stops reading is dropped rather than buffered without bound (plan §6). */
+export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+
+export interface ServerOptions {
+  socketPath: string;
+  handlers: Handlers;
+  /** Parse every result with its core schema before sending (tests and development). */
+  checkResults?: boolean;
+  helloTimeoutMs?: number;
+}
+
+type Data = { conn: Connection };
+
+/** The local JSON-RPC server (§5.2): NDJSON frames on a 0600 unix socket in a 0700 directory. */
+export class RpcServer {
+  private listener: UnixSocketListener<Data> | TCPSocketListener<Data> | null = null;
+  readonly connections = new Set<Connection>();
+
+  constructor(private opts: ServerOptions) {}
+
+  async start(): Promise<void> {
+    const path = this.opts.socketPath;
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    chmodSync(dirname(path), 0o700);
+    if (existsSync(path)) {
+      if (await socketAnswers(path)) throw new AlreadyRunningError(path);
+      unlinkSync(path);
+    }
+    this.listener = Bun.listen<Data>({
+      unix: path,
+      socket: {
+        open: (s) => {
+          const c = new Connection(s, this.opts);
+          s.data = { conn: c };
+          this.connections.add(c);
+        },
+        data: (s, chunk) => s.data.conn.onData(chunk),
+        drain: (s) => s.data.conn.onDrain(),
+        close: (s) => {
+          s.data.conn.onClose();
+          this.connections.delete(s.data.conn);
+        },
+        error: (s, err) => log.warn("socket error", { err: err.message, role: s.data?.conn.role }),
+      },
+    });
+    chmodSync(path, 0o600);
+    log.info("listening", { socket: path });
+  }
+
+  /** Stop accepting and close every connection. */
+  stop(): void {
+    this.listener?.stop(true);
+    this.listener = null;
+    for (const c of this.connections) c.close();
+    this.connections.clear();
+    try {
+      unlinkSync(this.opts.socketPath);
+    } catch {}
+  }
+}
+
+export class AlreadyRunningError extends Error {
+  constructor(readonly socketPath: string) {
+    super(`another homerund is answering on ${socketPath}`);
+  }
+}
+
+/** Whether something accepts connections on `path` (a live runtime, not a stale socket file). */
+export function socketAnswers(path: string, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = connect(path);
+    const done = (v: boolean) => {
+      clearTimeout(t);
+      s.destroy();
+      resolve(v);
+    };
+    const t = setTimeout(() => done(false), timeoutMs);
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+  });
+}
+
+export class Connection implements Conn {
+  role: CallerRole | null = null;
+  readonly subscriptions = new Map<string, () => void>();
+  private inbuf: Buffer = Buffer.alloc(0);
+  private out: Buffer[] = [];
+  private outBytes = 0;
+  private closed = false;
+  private closeAfterFlush = false;
+  private helloTimer: ReturnType<typeof setTimeout> | null;
+
+  constructor(
+    private socket: Socket<Data>,
+    private opts: ServerOptions,
+  ) {
+    this.helloTimer = setTimeout(() => {
+      if (this.role === null) this.close();
+    }, opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS);
+  }
+
+  setRole(role: CallerRole): void {
+    this.role = role;
+    if (this.helloTimer) clearTimeout(this.helloTimer);
+    this.helloTimer = null;
+  }
+
+  onData(chunk: Buffer): void {
+    this.inbuf = this.inbuf.length ? Buffer.concat([this.inbuf, chunk]) : Buffer.from(chunk);
+    for (;;) {
+      if (this.closed || this.closeAfterFlush) return;
+      const nl = this.inbuf.indexOf(0x0a);
+      if (nl < 0) break;
+      const line = this.inbuf.subarray(0, nl);
+      this.inbuf = this.inbuf.subarray(nl + 1);
+      if (line.length > MAX_FRAME_BYTES) {
+        this.fail(null, RPC_ERROR.INVALID_REQUEST, "Frame too large.", undefined, true);
+        return;
+      }
+      if (line.length) this.onFrame(line.toString("utf8"));
+    }
+    if (this.inbuf.length > MAX_FRAME_BYTES) this.fail(null, RPC_ERROR.INVALID_REQUEST, "Frame too large.", undefined, true);
+  }
+
+  private onFrame(text: string): void {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      return this.fail(null, RPC_ERROR.PARSE_ERROR, "Parse error.");
+    }
+    const c = classifyFrame(raw);
+    if (c.kind === "invalid") {
+      const id = readableId(raw);
+      return this.fail(id, RPC_ERROR.INVALID_REQUEST, "Invalid request.", { issues: c.error.issues.slice(0, 20) as unknown as object });
+    }
+    // Client notifications (power.*) and replies to runtime → shell requests arrive in later milestones.
+    if (c.kind !== "request") return;
+    this.onRequest(c.frame as RpcRequest);
+  }
+
+  private onRequest(req: RpcRequest): void {
+    const a = authorize(this.role, req.method);
+    if (!a.ok) {
+      if (a.reason === "unknown_method") return this.fail(req.id, RPC_ERROR.METHOD_NOT_FOUND, `Unknown method ${req.method}.`);
+      if (a.reason === "handshake_required") return this.fail(req.id, RPC_ERROR.HANDSHAKE_REQUIRED, "Send hello first.");
+      return this.fail(req.id, RPC_ERROR.FORBIDDEN, `${this.role ?? "This caller"} may not call ${req.method}.`);
+    }
+    const method = req.method as MethodName;
+    const handler = this.opts.handlers[method] as ((c: Conn, p: unknown) => unknown) | undefined;
+    if (!handler) return this.fail(req.id, RPC_ERROR.METHOD_NOT_FOUND, `${method} arrives in a later version of Homerun.`, { not_implemented: true });
+    const parsed = METHODS[method].params.safeParse(req.params ?? {});
+    if (!parsed.success) {
+      return this.fail(req.id, RPC_ERROR.INVALID_PARAMS, "Invalid params.", { issues: parsed.error.issues.slice(0, 20) as unknown as object }, method === "hello");
+    }
+    let reply: unknown;
+    try {
+      reply = handler(this, parsed.data);
+    } catch (e) {
+      if (e instanceof RpcFail) return this.fail(req.id, e.code, e.message, e.data, e.close);
+      if (e instanceof NotFoundError) return this.fail(req.id, RPC_ERROR.NOT_FOUND, e.message);
+      if (e instanceof InvalidRequestError) return this.fail(req.id, RPC_ERROR.VALIDATION_FAILED, e.message);
+      log.error("handler failed", { method, err: e instanceof Error ? e : String(e) });
+      return this.fail(req.id, RPC_ERROR.INTERNAL_ERROR, "Internal error.");
+    }
+    const { result, after } = isDeferred(reply) ? reply : { result: reply, after: null };
+    if (this.opts.checkResults) {
+      const r = METHODS[method].result.safeParse(result);
+      if (!r.success) {
+        log.error("result does not match its schema", { method, issues: r.error.issues.slice(0, 5) });
+        return this.fail(req.id, RPC_ERROR.INTERNAL_ERROR, "Internal error: bad result.");
+      }
+    }
+    this.send({ jsonrpc: "2.0", id: req.id, result });
+    after?.();
+  }
+
+  notify(method: string, params: unknown): void {
+    if (this.role === null || !mayReceive(this.role, method as NotificationName)) return;
+    this.send({ jsonrpc: "2.0", method, params });
+  }
+
+  private fail(id: RpcId | null, code: number, message: string, data?: unknown, close = false): void {
+    this.send({ jsonrpc: "2.0", id, error: { code, message: scrub(message), ...(data !== undefined ? { data } : {}) } });
+    if (close) this.closeAfterWrite();
+  }
+
+  private send(frame: object): void {
+    if (this.closed || this.closeAfterFlush) return;
+    const buf = Buffer.from(JSON.stringify(frame) + "\n");
+    if (this.out.length === 0) {
+      const n = this.socket.write(buf);
+      if (n === buf.length) return;
+      this.out.push(buf.subarray(Math.max(n, 0)));
+      this.outBytes = buf.length - Math.max(n, 0);
+    } else {
+      this.out.push(buf);
+      this.outBytes += buf.length;
+    }
+    if (this.outBytes > MAX_BUFFERED_BYTES) {
+      log.warn("dropping a client that stopped reading", { role: this.role, buffered: this.outBytes });
+      this.close();
+    }
+  }
+
+  onDrain(): void {
+    while (this.out.length && !this.closed) {
+      const b = this.out[0]!;
+      const n = this.socket.write(b);
+      if (n < b.length) {
+        this.out[0] = b.subarray(Math.max(n, 0));
+        this.outBytes -= Math.max(n, 0);
+        return;
+      }
+      this.out.shift();
+      this.outBytes -= b.length;
+    }
+    if (this.closeAfterFlush && !this.out.length) this.close();
+  }
+
+  private closeAfterWrite(): void {
+    this.closeAfterFlush = true;
+    if (!this.out.length) this.close();
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.socket.end();
+    this.onClose();
+  }
+
+  onClose(): void {
+    this.closed = true;
+    if (this.helloTimer) clearTimeout(this.helloTimer);
+    this.helloTimer = null;
+    for (const unsub of this.subscriptions.values()) unsub();
+    this.subscriptions.clear();
+  }
+}
+
+function isDeferred(r: unknown): r is { result: unknown; after: () => void } {
+  return typeof r === "object" && r !== null && "after" in r && typeof (r as { after: unknown }).after === "function" && "result" in r;
+}
+
+function readableId(raw: unknown): RpcId | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const id = (raw as { id?: unknown }).id;
+  return (typeof id === "number" && Number.isInteger(id)) || (typeof id === "string" && id.length > 0 && id.length <= 128) ? id : null;
+}

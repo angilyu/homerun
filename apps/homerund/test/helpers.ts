@@ -16,6 +16,8 @@ import { eventsAfter } from "../src/store/events";
 import { migrate } from "../src/store/migrate";
 import { ensureDevice } from "../src/store/rows";
 import { Store } from "../src/store/store";
+import { RpcClient } from "../src/rpc/client";
+import { startRuntime, type Runtime } from "../src/runtime";
 
 export const MOCK_KEY = "sk-ant-mock-not-a-real-key";
 
@@ -85,3 +87,73 @@ export async function until(pred: () => boolean, timeoutMs = 5000, what = "condi
 }
 
 export const DESKTOP = (deviceId: string): Origin => ({ device_id: deviceId as Origin["device_id"], surface: "desktop" });
+
+export const LAUNCH_TOKEN = "a".repeat(64);
+
+export interface SocketRuntime {
+  dir: string;
+  rt: Runtime;
+  engine: FakeEngine;
+  shell(): Promise<RpcClient>;
+  dev(): Promise<RpcClient>;
+  /** Stop serving without the graceful path, like a SIGKILL of homerund (the DB stays as is). */
+  crash(): void;
+  close(): Promise<void>;
+}
+
+/** The whole runtime (startRuntime) on a temporary data dir with the fake engine, served on a socket. */
+export async function socketRuntime(opts: { script?: FakeScript; env?: Record<string, string>; dir?: string; engine?: FakeEngine } = {}): Promise<SocketRuntime> {
+  const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "hr-rpc-"));
+  const logs: string[] = [];
+  setLogSink((l) => logs.push(l), "debug");
+  const config = loadConfig({ env: { HOMERUN_DATA_DIR: dir, HOMERUN_CLAUDE_PATH: "/usr/bin/false", HOME: dir, ...opts.env } });
+  const engine = opts.engine ?? new FakeEngine(opts.script);
+  const rt = await startRuntime({ config, launchToken: LAUNCH_TOKEN, engine: () => engine, checkResults: true, setTmpdir: false });
+  const clients: RpcClient[] = [];
+  const track = async (p: Promise<RpcClient>) => {
+    const c = await p;
+    clients.push(c);
+    return c;
+  };
+  let crashed = false;
+  return {
+    dir,
+    rt,
+    engine,
+    shell: () => track(RpcClient.open(config.socketPath, "shell", { kind: "launch_token", token: LAUNCH_TOKEN })),
+    dev: () => track(RpcClient.open(config.socketPath, "cli_dev", { kind: "dev_token", token: rt.devToken! })),
+    crash() {
+      crashed = true;
+      for (const c of clients) c.close();
+      rt.server.stop();
+      rt.scheduler.halt();
+      rt.store.db.close();
+    },
+    async close() {
+      for (const c of clients) c.close();
+      if (!crashed) await rt.shutdown();
+      if (!opts.dir) rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+/** A minimal valid session task spec (core TaskSpec, format 1). */
+export function sessionSpec(o: { builtin?: string[]; mcp_servers?: unknown[]; name?: string; prompt?: string; roots?: unknown[] } = {}) {
+  return {
+    kind: "session" as const,
+    format: 1 as const,
+    name: o.name ?? "t",
+    prompt: o.prompt ?? "p",
+    budget: { max_run_usd: 1 },
+    tools: { builtin: o.builtin ?? ["Bash"], mcp_servers: o.mcp_servers ?? [], homerun: [] },
+    policy: {
+      roots: o.roots ?? [],
+      egress: { mode: "allowlist", domains: [] },
+      bash_patterns: [],
+      use_shell_environment: false,
+      input_timeout: { action: "wait", remind_after_ms: null },
+      retention_days: 30,
+    },
+    model: { model: "haiku" },
+  };
+}
