@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { groupAlive, killGroup, killGroupAndWait } from "./spawn";
+import { groupAlive, killGroup, killGroupAndWait, pidAlive } from "./spawn";
 
 /**
  * Tool processes escape `claude`'s process group (F8): the Bash tool's shell is started in a new
@@ -94,15 +94,6 @@ export async function killProcs(procs: readonly Proc[], timeoutMs = 5000): Promi
   const deadline = Date.now() + timeoutMs;
   while (alive() && Date.now() < deadline) await Bun.sleep(20);
   return [...pids];
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 /**

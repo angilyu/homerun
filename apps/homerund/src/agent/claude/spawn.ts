@@ -32,14 +32,48 @@ export function killGroup(pgid: number | null | undefined, signal: NodeJS.Signal
   }
 }
 
+/**
+ * Whether a process group has a living member. `kill(-pgid, 0)` also succeeds for zombies,
+ * which linger when nobody reaps them (on Linux, orphans of a container whose PID 1 does not
+ * reap), so a positive answer is confirmed with `ps`, ignoring zombies.
+ */
 export function groupAlive(pgid: number | null | undefined): boolean {
   if (!pgid || pgid <= 1) return false;
+  if (!signalable(-pgid)) return false;
+  return someLiving(["-A", "-o", "pgid=,stat="], (id) => id === pgid);
+}
+
+/** Whether a process is alive and not a zombie. */
+export function pidAlive(pid: number | null | undefined): boolean {
+  if (!pid || pid <= 0) return false;
+  if (!signalable(pid)) return false;
+  return someLiving(["-o", "pid=,stat=", "-p", String(pid)], (id) => id === pid);
+}
+
+function signalable(target: number): boolean {
   try {
-    process.kill(-pgid, 0);
+    process.kill(target, 0);
     return true;
   } catch (e) {
     return (e as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+function someLiving(psArgs: string[], match: (id: number) => boolean): boolean {
+  let out: string;
+  try {
+    const r = Bun.spawnSync(["/bin/ps", ...psArgs], { stdout: "pipe", stderr: "ignore" });
+    out = r.stdout.toString();
+    // `ps -p` exits 1 when nothing matches; any other failure means we cannot tell.
+    if (r.exitCode !== 0 && out.trim() !== "") return true;
+  } catch {
+    return true;
+  }
+  for (const line of out.split("\n")) {
+    const m = /^\s*(\d+)\s+(\S+)/.exec(line);
+    if (m && match(Number(m[1])) && !m[2]!.startsWith("Z")) return true;
+  }
+  return false;
 }
 
 /** SIGKILL a group and wait until no member is left (bounded). */

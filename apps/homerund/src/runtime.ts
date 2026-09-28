@@ -14,6 +14,7 @@ import { makeHandlers } from "./rpc/handlers";
 import { RpcServer } from "./rpc/server";
 import type { RunContext } from "./runs/context";
 import { RunManager } from "./runs/manager";
+import { pidAlive } from "./agent/claude/spawn";
 import { bootTime, killEscapedTools, killStaleGroup, sweepTemp } from "./runs/process-groups";
 import { recoverRun, type RecoveryOutcome } from "./runs/recovery";
 import { Scheduler } from "./runs/scheduler";
@@ -193,10 +194,5 @@ export function takeLock(runDir: string): () => void {
 }
 
 function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
+  return pidAlive(pid);
 }
