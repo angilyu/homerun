@@ -8,9 +8,9 @@
  *   homerund version
  *
  * Exit codes: 0 clean stop, 1 startup failure, 2 stdin closed before the token, 3 another
- * runtime is already serving this data dir, 64 usage.
+ * runtime is already serving this data dir, 64 usage or a development-only switch in a release build.
  */
-import { BUILD_CHANNEL, RUNTIME_VERSION, loadConfig } from "./config";
+import { BUILD_CHANNEL, DevOnlyError, RUNTIME_VERSION, loadConfig, type Config } from "./config";
 import { log } from "./log";
 import { LAUNCH_TOKEN_RE } from "./rpc/auth";
 import { AlreadyRunningError } from "./rpc/server";
@@ -34,9 +34,18 @@ async function readToken(reader: ReadableStreamDefaultReader<Uint8Array>): Promi
 
 async function serve(argv: string[]): Promise<void> {
   const noToken = argv.includes("--no-launch-token");
-  if (noToken && BUILD_CHANNEL !== "development") {
-    log.error("--no-launch-token is only available in development builds");
-    process.exit(64);
+  // Refuse development switches before waiting for the token: a release build exits at once.
+  let config: Config;
+  try {
+    if (noToken && BUILD_CHANNEL !== "development") throw new DevOnlyError("--no-launch-token");
+    config = loadConfig({ argv });
+  } catch (e) {
+    if (e instanceof DevOnlyError) {
+      log.error(e.message);
+      process.exit(64);
+    }
+    log.error("startup failed", { err: e instanceof Error ? e : String(e) });
+    process.exit(1);
   }
   const reader = noToken ? null : Bun.stdin.stream().getReader();
   const token = reader ? await readToken(reader) : null;
@@ -47,7 +56,6 @@ async function serve(argv: string[]): Promise<void> {
 
   let rt: Runtime;
   try {
-    const config = loadConfig({ argv });
     rt = await startRuntime({ config, launchToken: token, checkResults: config.build === "development" });
   } catch (e) {
     if (e instanceof AlreadyRunningError || e instanceof AlreadyRunningLockError) {

@@ -13,11 +13,29 @@ export const APP_ID = "com.angilyu.homerun";
 export const DATA_DIR_NAME = "Homerun";
 
 export const RUNTIME_VERSION: string = typeof HOMERUND_VERSION === "string" ? HOMERUND_VERSION : "0.2.0-dev";
-/** Release builds are compiled with `--define HOMERUND_BUILD='"release"'`. Everything else is development. */
-export const BUILD_CHANNEL: BuildChannel = typeof HOMERUND_BUILD === "string" && HOMERUND_BUILD === "release" ? "release" : "development";
-
 /** True when running as a `bun build --compile` executable. */
 export const isCompiled = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN");
+
+/**
+ * The build channel fails closed. A compiled executable is release unless it was built with an
+ * explicit `--define HOMERUND_BUILD='"development"'`, so a binary that forgot the define never
+ * gets the development switches, dev tokens or base-URL overrides. Running from source
+ * (`bun run`, `bun test`) is development. Any other defined value is release.
+ */
+export function resolveBuildChannel(defined: string | undefined, compiled: boolean): BuildChannel {
+  if (defined !== undefined) return defined === "development" ? "development" : "release";
+  return compiled ? "release" : "development";
+}
+
+export const BUILD_CHANNEL: BuildChannel = resolveBuildChannel(typeof HOMERUND_BUILD === "string" ? HOMERUND_BUILD : undefined, isCompiled);
+
+/** A development-only switch was used in a release build. */
+export class DevOnlyError extends Error {
+  constructor(what: string) {
+    super(`${what} is only available in development builds; this is a release build`);
+    this.name = "DevOnlyError";
+  }
+}
 
 /** `sun_path` is 104 bytes on macOS (§5.2). */
 export const SUN_PATH_MAX = 104;
@@ -132,7 +150,7 @@ export function loadConfig(input: ConfigInput = {}): Config {
   ensureDir(runDir);
 
   const devOnly = (what: string, v: unknown) => {
-    if (!dev && v) throw new Error(`${what} is only available in development builds`);
+    if (!dev && v) throw new DevOnlyError(what);
     return v;
   };
   const overridesFile = devOnly("--dev-mcp-overrides", option(argv, "dev-mcp-overrides") ?? env.HOMERUN_DEV_MCP_OVERRIDES) as string | undefined;

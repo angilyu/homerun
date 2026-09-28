@@ -57,9 +57,28 @@ bun run src/main.ts serve --no-launch-token --dev-auto-approve   # development
   - 1: startup failure;
   - 2: stdin closed before the token;
   - 3: another runtime is already serving this data dir;
-  - 64: usage.
+  - 64: usage, or a development-only switch in a release build.
 
-Development-only switches are rejected in other builds:
+### Build channel
+
+The build channel fails closed:
+- Running from source (`bun run`, `bun test`) is **development**.
+- A compiled executable (`bun build --compile`) is **release** unless it was
+  built with an explicit `--define HOMERUND_BUILD='"development"'`. Any other
+  defined value is also release.
+- `bun run build` produces a release binary. `bun run build:dev` produces a
+  development one (`dist/homerund-dev`).
+
+A release build:
+- refuses every switch below with exit code 64 and
+  `<switch> is only available in development builds; this is a release build`,
+  before it reads the launch token;
+- writes no `run/dev-token`;
+- refuses a `cli_dev`/`dev_token` `hello` with UNAUTHENTICATED.
+
+`test/unit/build-gate.test.ts` compiles the binary both ways and checks this.
+
+Development-only switches:
 
 | Switch | Effect |
 |--------|--------|
