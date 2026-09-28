@@ -5,3 +5,11 @@ target/
 *.log
 .env
 .env.*
+# spike outputs and secrets
+.spike/
+*.key
+*.key.pub
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/gen/
+.vendor/
+*.bun-build

@@ -1,0 +1,16 @@
+{
+  "name": "homerun",
+  "private": true,
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=22",
+    "bun": "1.4.2"
+  },
+  "scripts": {
+    "build:homerund": "pnpm --filter @homerun/homerund build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "bun": "1.4.2"
+  }
+}

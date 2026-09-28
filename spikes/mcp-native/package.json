@@ -1,0 +1,13 @@
+{
+  "name": "homerun-spike-mcp-native",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Milestone 0 item 10: a stdio MCP server with a native add-on (better-sqlite3), run by the bundled Node through npx.",
+  "type": "module",
+  "bin": { "homerun-spike-mcp-native": "server.mjs" },
+  "files": ["server.mjs"],
+  "dependencies": {
+    "better-sqlite3": "12.11.1",
+    "@modelcontextprotocol/sdk": "1.30.0"
+  }
+}
