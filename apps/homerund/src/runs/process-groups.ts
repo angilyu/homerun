@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { groupAlive, killGroupAndWait } from "../agent/claude/spawn";
+import { escapedTools, killProcs, killRunTree, listProcs } from "../agent/claude/process-tree";
+import { groupAlive } from "../agent/claude/spawn";
 import { log } from "../log";
 
 /** Boot time in whole seconds, to tell a recorded pid from a reused one after a reboot (plan Q6). */
@@ -18,7 +19,7 @@ export function bootTime(): number {
 
 /** Commands of every live member of a process group. */
 export function groupCommands(pgid: number): string[] {
-  const r = Bun.spawnSync(["/bin/ps", "-A", "-o", "pgid=,command="]);
+  const r = Bun.spawnSync(["/bin/ps", "-Aww", "-o", "pgid=,command="]);
   const out: string[] = [];
   for (const line of r.stdout.toString().split("\n")) {
     const m = /^\s*(\d+)\s+(.*)$/.exec(line);
@@ -37,11 +38,34 @@ export function isOurGroup(pgid: number, recordedBoot: number | null, currentBoo
   return groupCommands(pgid).some((c) => markers.some((m) => c.includes(m)));
 }
 
-/** Kill a stale group left by a previous runtime (§5.4 step 1), if it is still ours. */
-export async function killStaleGroup(pgid: number, recordedBoot: number | null, currentBoot: number, markers: readonly string[]): Promise<boolean> {
+/**
+ * Kill a stale group left by a previous runtime (§5.4 step 1), if it is still ours, with every
+ * descendant that moved to its own group (F8).
+ */
+export async function killStaleGroup(
+  pgid: number,
+  recordedBoot: number | null,
+  currentBoot: number,
+  markers: readonly string[],
+  claudePath: string,
+): Promise<boolean> {
   if (!isOurGroup(pgid, recordedBoot, currentBoot, markers)) return false;
   log.warn("killing stale process group", { pgid });
-  return killGroupAndWait(pgid, 5000);
+  await killRunTree(pgid, claudePath, 5000);
+  return !groupAlive(pgid);
+}
+
+/**
+ * Kill tool processes that outlived their `claude` (F8): the Bash tool's shell runs in its own
+ * group and is reparented to launchd when `claude` dies, so no recorded group reaches it. It is
+ * found by this data dir's `CLAUDE_CONFIG_DIR` in its command (the shell snapshot it sources).
+ * Only call this when no run is active.
+ */
+export async function killEscapedTools(claudeConfigDir: string): Promise<number[]> {
+  const found = escapedTools(listProcs(), claudeConfigDir);
+  if (!found.length) return [];
+  log.warn("killing escaped tool processes", { pids: found.map((p) => p.pid) });
+  return killProcs(found, 5000);
 }
 
 /**

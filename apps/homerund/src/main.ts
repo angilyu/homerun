@@ -65,6 +65,7 @@ async function serve(argv: string[]): Promise<void> {
     pid: process.pid,
     recovered: rt.report.recovered.length,
     killed_groups: rt.report.killedGroups.length,
+    killed_tools: rt.report.killedTools.length,
   });
 
   const stop = async (why: string) => {
