@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
-import { PersistedThreadEvent, type ThreadEvent } from "@homerun/core";
+import { PersistedThreadEvent, RPC_ERROR, type ThreadEvent } from "@homerun/core";
 import { groupAlive } from "../../src/agent/claude/spawn";
 import type { RpcClient } from "../../src/rpc/client";
 import { sessionSpec, uuid } from "../helpers";
@@ -22,6 +22,11 @@ const CASSETTES = join(import.meta.dir, "cassettes");
 const MODEL = "claude-haiku-4-5";
 const SDK_PKG = JSON.parse(readFileSync(join(HOMERUND_DIR, "node_modules/@anthropic-ai/claude-agent-sdk/package.json"), "utf8")) as { version: string; claudeCodeVersion: string };
 const TIMEOUT = MODE === "record" ? 240_000 : 90_000;
+/**
+ * Scenarios added in milestone 4 run once their cassette is recorded (recording spends real
+ * money, so it waits for the key); until then replay skips them.
+ */
+const recorded = (name: string) => MODE === "record" || existsSync(join(CASSETTES, `${name}.json`));
 const apiKey = MODE === "record" ? loadEnvLocal().ANTHROPIC_API_KEY : undefined;
 
 type Persisted = Extract<ThreadEvent, { seq: number }>;
@@ -154,6 +159,13 @@ function ofType<T extends Persisted["type"]>(sub: Subscription, type: T): Array<
 
 async function runEnd(sub: Subscription, runId: string, timeoutMs = TIMEOUT - 10_000): Promise<Of<"run.end">> {
   return (await sub.waitFor((e) => e.type === "run.end" && e.run_id === runId, timeoutMs, `run.end of ${runId}`)) as Of<"run.end">;
+}
+
+async function askedFor(sub: Subscription, call: Of<"tool.call">): Promise<Of<"input.requested">> {
+  const asked = (await sub.waitFor((e) => e.type === "input.requested", 10_000, "input.requested")) as Of<"input.requested">;
+  expect(asked.payload.prompt).toMatchObject({ type: "ambiguous_tool_call", tool: "Bash", tool_call_id: call.payload.tool_call_id });
+  expect(asked.payload.required_authority).toBe("full");
+  return asked;
 }
 
 async function task(s: Scene, spec: Parameters<typeof sessionSpec>[0]): Promise<string> {
@@ -328,7 +340,7 @@ describe(`replay (${MODE})`, () => {
   );
 
   test(
-    "kill mid-tool: an ambiguous destructive call parks the run in waiting_input (§5.4)",
+    "kill mid-tool: an ambiguous destructive call parks the run; stopping it gives the call an 'outcome unknown' result (§5.4)",
     () =>
       scene("kill-mid-tool", { note: "homerund is SIGKILLed while a destructive Bash command runs; the run waits for 'Did this happen?'." }, async (s) => {
         const threadId = await task(s, { builtin: ["Bash"] });
@@ -344,9 +356,7 @@ describe(`replay (${MODE})`, () => {
         // The tool's shell runs in its own group and outlives claude (F8); startup must kill it too.
         expect(liveCommands(s.root, "echo ran >> side.log")).toEqual([]);
         const sub2 = await s.subscribe(threadId);
-        const asked = (await sub2.waitFor((e) => e.type === "input.requested", 10_000, "input.requested")) as Of<"input.requested">;
-        expect(asked.payload.prompt).toMatchObject({ type: "ambiguous_tool_call", tool: "Bash", tool_call_id: call.payload.tool_call_id });
-        expect(asked.payload.required_authority).toBe("full");
+        const asked = await askedFor(sub2, call);
         expect((await s.shell.call("runs.get", { run_id: sent.run_id })).run.state).toBe("waiting_input");
         expect(ofType(sub2, "tool.result")).toEqual([]);
         const pending = await s.shell.call("input.list_pending", { thread_id: threadId });
@@ -357,8 +367,165 @@ describe(`replay (${MODE})`, () => {
         await Bun.sleep(1500);
         expect(s.server.messageRequests).toBe(requestsBefore);
         expect(existsSync(join(s.work, "side.log"))).toBe(false);
-        // Answering it is milestone 4: input.answer says so.
-        await expect(s.shell.call("input.answer", { request_id: asked.payload.request_id, response: { type: "ambiguous_tool_call", outcome: "not_run" }, via: "app" } as never)).rejects.toMatchObject({ data: { not_implemented: true } });
+        // "Did this happen?" needs the full app: not a lock-screen action.
+        await expect(
+          s.shell.call("input.answer", { request_id: asked.payload.request_id, response: { type: "ambiguous_tool_call", outcome: "not_run" }, via: "notification" }),
+        ).rejects.toMatchObject({ code: RPC_ERROR.AUTHORITY_INSUFFICIENT });
+
+        // Stopped unanswered, the call gets a result that says its outcome is unknown.
+        expect(await s.shell.call("runs.stop", { run_id: sent.run_id })).toEqual({ state: "cancelled" });
+        const result = (await sub2.waitFor((e) => e.type === "tool.result", 5_000, "tool.result")) as Of<"tool.result">;
+        expect(result.payload).toMatchObject({ tool_call_id: call.payload.tool_call_id, status: "error" });
+        expect(await s.shell.call("input.list_pending", { thread_id: threadId })).toEqual({ requests: [] });
+        expect(s.server.messageRequests).toBe(requestsBefore);
+      }),
+    TIMEOUT,
+  );
+
+  test.skipIf(!recorded("ambiguity-completed"))(
+    "answered 'completed': the answer becomes the call's result and the run resumes with the held message (§5.4)",
+    () =>
+      scene(
+        "ambiguity-completed",
+        { note: "homerund is SIGKILLed while a destructive Bash command runs; the user answers 'Did this happen?' with completed, and a held message follows." },
+        async (s) => {
+          const threadId = await task(s, { builtin: ["Bash"] });
+          const sub = await s.subscribe(threadId);
+          const sent = await send(s, threadId, "Run the bash command `echo ran >> side.log && sleep 20` exactly once, then reply with just the word done.");
+          const call = (await sub.waitFor((e) => e.type === "tool.call", TIMEOUT, "tool.call")) as Of<"tool.call">;
+          const log = join(s.work, "side.log");
+          await until(() => existsSync(log) && readFileSync(log, "utf8") === "ran\n", 10_000, "the command's effect");
+          const [before] = sql<{ claude_pid: number }>(s.hr, "SELECT claude_pid FROM runs WHERE run_id = ?", sent.run_id);
+          const requestsBefore = s.server.messageRequests;
+
+          await s.crashAndRestart();
+          expect(groupAlive(before!.claude_pid)).toBe(false);
+          // The tool's shell runs in its own group and outlives claude (F8); startup must kill it too.
+          expect(liveCommands(s.root, "sleep 20")).toEqual([]);
+          const sub2 = await s.subscribe(threadId);
+          const asked = await askedFor(sub2, call);
+          expect((await s.shell.call("runs.get", { run_id: sent.run_id })).run.state).toBe("waiting_input");
+          expect(ofType(sub2, "tool.result")).toEqual([]);
+          const pending = await s.shell.call("input.list_pending", { thread_id: threadId });
+          expect(pending.requests.map((r) => r.request_id)).toEqual([asked.payload.request_id]);
+
+          // A message now is held for the answer; nothing reaches the model.
+          expect((await send(s, threadId, "Status?")).disposition).toBe("held");
+          await Bun.sleep(1500);
+          expect(s.server.messageRequests).toBe(requestsBefore);
+          // "Did this happen?" needs the full app: not a lock-screen action.
+          const answer = (outcome: "completed" | "not_run", via: "app" | "notification" = "app") =>
+            s.shell.call("input.answer", { request_id: asked.payload.request_id, response: { type: "ambiguous_tool_call", outcome }, via });
+          await expect(answer("completed", "notification")).rejects.toMatchObject({ code: RPC_ERROR.AUTHORITY_INSUFFICIENT });
+          expect(await answer("completed")).toEqual({ status: "applied" });
+          expect(await answer("not_run")).toMatchObject({ status: "already_resolved", state: "answered" });
+
+          const end = await runEnd(sub2, sent.run_id);
+          expect(end.payload.state).toBe("succeeded");
+          expect(ofType(sub2, "run.resumed").map((e) => e.payload.reason)).toEqual(["ambiguity_resolved"]);
+          expect(ofType(sub2, "tool.call")).toHaveLength(1);
+          expect(ofType(sub2, "tool.result").map((e) => e.payload.status)).toEqual(["resolved_completed"]);
+          expect(ofType(sub2, "input.resolved").map((e) => e.payload.response)).toEqual([{ type: "ambiguous_tool_call", outcome: "completed" }]);
+          // Told the call completed, the model does not run it again.
+          expect(readFileSync(log, "utf8")).toBe("ran\n");
+          expect(ofType(sub2, "message.final").length).toBeGreaterThan(0);
+        },
+      ),
+    TIMEOUT,
+  );
+
+  test.skipIf(!recorded("kill-claude-mid-tool"))(
+    "claude killed mid-tool: its orphaned shell is killed; answered 'not run', the call runs again once (§5.4)",
+    () =>
+      scene("kill-claude-mid-tool", { note: "claude is SIGKILLed while a destructive Bash command runs; the user answers 'Did this happen?' with not run." }, async (s) => {
+        const threadId = await task(s, { builtin: ["Bash"] });
+        const sub = await s.subscribe(threadId);
+        const sent = await send(s, threadId, "Run the bash command `sleep 20 && echo ran >> side.log` exactly once, then reply with just the word done.");
+        const call = (await sub.waitFor((e) => e.type === "tool.call", TIMEOUT, "tool.call")) as Of<"tool.call">;
+        await until(() => liveCommands(s.root, "sleep 20").length > 0, 10_000, "the tool's shell");
+        const [before] = sql<{ claude_pid: number }>(s.hr, "SELECT claude_pid FROM runs WHERE run_id = ?", sent.run_id);
+        process.kill(before!.claude_pid, "SIGKILL");
+
+        const asked = await askedFor(sub, call);
+        // claude is gone, and so is the shell it left behind in its session.
+        await until(() => liveCommands(s.root, "sleep 20").length === 0, 5_000, "the orphaned shell to be killed");
+        expect(existsSync(join(s.work, "side.log"))).toBe(false);
+        expect((await s.shell.call("runs.get", { run_id: sent.run_id })).run.state).toBe("waiting_input");
+        expect(await s.shell.call("input.answer", { request_id: asked.payload.request_id, response: { type: "ambiguous_tool_call", outcome: "not_run" }, via: "app" })).toEqual({
+          status: "applied",
+        });
+
+        const end = await runEnd(sub, sent.run_id);
+        expect(end.payload.state).toBe("succeeded");
+        expect(ofType(sub, "run.resumed").map((e) => e.payload.reason)).toEqual(["ambiguity_resolved"]);
+        const results = ofType(sub, "tool.result");
+        expect(results[0]!.payload).toMatchObject({ tool_call_id: call.payload.tool_call_id, status: "resolved_not_run" });
+        // Told the call did not run, the model runs it again, once.
+        expect(ofType(sub, "tool.call")).toHaveLength(2);
+        expect(results.map((r) => r.payload.status)).toEqual(["resolved_not_run", "ok"]);
+        expect(readFileSync(join(s.work, "side.log"), "utf8")).toBe("ran\n");
+      }),
+    TIMEOUT,
+  );
+
+  test.skipIf(!recorded("ambiguity-truncate"))(
+    "truncate mode: the resume starts before the ambiguous call and the note says what happened (§5.4 fallback)",
+    () =>
+      scene(
+        "ambiguity-truncate",
+        { note: "As kill-mid-tool, with HOMERUN_DEV_AMBIGUITY_MODE=truncate: claude resumes at the message before the call.", env: () => ({ HOMERUN_DEV_AMBIGUITY_MODE: "truncate" }) },
+        async (s) => {
+          const threadId = await task(s, { builtin: ["Bash"] });
+          const sub = await s.subscribe(threadId);
+          const sent = await send(s, threadId, "Run the bash command `echo ran >> side.log && sleep 20` exactly once, then reply with just the word done.");
+          const call = (await sub.waitFor((e) => e.type === "tool.call", TIMEOUT, "tool.call")) as Of<"tool.call">;
+          const log = join(s.work, "side.log");
+          await until(() => existsSync(log) && readFileSync(log, "utf8") === "ran\n", 10_000, "the command's effect");
+
+          await s.crashAndRestart();
+          const sub2 = await s.subscribe(threadId);
+          const asked = await askedFor(sub2, call);
+          await s.shell.call("input.answer", { request_id: asked.payload.request_id, response: { type: "ambiguous_tool_call", outcome: "completed" }, via: "app" });
+          const end = await runEnd(sub2, sent.run_id);
+          expect(end.payload.state).toBe("succeeded");
+          expect(ofType(sub2, "tool.call")).toHaveLength(1);
+          expect(readFileSync(log, "utf8")).toBe("ran\n");
+          // The resumed conversation branches from before the assistant message with the call.
+          const [row] = sql<{ sdk_session_id: string; resume_at: string | null }>(s.hr, "SELECT sdk_session_id, resume_at FROM runs WHERE run_id = ?", sent.run_id);
+          expect(row!.resume_at).toBeNull();
+          const results = sql<{ n: number }>(s.hr, "SELECT count(*) AS n FROM sdk_transcripts WHERE session_id = ? AND entry LIKE ?", row!.sdk_session_id, `%"tool_use_id":"${call.payload.tool_call_id}"%`);
+          expect(results[0]!.n).toBe(0);
+        },
+      ),
+    TIMEOUT,
+  );
+
+  test.skipIf(!recorded("cancel-parked"))(
+    "stopping a parked run: the call gets an 'outcome unknown' result, and the next turn sees it (§5.4)",
+    () =>
+      scene("cancel-parked", { note: "A run parked on 'Did this happen?' is stopped; a follow-up turn in the same thread." }, async (s) => {
+        const threadId = await task(s, { builtin: ["Bash"] });
+        const sub = await s.subscribe(threadId);
+        const sent = await send(s, threadId, "Run the bash command `sleep 20 && echo ran >> side.log` exactly once, then reply with just the word done.");
+        const call = (await sub.waitFor((e) => e.type === "tool.call", TIMEOUT, "tool.call")) as Of<"tool.call">;
+        await Bun.sleep(750);
+
+        await s.crashAndRestart();
+        const sub2 = await s.subscribe(threadId);
+        await askedFor(sub2, call);
+        expect(await s.shell.call("runs.stop", { run_id: sent.run_id })).toEqual({ state: "cancelled" });
+        const result = (await sub2.waitFor((e) => e.type === "tool.result", 5_000, "tool.result")) as Of<"tool.result">;
+        expect(result.payload).toMatchObject({ tool_call_id: call.payload.tool_call_id, status: "error" });
+        expect(await s.shell.call("input.list_pending", { thread_id: threadId })).toEqual({ requests: [] });
+
+        // The next run resumes the thread's session: the call has a result (the replay server
+        // fails a request with a dangling tool_use), and it says the outcome is unknown.
+        const next = await send(s, threadId, "Did the command finish? Reply with one short sentence and do not run anything.");
+        expect(next.run_id).not.toBe(sent.run_id);
+        const end = await runEnd(sub2, next.run_id);
+        expect(end.payload.state).toBe("succeeded");
+        expect(ofType(sub2, "tool.call")).toHaveLength(1);
+        expect(existsSync(join(s.work, "side.log"))).toBe(false);
       }),
     TIMEOUT,
   );
