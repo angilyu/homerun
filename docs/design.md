@@ -2098,8 +2098,8 @@ item failed, the design above has been revised.
    [Evidence](spike-results.md#2-sessionstore-round-trip-through-sqlite).
 3. `defer` from a `PreToolUse` hook; the process exits; resume hours later with
    the answer. **Passed** for defer, exit and resume (mock and real API),
-   after the parallel-call rule in §5.6. The resume after a long gap is
-   **pending** (<!-- 3H-DESIGN -->a scheduled 3-hour run).
+   after the parallel-call rule in §5.6. The resume after a long gap
+   **passed** after 189 minutes (mock API).
    [Evidence](spike-results.md#3-defer-and-resume-later).
 4. Kill in the middle of a tool call; resume; the ambiguous call is detected
    and a user decision ("it did / did not happen") is injected (§5.4).
