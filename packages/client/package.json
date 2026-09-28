@@ -1,0 +1,21 @@
+{
+  "name": "@homerun/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "How a local process finds and talks to homerund: data dir and socket paths, the build channel, and a JSON-RPC client for the unix socket.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@homerun/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
+  }
+}

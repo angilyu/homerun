@@ -18,7 +18,7 @@ They are not redefined here.
 | `src/store/` | SQLite (`db.ts`), forward-only migrations with a `VACUUM INTO` backup (`migrate.ts`, `migrations/`), rows, `thread_events`, blobs over 4 KB, the SDK `SessionStore` mirror |
 | `src/agent/` | `AgentEngine` seam. `claude/` holds the real engine: query options, clean env, process-group spawn, process-tree kill, SDK message → event translation. `fake-engine.ts` is for unit tests. `policy.ts` holds tool classes and permissions |
 | `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run), `recovery` (§5.4), `process-groups` |
-| `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers, and a small client |
+| `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers. The client, the data dir and socket paths and the build channel rule live in [`@homerun/client`](../../packages/client) |
 | `test/unit/` | Fast tests against the fake engine |
 | `test/replay/` | Record/replay harness (§16.2) and the committed cassettes |
 | `test/fixtures/mcp-fixture.ts` | A minimal stdio MCP server used by tests |

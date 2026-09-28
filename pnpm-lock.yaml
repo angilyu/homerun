@@ -23,12 +23,28 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.278
         version: 0.3.278(@anthropic-ai/sdk@0.127.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.0(zod@4.6.5))(zod@4.6.5)
+      '@homerun/client':
+        specifier: workspace:*
+        version: link:../../packages/client
       '@homerun/core':
         specifier: workspace:*
         version: link:../../packages/core
       zod:
         specifier: 4.6.5
         version: 4.6.5
+    devDependencies:
+      '@types/bun':
+        specifier: 1.3.14
+        version: 1.3.14
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/client:
+    dependencies:
+      '@homerun/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/bun':
         specifier: 1.3.14
