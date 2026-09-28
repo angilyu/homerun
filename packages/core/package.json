@@ -1,0 +1,27 @@
+{
+  "name": "@homerun/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Homerun shared contracts: task spec, domain types, thread events, IPC protocol and relay payloads as Zod schemas.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema/*": "./schema/*",
+    "./vectors/*": "./vectors/*"
+  },
+  "files": ["src", "schema", "vectors", "README.md"],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "bun test",
+    "gen": "bun run scripts/gen.ts",
+    "schema:check": "bun run scripts/gen.ts --check"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "ajv": "8.20.0",
+    "typescript": "5.9.3"
+  }
+}

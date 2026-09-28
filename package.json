@@ -8,7 +8,9 @@
   },
   "scripts": {
     "build:homerund": "pnpm --filter @homerun/homerund build",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test:core": "pnpm --filter @homerun/core test",
+    "gen:core": "pnpm --filter @homerun/core gen"
   },
   "devDependencies": {
     "bun": "1.4.2"

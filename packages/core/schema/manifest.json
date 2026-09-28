@@ -1,0 +1,659 @@
+{
+  "protocol": {
+    "version": 1,
+    "supported": {
+      "min": 1,
+      "max": 1
+    },
+    "capabilities": []
+  },
+  "spec_format": 1,
+  "relay_envelope": 1,
+  "events": {
+    "persisted": [
+      "user.message",
+      "message.final",
+      "tool.call",
+      "tool.result",
+      "input.requested",
+      "input.resolved",
+      "run.started",
+      "run.resumed",
+      "run.cancelled",
+      "run.end",
+      "schedule.missed"
+    ],
+    "live_only": [
+      "message.delta",
+      "run.status"
+    ]
+  },
+  "errors": {
+    "PARSE_ERROR": -32700,
+    "INVALID_REQUEST": -32600,
+    "METHOD_NOT_FOUND": -32601,
+    "INVALID_PARAMS": -32602,
+    "INTERNAL_ERROR": -32603,
+    "UNAUTHENTICATED": -32001,
+    "FORBIDDEN": -32002,
+    "INCOMPATIBLE_PROTOCOL": -32003,
+    "NOT_FOUND": -32004,
+    "CONFLICT": -32005,
+    "VALIDATION_FAILED": -32006,
+    "AUTHORITY_INSUFFICIENT": -32007,
+    "HANDSHAKE_REQUIRED": -32008,
+    "UNAVAILABLE": -32009,
+    "BUDGET_EXCEEDED": -32010
+  },
+  "methods": {
+    "hello": {
+      "direction": "to_runtime",
+      "preauth": true,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "HelloParams",
+      "result": "HelloResult",
+      "description": "First request on every connection. Negotiates version and capabilities; authenticates."
+    },
+    "cli.request_access": {
+      "direction": "to_runtime",
+      "preauth": true,
+      "callers": [
+        "cli"
+      ],
+      "params": "CliRequestAccessParams",
+      "result": "CliRequestAccessResult",
+      "description": "An unapproved CLI asks for a token. The app asks the user; the decision arrives as `cli.access_decision` on this connection."
+    },
+    "ping": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "PingParams",
+      "result": "PingResult",
+      "description": "Liveness check."
+    },
+    "tasks.list": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "TasksListParams",
+      "result": "TasksListResult",
+      "description": "Tasks on this device."
+    },
+    "tasks.get": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "TasksGetParams",
+      "result": "TasksGetResult",
+      "description": "One task at its current version."
+    },
+    "tasks.get_version": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "TasksGetVersionParams",
+      "result": "TasksGetVersionResult",
+      "description": "A past version, e.g. the one a run executed."
+    },
+    "tasks.create": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios"
+      ],
+      "params": "TasksCreateParams",
+      "result": "TasksCreateResult",
+      "description": "Create a task, optionally promoting a chat's thread (§2.1)."
+    },
+    "tasks.update": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios"
+      ],
+      "params": "TasksUpdateParams",
+      "result": "TasksUpdateResult",
+      "description": "Edit a task. Fails with CONFLICT unless `expected_version` is current. Bumps the version."
+    },
+    "tasks.archive": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios"
+      ],
+      "params": "TasksArchiveParams",
+      "result": "TasksArchiveResult",
+      "description": "Archive a task and disable its schedules."
+    },
+    "tasks.run_now": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "TasksRunNowParams",
+      "result": "TasksRunNowResult",
+      "description": "Start a manual run. A web caller's run gets `web_read_only` authority (§9.9)."
+    },
+    "schedules.list": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "SchedulesListParams",
+      "result": "SchedulesListResult",
+      "description": "Schedules and their next fire time."
+    },
+    "schedules.set_enabled": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios"
+      ],
+      "params": "SchedulesSetEnabledParams",
+      "result": "SchedulesSetEnabledResult",
+      "description": "Pause or resume a schedule."
+    },
+    "schedules.coverage": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "SchedulesCoverageParams",
+      "result": "SchedulesCoverageResult",
+      "description": "Per-day ran / missed counts for the coverage display (§8.4)."
+    },
+    "grants.list": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "GrantsListParams",
+      "result": "GrantsListResult",
+      "description": "A task's grants."
+    },
+    "grants.create": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios"
+      ],
+      "params": "GrantsCreateParams",
+      "result": "GrantsCreateResult",
+      "description": "Add a grant from settings (e.g. 'Trust this tool', §5.5). 'Always allow' answers create grants via `input.answer`."
+    },
+    "grants.revoke": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "GrantsRevokeParams",
+      "result": "GrantsRevokeResult",
+      "description": "Revoke a grant. Only ever reduces what the agent may do, so the web client may call it."
+    },
+    "threads.list": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "ThreadsListParams",
+      "result": "ThreadsListResult",
+      "description": "Summaries, most recently updated first."
+    },
+    "threads.create": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "ThreadsCreateParams",
+      "result": "ThreadsCreateResult",
+      "description": "Start a one-off chat thread."
+    },
+    "threads.history": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "ThreadsHistoryParams",
+      "result": "ThreadsHistoryResult",
+      "description": "Persisted events before `before_seq` (default: the end), newest page first, ascending within the page."
+    },
+    "threads.subscribe": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "ThreadsSubscribeParams",
+      "result": "ThreadsSubscribeResult",
+      "description": "Stream a thread. Persisted events after `after_seq` arrive first as `thread.event`, then live events. Gap-free by seq."
+    },
+    "threads.unsubscribe": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "ThreadsUnsubscribeParams",
+      "result": "ThreadsUnsubscribeResult",
+      "description": "Stop a subscription."
+    },
+    "threads.mark_read": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "ThreadsMarkReadParams",
+      "result": "ThreadsMarkReadResult",
+      "description": "Move this device's read marker."
+    },
+    "messages.send": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "MessagesSendParams",
+      "result": "MessagesSendResult",
+      "description": "Send a message: starts a run, steers the running one, or is held while it waits for input. Idempotent on client_msg_id."
+    },
+    "runs.list": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "RunsListParams",
+      "result": "RunsListResult",
+      "description": "Runs, newest first."
+    },
+    "runs.get": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "RunsGetParams",
+      "result": "RunsGetResult",
+      "description": "One run."
+    },
+    "runs.stop": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "RunsStopParams",
+      "result": "RunsStopResult",
+      "description": "Request a stop. `run.cancelled` then `run.end` follow."
+    },
+    "runs.retry": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "RunsRetryParams",
+      "result": "RunsRetryResult",
+      "description": "Start a new run with the same trigger inputs as a failed one."
+    },
+    "input.list_pending": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "InputListPendingParams",
+      "result": "InputListPendingResult",
+      "description": "Unanswered input requests."
+    },
+    "input.answer": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "InputAnswerParams",
+      "result": "InputAnswerResult",
+      "description": "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller may not answer it (`INPUT_ANSWER_RIGHTS`, `checkResponse`)."
+    },
+    "monitors.state.get": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "MonitorsStateGetParams",
+      "result": "MonitorsStateGetResult",
+      "description": "The monitor's stored state."
+    },
+    "monitors.state.set": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios"
+      ],
+      "params": "MonitorsStateSetParams",
+      "result": "MonitorsStateSetResult",
+      "description": "Edit the state by hand (§8.3). CONFLICT unless `expected_version` is current."
+    },
+    "monitors.state.reset": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios"
+      ],
+      "params": "MonitorsStateResetParams",
+      "result": "MonitorsStateResetResult",
+      "description": "Clear the state so the next run starts fresh."
+    },
+    "blobs.get": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "BlobsGetParams",
+      "result": "BlobsGetResult",
+      "description": "A page of a large tool input or output. NOT_FOUND once retention has expired it."
+    },
+    "cli.tokens.list": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "CliTokensListParams",
+      "result": "CliTokensListResult",
+      "description": "Approved CLI tokens, for settings."
+    },
+    "cli.tokens.revoke": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "CliTokensRevokeParams",
+      "result": "CliTokensRevokeResult",
+      "description": "Revoke a CLI token. Open connections using it are closed."
+    },
+    "cli.approve": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell"
+      ],
+      "params": "CliApproveParams",
+      "result": "CliApproveResult",
+      "description": "The user approved a CLI access request in the shell's native prompt."
+    },
+    "cli.deny": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell"
+      ],
+      "params": "CliDenyParams",
+      "result": "CliDenyResult",
+      "description": "The user denied a CLI access request."
+    },
+    "secrets.set": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell"
+      ],
+      "params": "SecretsSetParams",
+      "result": "SecretsSetResult",
+      "description": "Hand a keychain secret to the runtime, held in memory only. Never overwrites a newer pending value."
+    },
+    "secrets.clear": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell"
+      ],
+      "params": "SecretsClearParams",
+      "result": "SecretsClearResult",
+      "description": "Forget a secret, e.g. after sign-out."
+    },
+    "secrets.persist": {
+      "direction": "to_shell",
+      "preauth": false,
+      "callers": [],
+      "params": "SecretsPersistParams",
+      "result": "SecretsPersistResult",
+      "description": "Store a runtime-created secret in the keychain. Pending in the runtime until acknowledged."
+    }
+  },
+  "notifications": {
+    "thread.event": {
+      "direction": "runtime_to_client",
+      "recipients": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "ThreadEventNotification",
+      "description": "An event on a subscribed thread, persisted or live-only."
+    },
+    "threads.changed": {
+      "direction": "runtime_to_client",
+      "recipients": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "ThreadsChangedNotification",
+      "description": "A thread's summary changed: new message, unread count, pending input, run state."
+    },
+    "cli.access_decision": {
+      "direction": "runtime_to_client",
+      "recipients": [
+        "cli"
+      ],
+      "params": "CliAccessDecisionNotification",
+      "description": "Sent once to the connection that called `cli.request_access`. The CLI stores the token in its keychain item."
+    },
+    "cli.access_requested": {
+      "direction": "runtime_to_shell",
+      "recipients": [
+        "shell"
+      ],
+      "params": "CliAccessRequestedNotification",
+      "description": "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`."
+    },
+    "power.will_sleep": {
+      "direction": "shell_to_runtime",
+      "recipients": [],
+      "params": "PowerWillSleepNotification",
+      "description": "The OS is about to sleep."
+    },
+    "power.did_wake": {
+      "direction": "shell_to_runtime",
+      "recipients": [],
+      "params": "PowerDidWakeNotification",
+      "description": "The OS woke. The scheduler re-evaluates missed fires (§8.2)."
+    }
+  }
+}
