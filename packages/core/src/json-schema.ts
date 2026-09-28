@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { namedSchemas } from "./registry";
-import { PROTOCOL_VERSION, SUPPORTED_PROTOCOL, CAPABILITIES } from "./protocol/handshake";
+import { PROTOCOL_VERSION, SUPPORTED_PROTOCOL, CAPABILITIES, DEV_ONLY_ROLES, SURFACE_OF_ROLE } from "./protocol/handshake";
+import { INPUT_ANSWER_RIGHTS } from "./input";
 import { METHODS, METHOD_NAMES, NOTIFICATIONS, NOTIFICATION_NAMES, methodSchemaIds, notificationSchemaId } from "./protocol/methods";
 import { ALLOWLISTS, PREAUTH_METHODS, RUNTIME_TO_SHELL_METHODS, SHELL_ONLY_METHODS, NOTIFICATIONS_BY_DIRECTION } from "./protocol/callers";
 import { LIVE_ONLY_EVENT_TYPES, PERSISTED_EVENT_TYPES } from "./events";
@@ -57,6 +58,11 @@ export function buildCallers(): Record<string, unknown> {
     preauth: PREAUTH_METHODS,
     runtime_to_shell: RUNTIME_TO_SHELL_METHODS,
     notifications: NOTIFICATIONS_BY_DIRECTION,
+    /** Refused at `hello` by release builds. */
+    dev_only_roles: DEV_ONLY_ROLES,
+    surface_of_role: SURFACE_OF_ROLE,
+    /** Prompt types each role may answer; `checkResponse` then applies the authority rules. */
+    input_answer_rights: INPUT_ANSWER_RIGHTS,
   };
 }
 

@@ -303,6 +303,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ]
@@ -970,6 +971,22 @@
             "kind": {
               "type": "string",
               "const": "cli_token"
+            },
+            "token": {
+              "$ref": "#/$defs/CliToken"
+            }
+          },
+          "required": [
+            "kind",
+            "token"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "dev_token"
             },
             "token": {
               "$ref": "#/$defs/CliToken"

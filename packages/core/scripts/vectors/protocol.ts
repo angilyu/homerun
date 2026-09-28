@@ -21,6 +21,7 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
       ["shell", hello],
       ["webview connection", { ...hello, role: "webview" }],
       ["cli", { ...hello, role: "cli", auth: { kind: "cli_token", token: F.CLI_TOKEN }, client: { name: "homerun-cli", version: "0.1.0" } }],
+      ["development cli", { ...hello, role: "cli_dev", auth: { kind: "dev_token", token: F.CLI_TOKEN }, client: { name: "homerun-cli", version: "0.1.0-dev" } }],
       ["ios with capabilities", { ...hello, role: "ios", auth: { kind: "paired_device", device_id: F.PHONE }, capabilities: ["future.feature"] }],
       ["range 1..3", { ...hello, protocol: { min: 1, max: 3 } }],
     ],
@@ -32,6 +33,8 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
     badParamsRule: [
       ["cli claiming shell", { ...hello, auth: { kind: "cli_token", token: F.CLI_TOKEN } }],
       ["web with launch token", { ...hello, role: "web" }],
+      ["release cli with a dev token", { ...hello, role: "cli", auth: { kind: "dev_token", token: F.CLI_TOKEN } }],
+      ["cli_dev with a release cli token", { ...hello, role: "cli_dev", auth: { kind: "cli_token", token: F.CLI_TOKEN } }],
       ["min above max", { ...hello, protocol: { min: 2, max: 1 } }],
     ],
     results: [["negotiated", { protocol: 1, runtime_version: "0.1.0", device_id: F.DEVICE, role: "shell", capabilities: [] }]],

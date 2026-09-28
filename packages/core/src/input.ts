@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { named } from "./registry";
-import { Content, DeviceId, RequestId, RunId, TimestampMs, ToolCallId, type Surface } from "./common";
+import { Content, DeviceId, RequestId, RunId, TimestampMs, ToolCallId } from "./common";
 import { GrantProposal } from "./grants";
 import { ToolClass, ToolName } from "./tools";
+import { SURFACE_OF_ROLE, type CallerRole } from "./protocol/handshake";
 
 // ---------------------------------------------------------------- prompts (§5.6)
 
@@ -131,14 +132,40 @@ export function requiredAuthority(p: InputPrompt): RequiredAuthority {
   }
 }
 
-/** Checks a response against its prompt and the answering surface. Returns problems, or []. */
-export function checkResponse(prompt: InputPrompt, response: InputResponse, from: { surface: Surface; via: AnswerVia }): string[] {
+export type InputPromptType = InputPrompt["type"];
+
+/**
+ * Which prompt types each caller role may answer at all, before the authority rules
+ * (`requiredAuthority`) narrow the web client further.
+ *
+ * The release CLI answers questions only. Anything running as the user can invoke the CLI, and
+ * approvals must happen in UI the user can see (§5.2 threat model). "Did this happen?" counts as
+ * an approval here: answering it decides whether a side effect is repeated. The
+ * development-mode CLI (`cli_dev`, refused by release builds) may answer everything, for §16 M6.
+ */
+export const INPUT_ANSWER_RIGHTS: Readonly<Record<CallerRole, readonly InputPromptType[]>> = {
+  shell: ["approval", "question", "ambiguous_tool_call"],
+  webview: ["approval", "question", "ambiguous_tool_call"],
+  cli: ["question"],
+  cli_dev: ["approval", "question", "ambiguous_tool_call"],
+  ios: ["approval", "question", "ambiguous_tool_call"],
+  web: ["approval", "question", "ambiguous_tool_call"],
+};
+
+export function mayAnswer(role: CallerRole, type: InputPromptType): boolean {
+  return INPUT_ANSWER_RIGHTS[role].includes(type);
+}
+
+/** Checks a response against its prompt and the answering caller. Returns problems, or []. */
+export function checkResponse(prompt: InputPrompt, response: InputResponse, from: { role: CallerRole; via: AnswerVia }): string[] {
   const errs: string[] = [];
   if (prompt.type !== response.type) return [`a ${prompt.type} prompt cannot take a ${response.type} response`];
-  if (from.surface === "web" && requiredAuthority(prompt) === "full") errs.push("approve on your phone or Mac");
+  const surface = SURFACE_OF_ROLE[from.role];
+  if (!mayAnswer(from.role, prompt.type)) errs.push("answer this in the Homerun app");
+  if (surface === "web" && requiredAuthority(prompt) === "full") errs.push("approve on your phone or Mac");
   if (prompt.type === "approval" && response.type === "approval" && response.decision === "allow_always") {
     if (!prompt.offer_always || prompt.class === "destructive") errs.push("always allow is not offered for this request");
-    if (from.surface === "web" || from.via === "notification") errs.push("grants need the full app on desktop or iOS");
+    if (surface === "web" || from.via === "notification") errs.push("grants need the full app on desktop or iOS");
     if (response.grant && response.grant.tool !== prompt.tool) errs.push("the grant must be for the requested tool");
   }
   if (from.via === "notification" && !answerableFromNotification(prompt)) errs.push("this request must be answered in the app");

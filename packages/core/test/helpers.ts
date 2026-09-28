@@ -8,7 +8,7 @@ export const PKG = join(import.meta.dir, "..");
 export function loadVectors(): Record<string, Vector[]> {
   const dir = join(PKG, "vectors");
   const out: Record<string, Vector[]> = {};
-  for (const f of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
+  for (const f of readdirSync(dir).filter((f) => f.endsWith(".json") && f !== "answer-rules.json").sort()) {
     out[f.replace(/\.json$/, "")] = JSON.parse(readFileSync(join(dir, f), "utf8")).cases;
   }
   return out;
