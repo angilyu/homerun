@@ -63,6 +63,12 @@ export interface Config {
   anthropicBaseUrl: string | null;
   /** Development only: auto-allow calls that need approval (plan Q2). */
   devAutoApprove: boolean;
+  /**
+   * Development only: how a "Did this happen?" answer reaches the transcript (§5.4). `inject`
+   * (the default) writes it as the call's `tool_result`; `truncate` forces the fallback, resuming
+   * before the call, so tests can exercise it.
+   */
+  devAmbiguityMode: "inject" | "truncate";
   /** Development only: `package@version` → command, for local MCP fixtures (plan Q3). */
   devMcpOverrides: Record<string, McpOverride>;
   /** Default model for one-off chats (plan Q4). */
@@ -134,6 +140,11 @@ export function loadConfig(input: ConfigInput = {}): Config {
   const baseUrl = devOnly("HOMERUN_ANTHROPIC_BASE_URL", env.HOMERUN_ANTHROPIC_BASE_URL) as string | undefined;
   const autoApprove = devOnly("--dev-auto-approve", flag(argv, "dev-auto-approve") || env.HOMERUN_DEV_AUTO_APPROVE === "1") as boolean;
 
+  const ambiguityMode = devOnly("HOMERUN_DEV_AMBIGUITY_MODE", env.HOMERUN_DEV_AMBIGUITY_MODE) as string | undefined;
+  if (ambiguityMode !== undefined && ambiguityMode !== "inject" && ambiguityMode !== "truncate") {
+    throw new Error(`HOMERUN_DEV_AMBIGUITY_MODE must be inject or truncate, not ${ambiguityMode}`);
+  }
+
   const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
   return {
     build,
@@ -155,6 +166,7 @@ export function loadConfig(input: ConfigInput = {}): Config {
     userHome: env.HOME ?? homedir(),
     anthropicBaseUrl: baseUrl ?? null,
     devAutoApprove: autoApprove,
+    devAmbiguityMode: ambiguityMode === "truncate" ? "truncate" : "inject",
     devMcpOverrides: overridesFile ? (JSON.parse(readFileSync(overridesFile, "utf8")) as Record<string, McpOverride>) : {},
     chatModel: (dev && env.HOMERUN_CHAT_MODEL) || "opus",
     chatFallbackModel: dev && env.HOMERUN_CHAT_MODEL ? null : "sonnet",

@@ -172,8 +172,8 @@ describe("content and blobs (§6.1)", () => {
 
 describe("the SDK session store (F1, F2)", () => {
   test("append is idempotent by uuid, keeps order, and separates subagent subpaths", async () => {
-    const { db } = fresh();
-    const s = new SqliteSessionStore(db);
+    const { store } = fresh();
+    const s = new SqliteSessionStore(store);
     const key = { projectKey: "homerun", sessionId: "s1" };
     const e = (uuid: string, n: number) => ({ type: "user", uuid, n }) as never;
     await s.append(key, [e("u1", 1), e("u2", 2)]);

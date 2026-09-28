@@ -75,6 +75,8 @@ export interface EngineStart {
   /** Resolved stdio MCP servers, by spec id. */
   mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
   resume: string | null;
+  /** With `resume`: continue from this transcript entry, dropping what follows (`resumeSessionAt`). */
+  resumeAt?: string | null;
   env: Record<string, string>;
   initialInputs: UserInput[];
   gate: ToolGate;

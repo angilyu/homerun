@@ -15,6 +15,7 @@ import {
 } from "@homerun/core";
 import type { z } from "zod";
 import { RUNTIME_VERSION } from "../config";
+import { AnswerRejected } from "../runs/ambiguity";
 import { now, type RunContext } from "../runs/context";
 import type { RunManager } from "../runs/manager";
 import { getBlob } from "../store/content";
@@ -188,11 +189,18 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     },
 
     "input.list_pending": (_c, p) => ({ requests: pendingInputRequests(store, p.thread_id ? { threadId: p.thread_id } : {}) }),
-    "input.answer": (_c, p) => {
+    "input.answer": (conn, p) => {
       const r = getInputRequest(store, p.request_id);
       if (!r) throw notFound("input request");
-      const what = r.prompt.type === "ambiguous_tool_call" ? "Answering 'Did this happen?'" : "Answering input requests";
-      throw new RpcFail(RPC_ERROR.UNAVAILABLE, `${what} arrives in a later version of Homerun.`, { not_implemented: true });
+      if (r.prompt.type !== "ambiguous_tool_call") {
+        throw new RpcFail(RPC_ERROR.UNAVAILABLE, "Answering approvals and questions arrives in a later version of Homerun.", { not_implemented: true });
+      }
+      try {
+        return manager.answerAmbiguous(p.request_id, { response: p.response, role: conn.role!, via: p.via, origin: originOf(conn) });
+      } catch (e) {
+        if (e instanceof AnswerRejected) throw new RpcFail(e.reason === "authority" ? RPC_ERROR.AUTHORITY_INSUFFICIENT : RPC_ERROR.VALIDATION_FAILED, e.message);
+        throw e;
+      }
     },
   };
 }

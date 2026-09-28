@@ -11,8 +11,10 @@ import {
   tryInsertRun,
   updateRun,
 } from "../store/rows";
+import { AmbiguityResolver, type Answer, type AnswerResult } from "./ambiguity";
 import { now, type RunContext } from "./context";
 import { finishRun } from "./finish";
+import { UNKNOWN_TEXT } from "./resume";
 import type { Scheduler } from "./scheduler";
 
 /** A request about something that does not exist (mapped to NOT_FOUND). */
@@ -42,10 +44,19 @@ export interface SendMessage {
 
 /** Messages, stops and thread/task creation: the write side of the protocol (plan §3.1). */
 export class RunManager {
+  private resolver: AmbiguityResolver;
+
   constructor(
     private ctx: RunContext,
     private scheduler: Scheduler,
-  ) {}
+  ) {
+    this.resolver = new AmbiguityResolver(ctx.store, ctx.config.devAmbiguityMode, () => this.scheduler.kick());
+  }
+
+  /** input.answer for "Did this happen?" (§5.4). Throws AnswerRejected. */
+  answerAmbiguous(requestId: string, a: Answer): AnswerResult {
+    return this.resolver.answer(requestId, a, now(this.ctx));
+  }
 
   createThread(title?: string): Thread {
     return createThread(this.ctx.store, { title: title ?? null, now: now(this.ctx) });
@@ -149,7 +160,7 @@ export class RunManager {
     store.tx(() => {
       updateRun(store, runId, { stop_requested_at: t, stop_by: by ? JSON.stringify(by) : null });
       appendEvent(store, row.thread_id, runId, "run.cancelled", { by, reason: "user" }, t);
-      finishRun(store, runId, "cancelled", null, { now: t });
+      finishRun(store, runId, "cancelled", null, { now: t, unresolved: UNKNOWN_TEXT });
     });
     this.scheduler.kick();
     return "cancelled";

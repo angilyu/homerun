@@ -10,12 +10,13 @@ import { decide, type PolicySpec } from "../agent/policy";
 import { RUNTIME_VERSION } from "../config";
 import { log } from "../log";
 import { toContent } from "../store/content";
-import { appendEvent, callsWithoutResult, findToolEvent, publishLive } from "../store/events";
+import { appendEvent, findToolEvent, publishLive } from "../store/events";
 import { getRunRow, lastSessionRun, markInputsConsumed, pendingInputs, setRunState, updateRun, type RunRow } from "../store/rows";
 import { PROJECT_KEY, transcriptHasInput } from "../store/session-store";
 import { now, type RunContext } from "./context";
 import { finishRun } from "./finish";
 import { recoverRun } from "./recovery";
+import { prepareResume } from "./resume";
 import { specForRun } from "./specs";
 
 /** Deltas are coalesced into one live event per message every ~75 ms (§9.8). */
@@ -156,6 +157,10 @@ export class RunDriver {
     this.costBaseline = row.sdk_session_id ? (row.sdk_cost_total ?? 0) : (prev?.sdk_cost_total ?? 0);
     updateRun(this.store, this.runId, { sdk_cost_baseline: this.costBaseline, ...(resume && !row.sdk_session_id ? { sdk_session_id: resume } : {}) });
 
+    // Give every call the transcript left open the result Homerun recorded, or truncate before
+    // it (§5.4), so the model does not see "interrupted" and run it again.
+    const resumeAt = resume ? prepareResume(this.store, row, resume, now(this.ctx)).resumeAt : null;
+
     const inputs: UserInput[] = [];
     const delivered: string[] = [];
     for (const i of pendingInputs(this.store, this.runId)) {
@@ -165,7 +170,10 @@ export class RunDriver {
     if (delivered.length) markInputsConsumed(this.store, delivered, now(this.ctx));
     if (row.resume_note) {
       this.noteUuid = randomUUID();
-      inputs.push({ uuid: this.noteUuid, text: row.resume_note });
+      // After a "Did this happen?" answer the note explains the injected results, so it comes
+      // before messages that were held while the run waited.
+      if (row.resume_reason === "ambiguity_resolved") inputs.unshift({ uuid: this.noteUuid, text: row.resume_note });
+      else inputs.push({ uuid: this.noteUuid, text: row.resume_note });
     }
     if (inputs.length === 0) {
       this.end("succeeded", null);
@@ -186,6 +194,7 @@ export class RunDriver {
       builtinTools: spec.tools.builtin,
       mcpServers,
       resume,
+      resumeAt,
       env: claudeEnv({
         apiKey,
         claudeConfigDir: cfg.claudeConfigDir,
@@ -433,6 +442,7 @@ export class RunDriver {
     if (this.noteUuid && !this.pushed.has(this.noteUuid)) {
       fields.resume_note = null;
       fields.resume_reason = null;
+      fields.resume_at = null;
       this.noteUuid = null;
     }
     if (r.ok) fields.resume_count = 0;
@@ -482,12 +492,7 @@ export class RunDriver {
     const t = now(this.ctx);
     const pid = this.engine?.pid ?? null;
     if (!wasShutdown) {
-      this.store.tx(() => {
-        for (const c of callsWithoutResult(this.store, this.runId)) {
-          appendEvent(this.store, this.threadId, this.runId, "tool.result", { tool_call_id: c.payload.tool_call_id, status: "error", output: null, error: NO_RESULT }, t);
-        }
-        finishRun(this.store, this.runId, state, error, { now: t, reapPgid: pid });
-      });
+      finishRun(this.store, this.runId, state, error, { now: t, reapPgid: pid, unresolved: NO_RESULT });
     }
     void this.reap();
   }

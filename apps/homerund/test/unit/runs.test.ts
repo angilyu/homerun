@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { FakeScript } from "../../src/agent/fake-engine";
 import { RESUME_LIMIT } from "../../src/runs/recovery";
 import { NO_RESULT, STOPPED_REASON } from "../../src/runs/driver";
+import { UNKNOWN_TEXT } from "../../src/runs/resume";
+import { findToolEvent } from "../../src/store/events";
 import { getRunRow, pendingInputRequests } from "../../src/store/rows";
 import { APPROVALS_UNAVAILABLE } from "../../src/agent/policy";
 import { DESKTOP, persisted, sessionSpec, testRuntime, types, until, uuid, type TestRuntime } from "../helpers";
@@ -332,7 +334,9 @@ describe("the agent dies while the runtime keeps running (Q11)", () => {
     expect(send("hello?", task.thread.thread_id)).toMatchObject({ run_id: r.run_id, disposition: "held" });
     // Stopping cancels the request.
     rt.manager.stop(r.run_id, DESKTOP(rt.ctx.device.device_id));
-    expect(types(rt.store, task.thread.thread_id).slice(-3)).toEqual(["run.cancelled", "input.resolved", "run.end"]);
+    // The call gets a result, so the transcript can be settled if the thread goes on.
+    expect(types(rt.store, task.thread.thread_id).slice(-4)).toEqual(["run.cancelled", "tool.result", "input.resolved", "run.end"]);
+    expect(findToolEvent(rt.store, task.thread.thread_id, "tool.result", "t1")!.payload).toMatchObject({ status: "error", error: UNKNOWN_TEXT });
   });
 
   test(`a run that keeps dying is abandoned after ${RESUME_LIMIT} resumes`, async () => {

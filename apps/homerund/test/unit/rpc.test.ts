@@ -237,7 +237,7 @@ describe("threads over the socket", () => {
     expect(new Set(out.map((o) => o.seq)).size).toBe(8);
   });
 
-  test("runs.stop cancels a queued run; input.answer is not available yet", async () => {
+  test("runs.stop cancels a queued run", async () => {
     srt = await socketRuntime({ script });
     const shell = await srt.shell();
     const { thread } = await shell.call("threads.create", {});
@@ -292,8 +292,9 @@ describe("threads.list and blobs.get", () => {
     // A queued run with a pending request: no key, so it stays pending.
     await shell.call("secrets.clear", { name: "anthropic_api_key" });
     const sent = await shell.call("messages.send", { thread_id: b.thread_id, client_msg_id: uuid(), text: "wait" });
+    const questionId = uuid();
     insertInputRequest(srt.rt.store, {
-      request_id: uuid(),
+      request_id: questionId,
       run_id: sent.run_id,
       kind: "question",
       tool_call_id: null,
@@ -308,6 +309,10 @@ describe("threads.list and blobs.get", () => {
     const pb = (await shell.call("threads.list", {})).threads.find((x) => x.thread_id === b.thread_id)!;
     expect(pb).toMatchObject({ input_pending: true, active_run: { run_id: sent.run_id, state: "pending" } });
     expect(pb.last_message).toMatchObject({ role: "user", preview: "wait" });
+    // Only "Did this happen?" can be answered so far.
+    const na = await rejects(shell.raw("input.answer", { request_id: questionId, response: { type: "question", answers: [{ selected: ["x"] }] }, via: "app" }));
+    expect(na.code).toBe(RPC_ERROR.UNAVAILABLE);
+    expect(na.data).toEqual({ not_implemented: true });
 
     const page1 = await shell.call("threads.list", { limit: 2 });
     expect(page1.threads).toHaveLength(2);
