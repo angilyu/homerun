@@ -7,6 +7,7 @@ import {
   Task,
   TaskSpec,
   Thread,
+  ThreadSummary,
   canTransition,
   type Authority,
   type RunError,
@@ -14,6 +15,7 @@ import {
   type RunTrigger,
   type TaskKind,
 } from "@homerun/core";
+import { preview } from "./content";
 import type { Store } from "./store";
 
 // ---------------------------------------------------------------- device (§12)
@@ -71,6 +73,86 @@ export function createThread(store: Store, opts: { taskId?: string | null; title
 export function getThread(store: Store, threadId: string): Thread | null {
   const r = store.db.query<ThreadRow, [string]>("SELECT * FROM threads WHERE thread_id = ?").get(threadId);
   return r ? Thread.parse(r) : null;
+}
+
+type SummaryRow = ThreadRow & { msg_seq: number | null; msg_type: string | null; msg_payload: string | null; msg_ts: number | null; input_pending: number; run_id: string | null; run_state: string | null };
+
+/**
+ * threads.list (§5.7): summaries, most recently updated first. `unread_count` is 0 until
+ * per-device read markers and `threads.mark_read` arrive with the desktop app (M3 plan Q9).
+ *
+ * The cursor is `updated_before` alone, so a page never ends inside a group of threads with the
+ * same `updated_at`: the group moves to the next page, or, if it would fill a page by itself,
+ * this page holds the whole group (more than `limit`). Otherwise the next page's
+ * `updated_before` would skip the rest of the group.
+ */
+export function listThreadSummaries(store: Store, o: { limit: number; updatedBefore?: number; taskId?: string }): { threads: ThreadSummary[]; has_more: boolean } {
+  const query = (cond: { before?: number; at?: number }, limit: number | null): SummaryRow[] => {
+    const where: string[] = [];
+    const args: Array<string | number> = [];
+    if (cond.before !== undefined) {
+      where.push("t.updated_at < ?");
+      args.push(cond.before);
+    }
+    if (cond.at !== undefined) {
+      where.push("t.updated_at = ?");
+      args.push(cond.at);
+    }
+    if (o.taskId !== undefined) {
+      where.push("t.task_id = ?");
+      args.push(o.taskId);
+    }
+    if (limit !== null) args.push(limit);
+    return store.db
+      .query<SummaryRow, Array<string | number>>(
+        `SELECT t.*,
+           m.seq AS msg_seq, m.type AS msg_type, m.payload AS msg_payload, m.ts AS msg_ts,
+           EXISTS (SELECT 1 FROM input_requests i JOIN runs ir ON ir.run_id = i.run_id WHERE ir.thread_id = t.thread_id AND i.state = 'pending') AS input_pending,
+           r.run_id AS run_id, r.state AS run_state
+         FROM threads t
+         LEFT JOIN thread_events m ON m.thread_id = t.thread_id AND m.seq = (
+           SELECT MAX(seq) FROM thread_events WHERE thread_id = t.thread_id AND type IN ('user.message', 'message.final'))
+         LEFT JOIN runs r ON r.thread_id = t.thread_id AND r.state IN ('pending', 'running', 'waiting_input')
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+         ORDER BY t.updated_at DESC, t.thread_id DESC
+         ${limit !== null ? "LIMIT ?" : ""}`,
+      )
+      .all(...args);
+  };
+
+  const rows = query({ before: o.updatedBefore }, o.limit + 1);
+  let page = rows.slice(0, o.limit);
+  let hasMore = rows.length > o.limit;
+  if (hasMore) {
+    const next = rows[o.limit]!.updated_at;
+    page = page.filter((r) => r.updated_at > next);
+    if (!page.length) {
+      page = query({ at: next }, null);
+      hasMore = query({ before: next }, 1).length > 0;
+    }
+  }
+  const threads = page.map((r) =>
+    ThreadSummary.parse({
+      thread_id: r.thread_id,
+      task_id: r.task_id,
+      title: r.title,
+      last_seq: r.last_seq,
+      updated_at: r.updated_at,
+      last_message:
+        r.msg_seq !== null
+          ? {
+              seq: r.msg_seq,
+              role: r.msg_type === "user.message" ? "user" : "assistant",
+              preview: preview((JSON.parse(r.msg_payload!) as { text: string }).text),
+              ts: r.msg_ts!,
+            }
+          : null,
+      unread_count: 0,
+      input_pending: r.input_pending === 1,
+      active_run: r.run_id ? { run_id: r.run_id, state: r.run_state } : null,
+    }),
+  );
+  return { threads, has_more: hasMore };
 }
 
 // ---------------------------------------------------------------- tasks (§6)

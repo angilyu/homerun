@@ -15,10 +15,11 @@ import {
 } from "@homerun/core";
 import type { z } from "zod";
 import { RUNTIME_VERSION } from "../config";
-import type { RunContext } from "../runs/context";
+import { now, type RunContext } from "../runs/context";
 import type { RunManager } from "../runs/manager";
+import { getBlob } from "../store/content";
 import { eventsAfter, historyPage, lastSeq } from "../store/events";
-import { getInputRequest, getRunRow, getTask, getThread, listRuns, listTasks, pendingInputRequests, rowToRun } from "../store/rows";
+import { getInputRequest, getRunRow, getTask, getThread, listRuns, listTasks, listThreadSummaries, pendingInputRequests, rowToRun } from "../store/rows";
 import type { Authenticator } from "./auth";
 
 /** A JSON-RPC error a handler wants to send as is. */
@@ -59,6 +60,7 @@ export type Handlers = { [M in MethodName]?: Handler<M> };
 
 const BACKLOG_PAGE = 1000;
 const HISTORY_DEFAULT = 100;
+const THREADS_DEFAULT = 50;
 
 export function makeHandlers(d: HandlerDeps): Handlers {
   const { ctx, manager } = d;
@@ -94,6 +96,13 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       ctx.secrets.clear(p.name);
       return { ok: true as const };
     },
+
+    "threads.list": (_c, p) =>
+      listThreadSummaries(store, {
+        limit: p.limit ?? THREADS_DEFAULT,
+        ...(p.updated_before !== undefined ? { updatedBefore: p.updated_before } : {}),
+        ...(p.task_id ? { taskId: p.task_id } : {}),
+      }),
 
     "threads.create": (_c, p) => ({ thread: manager.createThread(p.title) }),
 
@@ -163,6 +172,20 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       return { task: t };
     },
     "tasks.list": (_c, p) => ({ tasks: listTasks(store, p.kind, p.include_archived ?? false) }),
+
+    "blobs.get": (_c, p) => {
+      const b = getBlob(store, p.sha256, now(ctx));
+      if (!b) throw notFound("blob");
+      if (p.offset > b.size) throw new RpcFail(RPC_ERROR.VALIDATION_FAILED, `offset ${p.offset} is past the end of the blob (${b.size} bytes)`);
+      const end = Math.min(b.size, p.offset + p.length);
+      return {
+        sha256: p.sha256,
+        size: b.size,
+        offset: p.offset,
+        data: Buffer.from(b.bytes.subarray(p.offset, end)).toString("base64"),
+        eof: end >= b.size,
+      };
+    },
 
     "input.list_pending": (_c, p) => ({ requests: pendingInputRequests(store, p.thread_id ? { threadId: p.thread_id } : {}) }),
     "input.answer": (_c, p) => {
