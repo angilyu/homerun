@@ -187,131 +187,124 @@ pnpm --filter @homerun/core schema:check  # fail if schema/ or vectors/ are stal
 No linter is configured in the repository, so CI runs typecheck, tests and `schema:check`
 (`.github/workflows/ci.yml`).
 
-## Design gaps found
+## Rules beyond the design
 
-`docs/design.md` is the source of truth. Where turning it into schemas needed a decision, it is
-recorded here.
+[`docs/design.md`](../../docs/design.md) is the source of truth. These rules fill in detail the
+design leaves open; the schemas enforce them. D-numbers are cited from code and tests.
 
-### Decided in review (PR #2)
+### Authority and callers
 
-- **Q1. Web cannot edit tasks.** §9.9 says the `web_read_only` run is "the only per-surface
-  difference in authority". But a web client that could edit a monitor's prompt, tools or roots
-  would get full authority at the next scheduled fire, because scheduled runs have no origin.
-  **Decision:** web may not call `tasks.create`, `tasks.update`, `tasks.archive`,
+- **Web cannot edit tasks.** Web may not call `tasks.create`, `tasks.update`, `tasks.archive`,
   `schedules.set_enabled`, `grants.create`, `monitors.state.set` or `monitors.state.reset`
-  (`NOT_WEB` in `methods.ts`). Widening the allowlist later is additive.
-- **Q2. Only the development-mode CLI answers approvals.** The §5.2 threat model says approvals
-  always happen "in UI the user can see", and anything running as the user can invoke the CLI
-  binary. The §16 M6 exit criterion includes "answer from CLI", and M6 comes before the desktop
-  app (M7). **Decision:**
+  (`NOT_WEB` in `methods.ts`). A web client that could edit a monitor's prompt, tools or roots
+  would get full authority at its next scheduled fire, because scheduled runs have no origin.
+- **Only the development-mode CLI answers approvals.** Anything running as the user can invoke
+  the CLI binary (§5.2).
   - A separate caller role, `cli_dev`, is authenticated by `auth.kind: "dev_token"` (the
     development-mode token of §16 M3). Release builds of the runtime refuse it at `hello`
-    (`DEV_ONLY_ROLES`, `roleAllowedInBuild`). It has the same methods as `cli`. How a
-    dev token is issued is for M3 to define; it uses the same 43-character format as CLI tokens.
+    (`DEV_ONLY_ROLES`, `roleAllowedInBuild`). It has the same methods as `cli`. A dev token uses
+    the same 43-character format as CLI tokens.
   - `INPUT_ANSWER_RIGHTS` (also in `schema/callers.json`) lists the prompt types each role may
     answer. The release `cli` role answers questions only. `cli_dev` answers everything.
   - **"Did this happen?" counts as an approval** for this rule, so the release CLI can't answer
     it: the answer decides whether a side effect is repeated or treated as done.
-  - `checkResponse` takes the answering role, not a surface. Both CLI roles still record
+  - `checkResponse` takes the answering role, not a surface. Both CLI roles record
     `surface: "cli"` (`SURFACE_OF_ROLE`).
-  - The CLI still can't grant itself access: `cli.approve` and `cli.deny` are shell-only.
+  - The CLI can't grant itself access: `cli.approve` and `cli.deny` are shell-only.
+- **"Did this happen?" needs full authority unless the call was `read`.** After "not run" the
+  model re-issues the call, and an existing grant in a full-authority run would let it through
+  with no new approval. So `requiredAuthority` follows the call's class, as for approvals:
+  `read` → any, otherwise full. §5.4 resumes read calls without asking, so in practice only
+  desktop (shell or webview), iOS and `cli_dev` answer it.
+- **D4. Webview connection.** The shell forwards webview calls on a separate connection whose
+  `hello` declares `role: "webview"`. The runtime pins that connection to the webview allowlist,
+  so "never from forwarded webview calls" (§5.2) is enforced by the runtime as well as by the
+  shell.
+- **D8. Full v1 method surface**, provisional until milestone 7 (see *IPC methods* above).
 
-- **Q3. "Did this happen?" needs full authority unless the call was `read`.** After "not run",
-  the model re-issues the call, and an existing grant in a full-authority run would let it
-  through with no new approval. So a web answer could repeat a `write` side effect.
-  **Decision:** `requiredAuthority` follows the call's class, as for approvals: `read` → any,
-  otherwise full. §5.4 resumes read calls without asking, so in practice only desktop (shell or
-  webview) and iOS answer it, plus `cli_dev` (Q2). This matches the D5 approval ("requires full
-  authority, never web").
-
-### Decisions (approved in the milestone 1 plan)
+### Schedules and runs
 
 - **D1. Interval schedules.** `ScheduleSpec` = `CronSchedule` \| `IntervalSchedule`
   (`every_minutes`). An interval is stored in `schedules.cron` as `@every <n>m`
   (`scheduleCronColumn`). "Every 15 minutes" is measured in elapsed time (§8); written as
   `*/15 * * * *`, the fall-back overlap rule would lose an hour of fires.
 - **D2. Monitor retries.** A retry is a new run of the same fire with `attempt` 1–2
-  (`MAX_RUN_ATTEMPT`); `dedupe_key` is opaque to core. This reconciles `UNIQUE(dedupe_key)` with
-  §5.3's two retries. M5 fixes the key format, for example `task:fire:attempt`.
-- **D3. Missing `runs` columns.** Added `Run.check_result` (§8.3: evidence "stored with the run")
-  and `Run.cost_usd` (§7.4: cost summed per task). `run.end` also carries `cost_usd`.
-- **D4. Webview connection.** The shell forwards webview calls on a separate connection whose
-  `hello` declares `role: "webview"`. The runtime pins that connection to the webview allowlist,
-  so "never from forwarded webview calls" (§5.2) is enforced by the runtime as well as by the
-  shell.
-- **D5. "Did this happen?"** (§5.4) is its own prompt, `ambiguous_tool_call`, with the response
-  `outcome: completed | not_run`. It is stored as `kind: "question"` because §6 allows only
-  approval|question. It needs full authority unless the call was `read` (Q3), and for who may
-  answer it, it counts as an approval (Q2): desktop, iOS and `cli_dev` only.
-- **D6. AskUserQuestion shape.** A question prompt holds 1–4 questions in the SDK's shape
-  (options with label and description, `multi_select`, optional free-form text), and the
-  response holds one answer per question.
-- **D7. Lifecycle events.**
-  - `run.cancelled` means a stop was requested (by whom, and why).
-  - `run.end` is the single terminal event: state, outcome, error and cost.
-  - Added persisted `run.started` (trigger, authority, origin, `task_version`), `run.resumed` and
-    `schedule.missed`, plus the live-only `run.status`.
-  - A no-change monitor fire persists nothing (§8.3).
-- **D8. Full v1 method surface**, provisional until M7 (see *IPC methods* above).
-- **D9. Network "Always allow"** creates a `WebFetch` grant for the domain; it does not edit the
-  spec or bump its version. The effective egress allowlist is the spec's domains ∪ the network
-  grants (`effectiveEgressDomains`).
-- **D10. Every `tool.call` gets a `tool.result`.** `status` is one of `ok`, `error`, `denied`,
-  `resolved_completed`, `resolved_not_run` or `interrupted_retryable`. The last three are written
-  during crash resume (§5.4), so a denied call is never mistaken for an ambiguous one.
-
-### Smaller gaps filled
-
-**Ids, formats and wire conventions**
-- Homerun ids are lowercase UUIDs; SDK ids (tool calls, sessions) are opaque strings.
-  Timestamps are integer milliseconds since the epoch.
-- The IPC is JSON-RPC 2.0, one frame per line (maximum 4 MiB). Frames must include
-  `"jsonrpc":"2.0"` (the spike omits it), and params are passed by name only.
-- Content is tagged: `{kind:"inline", value}` or `{kind:"blob", sha256, size, preview}`. A JSON
-  value can never be mistaken for a blob reference. `blobs.get` pages are at most 1 MiB.
-- The pairing code format isn't in the design; it is 16–64 characters of base64url.
-- Secret names form an extensible enum: `anthropic_api_key`, `device_static_key`,
-  `refresh_token`.
-- Model ids are free-form strings (§7.2), because Bedrock, Vertex and Foundry ids differ.
-
-**Surfaces and the CLI**
-- `Origin = {device_id, surface}`, where `surface` is desktop, cli, ios or web. How an answer
-  arrived is a separate field, `via: app | notification`, so a notification answer from iOS is
-  still `surface: ios`.
-- The CLI flow: `cli.request_access` is preauth, and the shell receives `cli.access_requested`.
-  The user decides in a native prompt, which calls the shell-only `cli.approve` or `cli.deny`.
-  The CLI then receives `cli.access_decision` with a token. Tokens are listed and revoked by the
-  local UI (`cli.tokens.*`).
-- The shell sends `power.will_sleep` and `power.did_wake` to the runtime.
-
-**Tools, grants and policy**
-- Shell metacharacters are the design's list plus a lone `&`, newline and carriage return (this
-  only tightens the rule).
-- "Trusted tools" are grants, created from settings through `grants.create`, not a separate list
-  in the spec.
-- `AskUserQuestion` is classed `read`: it has no side effect and only raises a question.
-- Only half of the open-egress rule can be checked statically ("no roots"). The trusted-MCP half is
-  left to runtime policy.
-- `Budget.monthly_cap_usd`: §7.4 has per-task caps but no period, so monthly is a guess.
-
-**Runs, schedules and events**
+  (`MAX_RUN_ATTEMPT`); `dedupe_key` is opaque to core, which keeps `UNIQUE(dedupe_key)`
+  compatible with §5.3's two retries. Milestone 5 fixes the key format, for example
+  `task:fire:attempt`.
+- **D3. Run columns.** `Run.check_result` (§8.3: evidence stored with the run) and `Run.cost_usd`
+  (§7.4: cost summed per task). `run.end` also carries `cost_usd`.
 - `abandoned` means ending without an agent outcome: a fire merged by `run_once` catch-up, or a
   run that can't be resumed. `RUN_STATE_TRANSITIONS` documents the legal transitions, and tests
   cover them.
 - The monitor schedule lives in the (versioned) spec. `enabled`, `next_fire_at` and
   `last_fired_at` are scheduler state (`ScheduleState`), so pausing a monitor doesn't create a
   task version. v1 allows one schedule per monitor.
+- `Budget.monthly_cap_usd`: the budget period is monthly.
+
+### Input requests
+
+- **D5. "Did this happen?"** (§5.4) is its own prompt, `ambiguous_tool_call`, with the response
+  `outcome: completed | not_run`. It is stored as `kind: "question"`, because §6 allows only
+  approval or question. Its authority and who may answer it are under *Authority and callers*.
+- **D6. AskUserQuestion shape.** A question prompt holds 1–4 questions in the SDK's shape
+  (options with label and description, `multi_select`, optional free-form text), and the
+  response holds one answer per question.
+
+### Events
+
+- **D7. Lifecycle events.**
+  - `run.cancelled` means a stop was requested (by whom, and why).
+  - `run.end` is the single terminal event: state, outcome, error and cost.
+  - Persisted `run.started` (trigger, authority, origin, `task_version`), `run.resumed` and
+    `schedule.missed`, plus the live-only `run.status`.
+  - A no-change monitor fire persists nothing (§8.3).
+- **D10. Every `tool.call` gets a `tool.result`.** `status` is one of `ok`, `error`, `denied`,
+  `resolved_completed`, `resolved_not_run` or `interrupted_retryable`. The last three are written
+  during crash resume (§5.4), so a denied call is never mistaken for an ambiguous one.
 - `schedule.missed` carries a `count` and a `skipped_by_policy` reason.
 - `run.resumed` carries `ambiguity_resolved`, and `run.status` has a `stopping` detail.
-- Added `schedules.coverage` (§8.4 health view) and `threads.mark_read`. Unread counts need a
-  per-device read marker, which §6 lacks; the storage is M2's to design.
+- `schedules.coverage` serves the §8.4 health view, and `threads.mark_read` sets a per-device
+  read marker for unread counts.
 
-### Out of scope here
+### Tools, grants and policy
 
-- Next-fire and DST computation: M5, with its fake-clock suite. Core only validates schedules and
-  documents the semantics.
-- Bash pattern matching: M6.
-- SQL and migrations: M2.
-- Crypto and ciphertext test vectors: M9.
-- The spike runtime and the Rust shell's `RUNTIME_METHODS`: the shell moves to
-  `schema/callers.json` in M7.
+- **D9. Network "Always allow"** creates a `WebFetch` grant for the domain; it does not edit the
+  spec or bump its version. The effective egress allowlist is the spec's domains ∪ the network
+  grants (`effectiveEgressDomains`).
+- Shell metacharacters are the design's list plus a lone `&`, newline and carriage return.
+- "Trusted tools" are grants, created from settings through `grants.create`, not a separate list
+  in the spec.
+- `AskUserQuestion` is classed `read`: it has no side effect and only raises a question.
+- Only half of the open-egress rule can be checked statically ("no roots"). The trusted-MCP half is
+  left to runtime policy.
+
+### Ids, formats and wire conventions
+
+- Homerun ids are lowercase UUIDs; SDK ids (tool calls, sessions) are opaque strings.
+  Timestamps are integer milliseconds since the epoch.
+- The IPC is JSON-RPC 2.0, one frame per line (maximum 4 MiB). Frames must include
+  `"jsonrpc":"2.0"`, and params are passed by name only.
+- Content is tagged: `{kind:"inline", value}` or `{kind:"blob", sha256, size, preview}`. A JSON
+  value can never be mistaken for a blob reference. `blobs.get` pages are at most 1 MiB.
+- A pairing code is 16–64 characters of base64url.
+- Secret names form an extensible enum: `anthropic_api_key`, `device_static_key`,
+  `refresh_token`.
+- Model ids are free-form strings (§7.2), because Bedrock, Vertex and Foundry ids differ.
+- `Origin = {device_id, surface}`, where `surface` is desktop, cli, ios or web. How an answer
+  arrived is a separate field, `via: app | notification`, so a notification answer from iOS is
+  still `surface: ios`.
+- The CLI access flow: `cli.request_access` is preauth, and the shell receives
+  `cli.access_requested`. The user decides in a native prompt, which calls the shell-only
+  `cli.approve` or `cli.deny`. The CLI then receives `cli.access_decision` with a token. Tokens
+  are listed and revoked by the local UI (`cli.tokens.*`).
+- The shell sends `power.will_sleep` and `power.did_wake` to the runtime.
+
+### Where the rest lives
+
+- Next-fire and DST computation: milestone 5, with its fake-clock suite. Core only validates
+  schedules and documents the semantics.
+- Bash pattern matching: milestone 6.
+- SQL and migrations: `apps/homerund` (`src/store/migrations/`).
+- Crypto and ciphertext test vectors: milestone 9.
+- The Rust shell's `RUNTIME_METHODS` moves to `schema/callers.json` in milestone 7.
