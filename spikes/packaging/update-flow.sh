@@ -49,12 +49,12 @@ trap cleanup EXIT
 sleep 1
 
 # Fresh keychain item: v_from creates it, so its ACL trusts v_from's designated requirement.
-security delete-generic-password -s dev.homerun.app -a anthropic-api-key >/dev/null 2>&1
+security delete-generic-password -s com.angilyu.homerun -a anthropic-api-key >/dev/null 2>&1
 
 export HOMERUN_UPDATE_CWD="$W/cwd"
 export HOMERUN_UPDATE_PROMPT='Run `sleep 25 && echo step1 >> progress.log` with Bash. When it finishes, run `echo step2 >> progress.log`. Then reply with the single word DONE.'
 # A crashed earlier launch leaves AppKit crash-restore state that shows a blocking modal alert.
-rm -rf "$HOME/Library/Saved Application State/dev.homerun.app.savedState"
+rm -rf "$HOME/Library/Saved Application State/com.angilyu.homerun.savedState"
 T0=$(date +%s)
 env -i HOME="$HOME" USER="$USER" TMPDIR="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin HOMERUN_DATA_DIR="$D" \
   ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" ${HOMERUN_ANTHROPIC_BASE_URL:+HOMERUN_ANTHROPIC_BASE_URL="$HOMERUN_ANTHROPIC_BASE_URL"} \

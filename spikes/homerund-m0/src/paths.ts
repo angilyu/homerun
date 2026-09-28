@@ -2,13 +2,13 @@ import { existsSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
-export const APP_ID = "dev.homerun.app";
+export const APP_ID = "com.angilyu.homerun";
 
 /** True when running as a `bun build --compile` executable. */
 export const isCompiled = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN");
 
 export function dataDir(): string {
-  const d = process.env.HOMERUN_DATA_DIR ?? join(homedir(), "Library", "Application Support", APP_ID);
+  const d = process.env.HOMERUN_DATA_DIR ?? join(homedir(), "Library", "Application Support", "Homerun");
   mkdirSync(d, { recursive: true, mode: 0o700 });
   return d;
 }

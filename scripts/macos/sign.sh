@@ -11,7 +11,7 @@
 #                   Developer ID signature on claude/node/uv untouched) | hybrid (recommended:
 #                   keep Anthropic's signature on claude, re-sign node and uv with ours)
 #   TEAM_ID + PROVISIONING_PROFILE
-#                   (Developer ID only) add keychain-access-groups "<TEAM_ID>.dev.homerun.shared"
+#                   (Developer ID only) add keychain-access-groups "<TEAM_ID>.com.angilyu.homerun.shared"
 #                   to homerund — see docs/spike-results.md item 7 for why this also needs
 #                   homerund wrapped in its own nested bundle before it can work.
 #
@@ -47,7 +47,7 @@ sign() { # path identifier entitlements
 # 1. Any Mach-O shipped as a resource (npm has none today; future native modules would).
 while IFS= read -r -d '' f; do
   if file -b "$f" | grep -q "Mach-O"; then
-    sign "$f" "dev.homerun.res.$(basename "$f")" "$ENT/uv.plist"
+    sign "$f" "com.angilyu.homerun.res.$(basename "$f")" "$ENT/uv.plist"
   fi
 done < <(find "$APP/Contents/Resources" -type f -print0)
 
@@ -62,7 +62,7 @@ for h in claude node uv; do
       grep -q 'flags=0x10000(runtime)' <<<"$info" || { echo "claude is not hardened" >&2; exit 1; }
     fi
   else
-    sign "$MACOS/$h" "dev.homerun.helper.$h" "$ENT/$h.plist"
+    sign "$MACOS/$h" "com.angilyu.homerun.helper.$h" "$ENT/$h.plist"
   fi
 done
 
@@ -72,12 +72,12 @@ if [[ -n "${TEAM_ID:-}" ]]; then
   HOMERUND_ENT="$(mktemp -t homerund-ent).plist"
   cp "$ENT/homerund.plist" "$HOMERUND_ENT"
   /usr/libexec/PlistBuddy -c "Add :keychain-access-groups array" \
-    -c "Add :keychain-access-groups:0 string $TEAM_ID.dev.homerun.shared" \
-    -c "Add :com.apple.application-identifier string $TEAM_ID.dev.homerun.app" \
+    -c "Add :keychain-access-groups:0 string $TEAM_ID.com.angilyu.homerun.shared" \
+    -c "Add :com.apple.application-identifier string $TEAM_ID.com.angilyu.homerun" \
     -c "Add :com.apple.developer.team-identifier string $TEAM_ID" "$HOMERUND_ENT"
   [[ -n "${PROVISIONING_PROFILE:-}" ]] && cp "$PROVISIONING_PROFILE" "$APP/Contents/embedded.provisionprofile"
 fi
-sign "$MACOS/homerund" "dev.homerun.homerund" "$HOMERUND_ENT"
+sign "$MACOS/homerund" "com.angilyu.homerun.homerund" "$HOMERUND_ENT"
 
 # 4. The bundle (signs the shell's main executable and seals Resources). No exceptions on the shell.
 codesign --force --sign "$IDENTITY" --options runtime "${TS[@]}" --entitlements "$ENT/shell.plist" "$APP"

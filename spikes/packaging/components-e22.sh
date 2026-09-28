@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Design impact entry 22: Node + uv as on-demand components in Application Support.
 # Installs the signed node/uv (+ npm) from a built bundle into
-#   ~/Library/Application Support/dev.homerun.spike-e22/components/<name>/<version>/
+#   ~/Library/Application Support/Homerun-spike-e22/components/<name>/<version>/
 # the way a first-run download would, verifies each against a pinned manifest
 # (sha256 + codesign designated requirement), then launches them as children of the
 # hardened-runtime homerund via `homerund mcp-selftest` in three quarantine states:
@@ -13,7 +13,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 APP="${1:-$ROOT/.spike/f4/H/Homerun.app}"
 M="$APP/Contents/MacOS"
-BASE="$HOME/Library/Application Support/dev.homerun.spike-e22"
+BASE="$HOME/Library/Application Support/Homerun-spike-e22"
 OUT="$ROOT/.spike/results/e22"; rm -rf "$OUT" "$BASE"; mkdir -p "$OUT"
 NODE_V=$("$M/node" --version | tr -d v); UV_V=$("$M/uv" --version | awk '{print $2}')
 run() { perl -e 'alarm shift; exec @ARGV' "$@"; }

@@ -2,5 +2,6 @@ packages:
   - "apps/*"
   - "packages/*"
   - "spikes/sdk"
+  - "spikes/homerund-m0"
 allowBuilds:
   bun: true
