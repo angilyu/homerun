@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { writeFileSync, chmodSync } from "node:fs";
-import { join } from "node:path";
 import { roleAllowedInBuild, type BuildChannel, type HelloParams } from "@homerun/core";
+import { devTokenPath } from "@homerun/client";
 
 /**
  * Connection authentication for `hello` (§5.2). In M2:
@@ -48,7 +48,7 @@ export function newDevToken(): string {
 export const LAUNCH_TOKEN_RE = /^[0-9a-f]{64}$/;
 
 export function writeDevToken(runDir: string, token: string): string {
-  const p = join(runDir, "dev-token");
+  const p = devTokenPath(runDir);
   writeFileSync(p, token + "\n", { mode: 0o600 });
   chmodSync(p, 0o600);
   return p;

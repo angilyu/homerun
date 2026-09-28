@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build:homerund": "pnpm --filter @homerun/homerund build",
+    "homerun": "bun apps/cli/src/main.ts",
     "typecheck": "pnpm -r typecheck",
     "test:core": "pnpm --filter @homerun/core test",
     "gen:core": "pnpm --filter @homerun/core gen"

@@ -37,9 +37,12 @@ export function preview(text: string): string {
   return text.slice(0, end);
 }
 
-export function getBlob(store: Store, sha256: string): { bytes: Uint8Array; size: number } | null {
-  const row = store.db.query<{ bytes: Uint8Array; size: number }, [string]>("SELECT bytes, size FROM blobs WHERE sha256 = ?").get(sha256);
-  return row ?? null;
+export function getBlob(store: Store, sha256: string, now?: number): { bytes: Uint8Array; size: number } | null {
+  const row = store.db
+    .query<{ bytes: Uint8Array; size: number; expires_at: number | null }, [string]>("SELECT bytes, size, expires_at FROM blobs WHERE sha256 = ?")
+    .get(sha256);
+  if (!row || (now !== undefined && row.expires_at !== null && row.expires_at <= now)) return null;
+  return { bytes: row.bytes, size: row.size };
 }
 
 /** The value behind a Content, for recovery and tests. Null if the blob has expired. */

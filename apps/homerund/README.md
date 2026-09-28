@@ -18,7 +18,7 @@ They are not redefined here.
 | `src/store/` | SQLite (`db.ts`), forward-only migrations with a `VACUUM INTO` backup (`migrate.ts`, `migrations/`), rows, `thread_events`, blobs over 4 KB, the SDK `SessionStore` mirror |
 | `src/agent/` | `AgentEngine` seam. `claude/` holds the real engine: query options, clean env, process-group spawn, process-tree kill, SDK message → event translation. `fake-engine.ts` is for unit tests. `policy.ts` holds tool classes and permissions |
 | `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run), `recovery` (§5.4), `process-groups` |
-| `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers, and a small client |
+| `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers. The client, the data dir and socket paths and the build channel rule live in [`@homerun/client`](../../packages/client) |
 | `test/unit/` | Fast tests against the fake engine |
 | `test/replay/` | Record/replay harness (§16.2) and the committed cassettes |
 | `test/fixtures/mcp-fixture.ts` | A minimal stdio MCP server used by tests |
@@ -37,6 +37,20 @@ workspaces/  logs/
 run/homerund.sock   0700 dir; falls back to $TMPDIR/hr-<uid>/ when the path is too long
 run/dev-token       development builds only (0600)
 ```
+
+## RPC methods
+
+Params, results and callers are defined in `@homerun/core` (`src/protocol/methods.ts`).
+
+- `hello`, `ping`; `secrets.set`/`secrets.clear` (shell only).
+- `threads.create`, `threads.list`, `threads.history`, `threads.subscribe`/`unsubscribe`.
+  `threads.list` pages on `updated_before`, and a page never ends inside a group of threads
+  with the same `updated_at`, so paging can't skip one. Its `unread_count` is always 0 until
+  read markers arrive (milestone 7).
+- `messages.send`: starts a run, steers the active one, or is held while the run waits for input.
+- `runs.get`, `runs.list`, `runs.stop`; `tasks.create`, `tasks.get`, `tasks.list`.
+- `input.list_pending`. `input.answer` returns UNAVAILABLE until milestones 4 and 6.
+- `blobs.get`: a stored tool input or output over 4 KB, in pages (`offset`, `length`).
 
 ## Running
 
@@ -61,6 +75,23 @@ bun run src/main.ts serve --no-launch-token --dev-auto-approve   # development
   - 2: stdin closed before the token;
   - 3: another runtime is already serving this data dir;
   - 64: usage, or a development-only switch in a release build.
+
+### Dev shell
+
+Until the desktop app exists, `scripts/dev-shell.ts` stands in for the shell:
+
+```sh
+pnpm --filter @homerun/homerund dev [--no-key] [-- <serve switches>]
+```
+
+- It starts `homerund serve` from source and writes a fresh launch token to its stdin.
+- It then sends the API key with `secrets.set` on the shell's connection. The key
+  comes from `ANTHROPIC_API_KEY` in its own environment (which is removed before
+  homerund is spawned), or from a hidden prompt. It never reads a file.
+- `--no-key` starts without a key, for use with `HOMERUN_ANTHROPIC_BASE_URL` and a
+  replay server.
+- Ctrl-C closes homerund's stdin, and the runtime shuts down gracefully.
+- Drive it with the development CLI ([`apps/cli`](../cli)), e.g. `pnpm homerun status`.
 
 ### Build channel
 

@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { statSync } from "node:fs";
 import { dirname } from "node:path";
-import { METHODS, NOTIFICATIONS, PROTOCOL_VERSION, RPC_ERROR, ThreadEvent, type MethodName } from "@homerun/core";
+import { METHODS, NOTIFICATIONS, PROTOCOL_VERSION, RPC_ERROR, ThreadEvent, type MethodName, type ThreadId } from "@homerun/core";
 import type { FakeScript } from "../../src/agent/fake-engine";
 import { RpcCallError, RpcClient } from "../../src/rpc/client";
 import { Authenticator } from "../../src/rpc/auth";
 import { RpcServer } from "../../src/rpc/server";
 import { AlreadyRunningLockError, startRuntime } from "../../src/runtime";
 import { loadConfig } from "../../src/config";
+import { toContent } from "../../src/store/content";
+import { insertInputRequest } from "../../src/store/rows";
 import { LAUNCH_TOKEN, sessionSpec, socketRuntime, until, uuid, type SocketRuntime } from "../helpers";
 
 let srt: SocketRuntime | null = null;
@@ -124,7 +126,7 @@ describe("framing and errors", () => {
     expect((await rejects(c.raw("ping", {}))).code).toBe(RPC_ERROR.INVALID_REQUEST);
 
     expect((await rejects(c.raw("no.such", {}))).code).toBe(RPC_ERROR.METHOD_NOT_FOUND);
-    const ni = await rejects(c.raw("threads.list", {}));
+    const ni = await rejects(c.raw("threads.mark_read", { thread_id: uuid(), seq: 1 }));
     expect(ni.code).toBe(RPC_ERROR.METHOD_NOT_FOUND);
     expect(ni.data).toEqual({ not_implemented: true });
     expect((await rejects(c.raw("threads.history", { thread_id: "nope" }))).code).toBe(RPC_ERROR.INVALID_PARAMS);
@@ -254,6 +256,109 @@ describe("threads over the socket", () => {
     const r = created;
     expect((await shell.call("tasks.get", { task_id: r.task.task_id })).task.task_id).toBe(r.task.task_id);
     expect((await shell.call("tasks.list", {})).tasks).toHaveLength(1);
+  });
+});
+
+describe("threads.list and blobs.get", () => {
+  const echo: FakeScript = async (s) => {
+    for (let i = await s.nextInput(); i; i = await s.nextInput()) {
+      s.emit({ type: "message", messageId: `m-${i.uuid}`, text: `echo: ${i.text}` });
+      s.result([i.uuid]);
+    }
+  };
+
+  test("summaries, newest first, with the last message, pending input and the active run; paging", async () => {
+    srt = await socketRuntime({ script: echo });
+    const shell = await srt.shell();
+    await shell.call("secrets.set", { name: "anthropic_api_key", value: "sk-ant-mock-not-a-real-key" });
+    const a = (await shell.call("threads.create", { title: "a" })).thread;
+    await Bun.sleep(2);
+    const b = (await shell.call("threads.create", {})).thread;
+    await Bun.sleep(2);
+    const task = await shell.call("tasks.create", { spec: sessionSpec({ name: "task one" }) as never });
+
+    expect((await shell.call("threads.list", {})).threads.map((x) => x.thread_id)).toEqual([task.thread_id, b.thread_id, a.thread_id]);
+
+    await shell.call("messages.send", { thread_id: a.thread_id, client_msg_id: uuid(), text: "hello there" });
+    await srt.rt.scheduler.idle();
+    const list = await shell.call("threads.list", {});
+    expect(list.has_more).toBe(false);
+    const first = list.threads[0]!;
+    expect(first).toMatchObject({ thread_id: a.thread_id, title: "a", unread_count: 0, input_pending: false, active_run: null, last_seq: 4 });
+    expect(first.last_message).toMatchObject({ role: "assistant", preview: "echo: hello there", seq: 3 });
+    expect(list.threads.find((x) => x.thread_id === b.thread_id)!.last_message).toBeNull();
+    expect(list.threads.find((x) => x.thread_id === task.thread_id)).toMatchObject({ task_id: task.task.task_id, title: "task one" });
+
+    // A queued run with a pending request: no key, so it stays pending.
+    await shell.call("secrets.clear", { name: "anthropic_api_key" });
+    const sent = await shell.call("messages.send", { thread_id: b.thread_id, client_msg_id: uuid(), text: "wait" });
+    insertInputRequest(srt.rt.store, {
+      request_id: uuid(),
+      run_id: sent.run_id,
+      kind: "question",
+      tool_call_id: null,
+      prompt: { type: "question", questions: [{ question: "Which?", options: [{ label: "x" }, { label: "y" }], multi_select: false, allow_freeform: false }] },
+      state: "pending",
+      requested_at: Date.now(),
+      expires_at: null,
+      answered_at: null,
+      response: null,
+      answered_by: null,
+    } as never);
+    const pb = (await shell.call("threads.list", {})).threads.find((x) => x.thread_id === b.thread_id)!;
+    expect(pb).toMatchObject({ input_pending: true, active_run: { run_id: sent.run_id, state: "pending" } });
+    expect(pb.last_message).toMatchObject({ role: "user", preview: "wait" });
+
+    const page1 = await shell.call("threads.list", { limit: 2 });
+    expect(page1.threads).toHaveLength(2);
+    expect(page1.has_more).toBe(true);
+    const page2 = await shell.call("threads.list", { limit: 2, updated_before: page1.threads.at(-1)!.updated_at });
+    expect(page2.threads.map((x) => x.thread_id)).toEqual([a.thread_id, b.thread_id, task.thread_id].filter((id) => !page1.threads.some((x) => x.thread_id === id)));
+    expect(page2.has_more).toBe(false);
+    expect((await shell.call("threads.list", { task_id: task.task.task_id })).threads.map((x) => x.thread_id)).toEqual([task.thread_id]);
+  });
+
+  test("paging never splits threads with the same updated_at across pages", async () => {
+    srt = await socketRuntime();
+    const dev = await srt.dev();
+    const ids: ThreadId[] = [];
+    for (const at of [300, 200, 200, 200, 100]) {
+      const t = (await dev.call("threads.create", {})).thread;
+      srt.rt.store.db.query("UPDATE threads SET updated_at = ? WHERE thread_id = ?").run(at, t.thread_id);
+      ids.push(t.thread_id);
+    }
+    const tied = ids.slice(1, 4).sort().reverse();
+    const p1 = await dev.call("threads.list", { limit: 2 });
+    expect(p1).toMatchObject({ has_more: true });
+    expect(p1.threads.map((t) => t.thread_id)).toEqual([ids[0]!]);
+    const p2 = await dev.call("threads.list", { limit: 2, updated_before: 300 });
+    expect(p2).toMatchObject({ has_more: true });
+    expect(p2.threads.map((t) => t.thread_id)).toEqual(tied);
+    const p3 = await dev.call("threads.list", { limit: 2, updated_before: 200 });
+    expect(p3).toMatchObject({ has_more: false });
+    expect(p3.threads.map((t) => t.thread_id)).toEqual([ids[4]!]);
+    const p4 = await dev.call("threads.list", { limit: 4 });
+    expect(p4.threads.map((t) => t.thread_id)).toEqual([ids[0]!, ...tied]);
+    expect(p4.has_more).toBe(true);
+  });
+
+  test("blobs.get pages a stored blob; unknown or expired blobs are NOT_FOUND", async () => {
+    srt = await socketRuntime();
+    const dev = await srt.dev();
+    const text = "x".repeat(5000) + "end";
+    const c = toContent(srt.rt.store, text);
+    expect(c.kind).toBe("blob");
+    if (c.kind !== "blob") return;
+    const p1 = await dev.call("blobs.get", { sha256: c.sha256, offset: 0, length: 4096 });
+    expect(p1).toMatchObject({ sha256: c.sha256, size: 5003, offset: 0, eof: false });
+    const p2 = await dev.call("blobs.get", { sha256: c.sha256, offset: 4096, length: 4096 });
+    expect(p2.eof).toBe(true);
+    expect(Buffer.from(p1.data, "base64").toString() + Buffer.from(p2.data, "base64").toString()).toBe(text);
+    expect(await dev.call("blobs.get", { sha256: c.sha256, offset: 5003, length: 10 })).toMatchObject({ data: "", eof: true });
+    expect((await rejects(dev.raw("blobs.get", { sha256: c.sha256, offset: 6000, length: 10 }))).code).toBe(RPC_ERROR.VALIDATION_FAILED);
+    expect((await rejects(dev.raw("blobs.get", { sha256: "0".repeat(64), offset: 0, length: 10 }))).code).toBe(RPC_ERROR.NOT_FOUND);
+    srt.rt.store.db.query("UPDATE blobs SET expires_at = 1 WHERE sha256 = ?").run(c.sha256);
+    expect((await rejects(dev.raw("blobs.get", { sha256: c.sha256, offset: 0, length: 10 }))).code).toBe(RPC_ERROR.NOT_FOUND);
   });
 });
 

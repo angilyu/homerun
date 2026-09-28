@@ -1,32 +1,22 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir, tmpdir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CONCURRENCY, type BuildChannel } from "@homerun/core";
+import { chooseRunDir, dataDir as resolveDataDir, isCompiledUrl, resolveBuildChannel } from "@homerun/client";
+
+export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "@homerun/client";
 
 /** macOS bundle identifier. */
 export const APP_ID = "com.angilyu.homerun";
-/**
- * The Application Support folder is named separately from the bundle id: a folder whose name
- * ends like a bundle (the old `dev.homerun.app`) was treated as one by macOS, and writes into it
- * were intermittently denied (spike entry 26).
- */
-export const DATA_DIR_NAME = "Homerun";
-
 export const RUNTIME_VERSION: string = typeof HOMERUND_VERSION === "string" ? HOMERUND_VERSION : "0.2.0-dev";
 /** True when running as a `bun build --compile` executable. */
-export const isCompiled = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN");
+export const isCompiled = isCompiledUrl(import.meta.url);
 
 /**
- * The build channel fails closed. A compiled executable is release unless it was built with an
- * explicit `--define HOMERUND_BUILD='"development"'`, so a binary that forgot the define never
- * gets the development switches, dev tokens or base-URL overrides. Running from source
- * (`bun run`, `bun test`) is development. Any other defined value is release.
+ * The build channel fails closed (`resolveBuildChannel`): a compiled executable is release unless
+ * it was built with an explicit `--define HOMERUND_BUILD='"development"'`, so a binary that forgot
+ * the define never gets the development switches, dev tokens or base-URL overrides.
  */
-export function resolveBuildChannel(defined: string | undefined, compiled: boolean): BuildChannel {
-  if (defined !== undefined) return defined === "development" ? "development" : "release";
-  return compiled ? "release" : "development";
-}
-
 export const BUILD_CHANNEL: BuildChannel = resolveBuildChannel(typeof HOMERUND_BUILD === "string" ? HOMERUND_BUILD : undefined, isCompiled);
 
 /** A development-only switch was used in a release build. */
@@ -36,9 +26,6 @@ export class DevOnlyError extends Error {
     this.name = "DevOnlyError";
   }
 }
-
-/** `sun_path` is 104 bytes on macOS (§5.2). */
-export const SUN_PATH_MAX = 104;
 
 export interface Limits {
   session: number;
@@ -108,16 +95,6 @@ function ensureDir(d: string): string {
   return d;
 }
 
-/** `<data>/run/homerund.sock`, or `$TMPDIR/hr-<uid>/homerund.sock` when that exceeds `sun_path` (§5.2). */
-export function chooseRunDir(dataDir: string, tmp = tmpdir(), uid = userInfo().uid): { runDir: string; socketPath: string } {
-  const primary = join(dataDir, "run");
-  if (Buffer.byteLength(join(primary, "homerund.sock")) < SUN_PATH_MAX) return { runDir: primary, socketPath: join(primary, "homerund.sock") };
-  const fallback = join(tmp, `hr-${uid}`);
-  const sock = join(fallback, "homerund.sock");
-  if (Buffer.byteLength(sock) >= SUN_PATH_MAX) throw new Error(`socket path too long even in the fallback: ${sock}`);
-  return { runDir: fallback, socketPath: sock };
-}
-
 /** Locate the bundled `claude` (§5.1). In development it comes from the SDK's platform package. */
 export function findClaude(env: Record<string, string | undefined>): string {
   if (env.HOMERUN_CLAUDE_PATH) return env.HOMERUN_CLAUDE_PATH;
@@ -145,7 +122,7 @@ export function loadConfig(input: ConfigInput = {}): Config {
   const argv = input.argv ?? [];
   const build = BUILD_CHANNEL;
   const dev = build === "development";
-  const dataDir = ensureDir(resolve(env.HOMERUN_DATA_DIR ?? join(homedir(), "Library", "Application Support", DATA_DIR_NAME)));
+  const dataDir = ensureDir(resolveDataDir(env));
   const { runDir, socketPath } = chooseRunDir(dataDir);
   ensureDir(runDir);
 
