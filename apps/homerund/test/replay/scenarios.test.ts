@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
-import { PersistedThreadEvent, RPC_ERROR, type ThreadEvent } from "@homerun/core";
+import { PersistedThreadEvent, RPC_ERROR, undeliveredMessages, type ThreadEvent } from "@homerun/core";
 import { groupAlive } from "../../src/agent/claude/spawn";
 import type { RpcClient } from "../../src/rpc/client";
 import { sessionSpec, uuid } from "../helpers";
@@ -71,7 +71,7 @@ afterAll(async () => {
   if (MODE === "record") console.error(`recording spend (estimated from usage): $${recordSpendUsd().toFixed(4)}`);
 });
 
-async function scene(name: string, o: { forbid?: RegExp; home?: (root: string) => string; env?: (root: string) => Record<string, string>; note: string }, body: (s: Scene) => Promise<void>): Promise<void> {
+async function scene(name: string, o: { forbid?: RegExp; home?: (root: string) => string; env?: (root: string) => Record<string, string>; gapMs?: number; note: string }, body: (s: Scene) => Promise<void>): Promise<void> {
   const root = scratchDir("hr-replay-");
   const work = join(root, "work");
   mkdirSync(work);
@@ -81,7 +81,7 @@ async function scene(name: string, o: { forbid?: RegExp; home?: (root: string) =
     [homedir(), "<HOME>"],
   ];
   if (userInfo().username.length >= 4) normalize.push([userInfo().username, "<USER>"]);
-  const server = new ReplayServer({ mode: MODE, scenario: name, cassettePath: join(CASSETTES, `${name}.json`), apiKey, normalize, forbid: o.forbid, expectKey: REPLAY_KEY }).start();
+  const server = new ReplayServer({ mode: MODE, scenario: name, cassettePath: join(CASSETTES, `${name}.json`), apiKey, normalize, forbid: o.forbid, expectKey: REPLAY_KEY, gapMs: o.gapMs }).start();
   const opts = { dataDir: join(root, "data"), baseUrl: server.url, home: o.home?.(root), env: o.env?.(root) };
   mkdirSync(opts.dataDir, { recursive: true });
   let hr = new Homerund(opts);
@@ -199,7 +199,8 @@ describe(`replay (${MODE})`, () => {
   test(
     "a text-only chat turn streams deltas, then persists the final message and the run",
     () =>
-      scene("text-chat", { note: "A chat turn with no tool use." }, async (s) => {
+      // Stream slowly enough that the text spans several delta windows even on a loaded machine.
+      scene("text-chat", { note: "A chat turn with no tool use.", gapMs: 25 }, async (s) => {
         const { thread } = await s.shell.call("threads.create", { title: "text" });
         const sub = await s.subscribe(thread.thread_id);
         const sent = await send(s, thread.thread_id, "In two short sentences, what is a home run in baseball? Do not use any tools.");
@@ -378,6 +379,9 @@ describe(`replay (${MODE})`, () => {
         expect(result.payload).toMatchObject({ tool_call_id: call.payload.tool_call_id, status: "error" });
         expect(await s.shell.call("input.list_pending", { thread_id: threadId })).toEqual({ requests: [] });
         expect(s.server.messageRequests).toBe(requestsBefore);
+        // The held message was never delivered, and clients show it that way (§5.7).
+        await runEnd(sub2, sent.run_id, 5_000);
+        expect(undeliveredMessages(sub2.persisted()).map((e) => e.payload.text)).toEqual(["Status?"]);
       }),
     TIMEOUT,
   );
@@ -429,6 +433,9 @@ describe(`replay (${MODE})`, () => {
           // Told the call completed, the model does not run it again.
           expect(readFileSync(log, "utf8")).toBe("ran\n");
           expect(ofType(sub2, "message.final").length).toBeGreaterThan(0);
+          // The held message reached the model with the answer.
+          expect(undeliveredMessages(sub2.persisted())).toEqual([]);
+          expect(sql<{ n: number }>(s.hr, "SELECT COUNT(*) AS n FROM sdk_transcripts WHERE instr(entry, 'Status?') > 0")[0]!.n).toBeGreaterThan(0);
         },
       ),
     TIMEOUT,
@@ -513,10 +520,13 @@ describe(`replay (${MODE})`, () => {
         await s.crashAndRestart();
         const sub2 = await s.subscribe(threadId);
         await askedFor(sub2, call);
+        expect((await send(s, threadId, "Status?")).disposition).toBe("held");
         expect(await s.shell.call("runs.stop", { run_id: sent.run_id })).toEqual({ state: "cancelled" });
         const result = (await sub2.waitFor((e) => e.type === "tool.result", 5_000, "tool.result")) as Of<"tool.result">;
         expect(result.payload).toMatchObject({ tool_call_id: call.payload.tool_call_id, status: "error" });
         expect(await s.shell.call("input.list_pending", { thread_id: threadId })).toEqual({ requests: [] });
+        await runEnd(sub2, sent.run_id, 5_000);
+        expect(undeliveredMessages(sub2.persisted()).map((e) => e.payload.text)).toEqual(["Status?"]);
 
         // The next run resumes the thread's session: the call has a result (the replay server
         // fails a request with a dangling tool_use), and it says the outcome is unknown.
@@ -526,6 +536,9 @@ describe(`replay (${MODE})`, () => {
         expect(end.payload.state).toBe("succeeded");
         expect(ofType(sub2, "tool.call")).toHaveLength(1);
         expect(existsSync(join(s.work, "side.log"))).toBe(false);
+        // The message held by the stopped run is not sent with the follow-up, or ever (§5.7).
+        expect(sql<{ n: number }>(s.hr, "SELECT COUNT(*) AS n FROM sdk_transcripts WHERE instr(entry, 'Status?') > 0")[0]!.n).toBe(0);
+        expect(undeliveredMessages(sub2.persisted()).map((e) => e.payload.text)).toEqual(["Status?"]);
       }),
     TIMEOUT,
   );
