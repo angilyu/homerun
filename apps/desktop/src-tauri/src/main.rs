@@ -29,7 +29,7 @@ fn data_dir() -> PathBuf {
     if let Ok(d) = std::env::var("HOMERUN_DATA_DIR") {
         return PathBuf::from(d);
     }
-    dirs::data_dir().expect("no data dir").join("dev.homerun.app")
+    dirs::data_dir().expect("no data dir").join("com.angilyu.homerun")
 }
 
 fn log(file: &str, line: &str) {

@@ -31,10 +31,10 @@ const argv = process.argv.slice(2);
 const flag = (n: string) => argv.includes(n);
 const opt = (n: string) => (argv.indexOf(n) >= 0 ? argv[argv.indexOf(n) + 1] : undefined);
 
-/** Keychain item defaults. Access group = "<TeamID>.dev.homerun.shared" once we have a Team ID (§11). */
+/** Keychain item defaults. Access group = "<TeamID>.com.angilyu.homerun.shared" once we have a Team ID (§11). */
 function kcOpts(account: string, over: Partial<KeychainOpts> = {}): KeychainOpts {
   const group = process.env.HOMERUN_KEYCHAIN_GROUP;
-  return { service: "dev.homerun.app", account, accessGroup: group, dataProtection: !!group, ...over };
+  return { service: "com.angilyu.homerun", account, accessGroup: group, dataProtection: !!group, ...over };
 }
 const kcStatus = (s: number) => ({ status: s, name: SEC_ERRORS[s] ?? "unknown" });
 
