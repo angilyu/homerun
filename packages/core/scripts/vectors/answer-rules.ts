@@ -14,31 +14,39 @@ export type AnswerRuleCase = {
 };
 
 const approval = (cls: string) => F.approvalPrompt({ class: cls });
-const ambiguous = {
+const ambiguousOf = (tool: string, cls: string) => ({
   type: "ambiguous_tool_call",
-  tool: "Write",
+  tool,
   tool_call_id: F.TOOL_CALL,
-  class: "write",
+  class: cls,
   input: F.inline({ file_path: "/Users/me/notes.md" }),
-};
+});
+// §5.4 resumes read calls without asking, so only the write and destructive prompts occur in
+// practice. The read case pins the class rule anyway.
+const ambiguous = ambiguousOf("Write", "write");
+const notRun = { type: "ambiguous_tool_call", outcome: "not_run" };
 const PROMPTS: [string, unknown, unknown][] = [
   ["read approval", approval("read"), { type: "approval", decision: "allow" }],
   ["write approval", approval("write"), { type: "approval", decision: "allow" }],
   ["destructive approval", approval("destructive"), { type: "approval", decision: "allow" }],
   ["question", F.questionPrompt(), { type: "question", answers: [{ selected: ["main"] }] }],
-  ["did this happen", ambiguous, { type: "ambiguous_tool_call", outcome: "not_run" }],
+  ["did this happen (read)", ambiguousOf("Read", "read"), notRun],
+  ["did this happen (write)", ambiguous, notRun],
+  ["did this happen (destructive)", ambiguousOf("mcp__github__delete_repository", "destructive"), notRun],
 ];
 
-// Rows follow PROMPTS: read, write, destructive, question, did-this-happen.
+// Columns follow PROMPTS: approvals read/write/destructive, question, did-this-happen read/write/destructive.
+const T = true;
+const f = false;
 const IN_APP: Record<string, boolean[]> = {
-  shell: [true, true, true, true, true],
-  webview: [true, true, true, true, true],
-  ios: [true, true, true, true, true],
-  cli_dev: [true, true, true, true, true],
-  cli: [false, false, false, true, false],
-  web: [true, false, false, true, true],
+  shell: [T, T, T, T, T, T, T],
+  webview: [T, T, T, T, T, T, T],
+  ios: [T, T, T, T, T, T, T],
+  cli_dev: [T, T, T, T, T, T, T],
+  cli: [f, f, f, T, f, f, f],
+  web: [T, f, f, T, T, f, f],
 };
-const IOS_NOTIFICATION = [true, true, false, true, false];
+const IOS_NOTIFICATION = [T, T, f, T, f, f, f];
 
 const always = {
   type: "approval",

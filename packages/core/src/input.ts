@@ -124,10 +124,12 @@ export type RequiredAuthority = "any" | "full";
 
 export function requiredAuthority(p: InputPrompt): RequiredAuthority {
   switch (p.type) {
+    // "Did this happen?" follows the call's class like an approval: "not run" makes the model
+    // re-issue the call, which an existing grant could let through (D5).
     case "approval":
+    case "ambiguous_tool_call":
       return p.class === "read" ? "any" : "full";
     case "question":
-    case "ambiguous_tool_call":
       return "any";
   }
 }

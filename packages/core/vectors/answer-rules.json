@@ -134,12 +134,60 @@
       "allowed": true
     },
     {
-      "name": "shell: did this happen",
+      "name": "shell: did this happen (read)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "Read",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "read",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "shell: did this happen (write)",
       "prompt": {
         "type": "ambiguous_tool_call",
         "tool": "Write",
         "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
         "class": "write",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "shell: did this happen (destructive)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "mcp__github__delete_repository",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
         "input": {
           "kind": "inline",
           "value": {
@@ -290,12 +338,60 @@
       "allowed": true
     },
     {
-      "name": "webview: did this happen",
+      "name": "webview: did this happen (read)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "Read",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "read",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "webview",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "webview: did this happen (write)",
       "prompt": {
         "type": "ambiguous_tool_call",
         "tool": "Write",
         "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
         "class": "write",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "webview",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "webview: did this happen (destructive)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "mcp__github__delete_repository",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
         "input": {
           "kind": "inline",
           "value": {
@@ -446,12 +542,60 @@
       "allowed": true
     },
     {
-      "name": "ios: did this happen",
+      "name": "ios: did this happen (read)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "Read",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "read",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "ios",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "ios: did this happen (write)",
       "prompt": {
         "type": "ambiguous_tool_call",
         "tool": "Write",
         "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
         "class": "write",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "ios",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "ios: did this happen (destructive)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "mcp__github__delete_repository",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
         "input": {
           "kind": "inline",
           "value": {
@@ -602,12 +746,60 @@
       "allowed": true
     },
     {
-      "name": "cli_dev: did this happen",
+      "name": "cli_dev: did this happen (read)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "Read",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "read",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "cli_dev",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "cli_dev: did this happen (write)",
       "prompt": {
         "type": "ambiguous_tool_call",
         "tool": "Write",
         "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
         "class": "write",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "cli_dev",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "cli_dev: did this happen (destructive)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "mcp__github__delete_repository",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
         "input": {
           "kind": "inline",
           "value": {
@@ -758,12 +950,60 @@
       "allowed": true
     },
     {
-      "name": "cli: did this happen",
+      "name": "cli: did this happen (read)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "Read",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "read",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "cli",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
+      "name": "cli: did this happen (write)",
       "prompt": {
         "type": "ambiguous_tool_call",
         "tool": "Write",
         "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
         "class": "write",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "cli",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
+      "name": "cli: did this happen (destructive)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "mcp__github__delete_repository",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
         "input": {
           "kind": "inline",
           "value": {
@@ -914,7 +1154,31 @@
       "allowed": true
     },
     {
-      "name": "web: did this happen",
+      "name": "web: did this happen (read)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "Read",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "read",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "web",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "web: did this happen (write)",
       "prompt": {
         "type": "ambiguous_tool_call",
         "tool": "Write",
@@ -935,7 +1199,31 @@
         "role": "web",
         "via": "app"
       },
-      "allowed": true
+      "allowed": false
+    },
+    {
+      "name": "web: did this happen (destructive)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "mcp__github__delete_repository",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "web",
+        "via": "app"
+      },
+      "allowed": false
     },
     {
       "name": "ios notification: read approval",
@@ -1070,12 +1358,60 @@
       "allowed": true
     },
     {
-      "name": "ios notification: did this happen",
+      "name": "ios notification: did this happen (read)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "Read",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "read",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "ios",
+        "via": "notification"
+      },
+      "allowed": false
+    },
+    {
+      "name": "ios notification: did this happen (write)",
       "prompt": {
         "type": "ambiguous_tool_call",
         "tool": "Write",
         "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
         "class": "write",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "file_path": "/Users/me/notes.md"
+          }
+        }
+      },
+      "response": {
+        "type": "ambiguous_tool_call",
+        "outcome": "not_run"
+      },
+      "from": {
+        "role": "ios",
+        "via": "notification"
+      },
+      "allowed": false
+    },
+    {
+      "name": "ios notification: did this happen (destructive)",
+      "prompt": {
+        "type": "ambiguous_tool_call",
+        "tool": "mcp__github__delete_repository",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
         "input": {
           "kind": "inline",
           "value": {
