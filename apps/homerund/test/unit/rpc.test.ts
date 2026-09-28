@@ -222,6 +222,19 @@ describe("threads over the socket", () => {
     expect(got.length).toBe(n);
   });
 
+  test("concurrent sends from two clients start exactly one run; the rest steer it (R8)", async () => {
+    srt = await socketRuntime({ script });
+    const a = await srt.shell();
+    const b = await srt.dev();
+    const { thread } = await a.call("threads.create", {});
+    const sends = Array.from({ length: 8 }, (_, i) => (i % 2 ? b : a).call("messages.send", { thread_id: thread.thread_id, client_msg_id: uuid(), text: `m${i}` }));
+    const out = await Promise.all(sends);
+    expect(out.filter((o) => o.disposition === "started_run")).toHaveLength(1);
+    expect(out.filter((o) => o.disposition === "steered")).toHaveLength(7);
+    expect(new Set(out.map((o) => o.run_id)).size).toBe(1);
+    expect(new Set(out.map((o) => o.seq)).size).toBe(8);
+  });
+
   test("runs.stop cancels a queued run; input.answer is not available yet", async () => {
     srt = await socketRuntime({ script });
     const shell = await srt.shell();
