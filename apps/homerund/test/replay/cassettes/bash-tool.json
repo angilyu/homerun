@@ -1,0 +1,356 @@
+{
+ "version": 1,
+ "scenario": "bash-tool",
+ "recorded_with": {
+  "claude_agent_sdk": "0.3.278",
+  "claude": "2.1.278",
+  "model": "claude-haiku-4-5"
+ },
+ "note": "A session task that runs one Bash command with a 14 KB output.",
+ "entries": [
+  {
+   "summary": "/v1/messages \"Run exactly this bash command once, unchanged: echo homerun \" → thinking, tool_use Bash",
+   "request": {
+    "path": "/v1/messages",
+    "model": "claude-haiku-4-5",
+    "tools": [
+     "Bash"
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Run exactly this bash command once, unchanged: echo homerun > out.txt && echo \"home=$HOME\" && seq 1 3000 Then reply with just the word done."
+       }
+      ]
+     }
+    ]
+   },
+   "response": {
+    "status": 200,
+    "events": [
+     {
+      "event": "message_start",
+      "data": {
+       "type": "message_start",
+       "message": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CfVRsCQmHiPmT1jSkfHhp",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "container": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+         "input_tokens": 10,
+         "cache_creation_input_tokens": 9872,
+         "cache_read_input_tokens": 0,
+         "cache_creation": {
+          "ephemeral_5m_input_tokens": 9872,
+          "ephemeral_1h_input_tokens": 0
+         },
+         "output_tokens": 1,
+         "service_tier": "standard",
+         "inference_geo": "not_available"
+        },
+        "diagnostics": null,
+        "context_management": null
+       }
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 0,
+       "content_block": {
+        "type": "thinking",
+        "thinking": "",
+        "signature": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "thinking_delta",
+        "thinking": "The user is asking me to run a specific bash command exactly as provided. Let me break down what they're asking:\n\n1. `echo homerun > out.txt` - writes \"homerun\" to a file called out.txt\n2. `echo \"home=$HOME\"` - prints the home environment variable\n3. `seq 1 3000` - prints numbers 1 to 3000\n\nThis is a straightforward request to run a bash command. There's nothing malicious or harmful about it. I should run it exactly as specified and then reply with \"done\".",
+        "estimated_tokens": null
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "signature_delta",
+        "signature": "replay-signature"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 0
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 1,
+       "content_block": {
+        "type": "tool_use",
+        "id": "toolu_01KYYUW9mk3Di2NcDD4CWny6",
+        "name": "Bash",
+        "input": {},
+        "caller": {
+         "type": "direct"
+        }
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "input_json_delta",
+        "partial_json": "{\"command\": \"echo homerun > out.txt && echo \\\"home=$HOME\\\" && seq 1 3000\"}"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 1
+      }
+     },
+     {
+      "event": "message_delta",
+      "data": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use",
+        "stop_sequence": null,
+        "stop_details": null,
+        "container": null
+       },
+       "usage": {
+        "input_tokens": 10,
+        "cache_creation_input_tokens": 9872,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 204,
+        "output_tokens_details": {
+         "thinking_tokens": 130
+        }
+       },
+       "context_management": {
+        "applied_edits": []
+       }
+      }
+     },
+     {
+      "event": "message_stop",
+      "data": {
+       "type": "message_stop"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "summary": "/v1/messages tool_result(ok) → thinking, text",
+   "request": {
+    "path": "/v1/messages",
+    "model": "claude-haiku-4-5",
+    "tools": [
+     "Bash"
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Run exactly this bash command once, unchanged: echo homerun > out.txt && echo \"home=$HOME\" && seq 1 3000 Then reply with just the word done."
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "blocks": [
+       {
+        "t": "thinking"
+       },
+       {
+        "t": "tool_use",
+        "id": "toolu_01KYYUW9mk3Di2NcDD4CWny6",
+        "name": "Bash"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "tool_result",
+        "id": "toolu_01KYYUW9mk3Di2NcDD4CWny6",
+        "is_error": false
+       }
+      ]
+     }
+    ]
+   },
+   "response": {
+    "status": 200,
+    "events": [
+     {
+      "event": "message_start",
+      "data": {
+       "type": "message_start",
+       "message": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CfVRsNn7Gxs6gXDCnVR1L",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "container": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+         "input_tokens": 8,
+         "cache_creation_input_tokens": 8339,
+         "cache_read_input_tokens": 9872,
+         "cache_creation": {
+          "ephemeral_5m_input_tokens": 8339,
+          "ephemeral_1h_input_tokens": 0
+         },
+         "output_tokens": 1,
+         "service_tier": "standard",
+         "inference_geo": "not_available"
+        },
+        "diagnostics": null,
+        "context_management": null
+       }
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 0,
+       "content_block": {
+        "type": "thinking",
+        "thinking": "",
+        "signature": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "thinking_delta",
+        "thinking": "The command executed successfully. The output shows:\n1. The home environment variable printed\n2. The sequence of numbers from 1 to 3000\n\nThe user asked me to reply with just the word \"done\" after running the command exactly once unchanged.",
+        "estimated_tokens": null
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "signature_delta",
+        "signature": "replay-signature"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 0
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 1,
+       "content_block": {
+        "type": "text",
+        "text": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "text_delta",
+        "text": "done"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 1
+      }
+     },
+     {
+      "event": "message_delta",
+      "data": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "stop_details": null,
+        "container": null
+       },
+       "usage": {
+        "input_tokens": 8,
+        "cache_creation_input_tokens": 8339,
+        "cache_read_input_tokens": 9872,
+        "output_tokens": 66,
+        "output_tokens_details": {
+         "thinking_tokens": 59
+        }
+       },
+       "context_management": {
+        "applied_edits": []
+       }
+      }
+     },
+     {
+      "event": "message_stop",
+      "data": {
+       "type": "message_stop"
+      }
+     }
+    ]
+   }
+  }
+ ]
+}
