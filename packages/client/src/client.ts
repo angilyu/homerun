@@ -98,9 +98,15 @@ export class RpcClient {
   /** Connect and complete `hello`. */
   static async open(socketPath: string, role: CallerRole, auth: HelloAuth, o: OpenOptions = {}): Promise<RpcClient> {
     const c = await RpcClient.connect(socketPath);
-    c.validate = o.validate ?? false;
+    await c.handshake(role, auth, o);
+    return c;
+  }
+
+  /** Send `hello` on a connected client. On failure the connection is closed. */
+  async handshake(role: CallerRole, auth: HelloAuth, o: OpenOptions = {}): Promise<HelloResult> {
+    this.validate = o.validate ?? false;
     try {
-      c.hello = await c.call("hello", {
+      this.hello = await this.call("hello", {
         protocol: { min: 1, max: PROTOCOL_VERSION },
         role,
         auth,
@@ -108,10 +114,10 @@ export class RpcClient {
         capabilities: o.capabilities ?? [],
       });
     } catch (e) {
-      c.close();
+      this.close();
       throw e;
     }
-    return c;
+    return this.hello;
   }
 
   call<M extends MethodName>(method: M, params: MethodParams<M>): Promise<MethodResult<M>> {

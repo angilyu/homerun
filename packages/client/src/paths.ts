@@ -53,7 +53,11 @@ export class DevTokenError extends Error {
  * unless it is a regular file owned by this user and readable by nobody else.
  */
 export function readDevToken(runDir: string, uid = userInfo().uid): string {
-  const p = devTokenPath(runDir);
+  return readDevTokenFile(devTokenPath(runDir), uid);
+}
+
+/** `readDevToken` for an explicit path, with the same checks. */
+export function readDevTokenFile(p: string, uid = userInfo().uid): string {
   let st;
   try {
     st = lstatSync(p);

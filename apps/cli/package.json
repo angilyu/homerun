@@ -1,0 +1,27 @@
+{
+  "name": "@homerun/cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "homerun": "./src/main.ts"
+  },
+  "scripts": {
+    "build": "bun build --compile --minify --sourcemap ./src/main.ts --outfile ./dist/homerun",
+    "build:dev": "bun build --compile --sourcemap --define 'HOMERUN_CLI_BUILD=\"development\"' ./src/main.ts --outfile ./dist/homerun-dev",
+    "typecheck": "tsc -p .",
+    "test": "bun test",
+    "test:unit": "bun test test/unit",
+    "test:e2e": "bun test test/e2e",
+    "test:replay": "bun test test/replay"
+  },
+  "dependencies": {
+    "@homerun/client": "workspace:*",
+    "@homerun/core": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@homerun/homerund": "workspace:*",
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
+  }
+}

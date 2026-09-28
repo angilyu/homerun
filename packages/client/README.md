@@ -10,12 +10,14 @@ cannot disagree about where the socket is.
     104-byte `sun_path`, it falls back to `$TMPDIR/hr-<uid>/`.
   - `readDevToken(runDir)`: reads the development token that a development `homerund` writes at
     every start. It refuses the file unless it is a regular file owned by this user with mode
-    0600 (no group or other bits).
+    0600 (no group or other bits). `readDevTokenFile(path)` applies the same checks to an
+    explicit path (the CLI's `--dev-token-file`).
 - `build.ts`: `resolveBuildChannel(defined, compiled)`, the fail-closed build channel. A
   compiled binary is release unless it was built with an explicit development define. The same
   rule applies to `homerund` (`HOMERUND_BUILD`) and the CLI (`HOMERUN_CLI_BUILD`).
 - `client.ts`: `RpcClient`, JSON-RPC 2.0 with one frame per line.
-  - `open()` connects and completes `hello`.
+  - `open()` connects and completes `hello`. `connect()` then `handshake()` does the same in two
+    steps, so a caller can tell "nothing is listening" apart from "the token was refused".
   - With `validate`, it parses every result with its core schema.
   - Its errors are typed: `RpcCallError` (a JSON-RPC error), `RuntimeUnavailableError`
     (nothing listening), `ConnectionClosedError` and `RpcProtocolError`.

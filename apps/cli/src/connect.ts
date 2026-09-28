@@ -1,0 +1,108 @@
+import { dirname } from "node:path";
+import {
+  ConnectionClosedError,
+  DevTokenError,
+  RpcCallError,
+  RpcClient,
+  RpcProtocolError,
+  RuntimeUnavailableError,
+  chooseRunDir,
+  dataDir,
+  devTokenPath,
+  readDevTokenFile,
+} from "@homerun/client";
+import { RPC_ERROR, type BuildChannel } from "@homerun/core";
+import type { Values } from "./args";
+import { CLI_VERSION } from "./build";
+import { CliError, EXIT } from "./exit";
+
+export type Env = Record<string, string | undefined>;
+
+export const START_HINT = "start it with `pnpm --filter @homerun/homerund dev` (or open the Homerun app, once it exists)";
+
+/** The switches only a development build honours. A release build exits 64 on any of them. */
+export function devSwitchesUsed(values: Values, env: Env): string[] {
+  const used: string[] = [];
+  if (values.socket !== undefined) used.push("--socket");
+  if (env.HOMERUN_SOCKET) used.push("HOMERUN_SOCKET");
+  if (values["dev-token-file"] !== undefined) used.push("--dev-token-file");
+  return used;
+}
+
+export function refuseDevSwitches(channel: BuildChannel, values: Values, env: Env): void {
+  if (channel === "development") return;
+  const [first] = devSwitchesUsed(values, env);
+  if (first) throw new CliError(`${first} is only available in development builds; this is a release build`, EXIT.USAGE);
+}
+
+export const releaseRefusal = () =>
+  new CliError(
+    "this CLI needs access approved in the Homerun app, which arrives with the desktop app",
+    EXIT.NOPERM,
+    "for now, use a development build: `pnpm homerun …` from the repository",
+  );
+
+export interface Target {
+  socketPath: string;
+  tokenPath: string;
+}
+
+/** The socket from the shared data-dir rules (§5.2), and the dev token beside it. */
+export function resolveTarget(values: Values, env: Env): Target {
+  const socketPath = (values.socket as string | undefined) ?? (env.HOMERUN_SOCKET || chooseRunDir(dataDir(env)).socketPath);
+  const tokenPath = (values["dev-token-file"] as string | undefined) ?? devTokenPath(dirname(socketPath));
+  return { socketPath, tokenPath };
+}
+
+/**
+ * Connect and authenticate. A development build uses the `cli_dev` role and the development
+ * token homerund writes at each start, read fresh on every call. A release build never reads it:
+ * its `cli_token` arrives with the desktop app (M7), which must also check the socket's peer
+ * before sending a real token.
+ */
+export async function connect(channel: BuildChannel, target: Target): Promise<RpcClient> {
+  if (channel !== "development") throw releaseRefusal();
+  let c: RpcClient;
+  try {
+    c = await RpcClient.connect(target.socketPath);
+  } catch (e) {
+    if (e instanceof RuntimeUnavailableError) throw new CliError(`homerund is not running (nothing is listening on ${target.socketPath})`, EXIT.UNAVAILABLE, START_HINT);
+    throw e;
+  }
+  let token: string;
+  try {
+    token = readDevTokenFile(target.tokenPath);
+  } catch (e) {
+    c.close();
+    if (e instanceof DevTokenError)
+      throw new CliError(e.message, EXIT.NOPERM, e.reason === "missing" ? "only a development build of homerund writes a development token" : undefined);
+    throw e;
+  }
+  try {
+    await c.handshake("cli_dev", { kind: "dev_token", token }, { client: { name: "homerun-cli", version: CLI_VERSION }, validate: true });
+  } catch (e) {
+    if (e instanceof RpcCallError && e.code === RPC_ERROR.UNAUTHENTICATED)
+      throw new CliError(`homerund refused the development token: ${e.message}`, EXIT.NOPERM, "a release build of homerund accepts no development token");
+    throw e;
+  }
+  return c;
+}
+
+/** Map a failure to a message and exit code. */
+export function toCliError(e: unknown): CliError {
+  if (e instanceof CliError) return e;
+  if (e instanceof RpcCallError) {
+    const code =
+      e.code === RPC_ERROR.UNAUTHENTICATED || e.code === RPC_ERROR.FORBIDDEN || e.code === RPC_ERROR.AUTHORITY_INSUFFICIENT
+        ? EXIT.NOPERM
+        : e.code === RPC_ERROR.INVALID_PARAMS
+          ? EXIT.USAGE
+          : EXIT.ERROR;
+    const notImplemented = (e.data as { not_implemented?: unknown } | undefined)?.not_implemented === true;
+    return new CliError(e.message, code, notImplemented ? "this homerund does not support it yet" : undefined);
+  }
+  if (e instanceof ConnectionClosedError) return new CliError("homerund closed the connection", EXIT.UNAVAILABLE);
+  if (e instanceof RuntimeUnavailableError) return new CliError(`homerund is not running (${e.message})`, EXIT.UNAVAILABLE, START_HINT);
+  if (e instanceof RpcProtocolError) return new CliError(e.message, EXIT.ERROR, "is homerund newer or older than this CLI?");
+  return new CliError(e instanceof Error ? e.message : String(e), EXIT.ERROR);
+}
