@@ -1,0 +1,62 @@
+import type { Origin, RunError, TerminalRunState } from "@homerun/core";
+import { appendEvent } from "../store/events";
+import { getRunRow, pendingInputRequests, runErrorJson, setInputRequestState, setRunState, type RunRow } from "../store/rows";
+import type { Store } from "../store/store";
+
+/**
+ * Put a run in a terminal state and append its single `run.end` (§5.7). Pending input requests
+ * are cancelled with `input.resolved`. Must be called inside a transaction or on its own.
+ */
+export function finishRun(
+  store: Store,
+  runId: string,
+  state: TerminalRunState,
+  error: RunError | null,
+  opts: { now: number; reapPgid?: number | null },
+): RunRow {
+  return store.tx(() => {
+    const cur = getRunRow(store, runId)!;
+    cancelInputRequests(store, cur, opts.now);
+    const row = setRunState(store, runId, state, {
+      ended_at: opts.now,
+      claude_pid: null,
+      reap_pgid: opts.reapPgid ?? null,
+      error: state === "failed" || state === "abandoned" ? runErrorJson(error) : null,
+      outcome: null,
+    });
+    appendEvent(
+      store,
+      row.thread_id,
+      runId,
+      "run.end",
+      {
+        state,
+        outcome: null,
+        error: state === "failed" || state === "abandoned" ? error : null,
+        authority: row.authority as "full" | "web_read_only",
+        cost_usd: row.cost_usd,
+      },
+      opts.now,
+    );
+    return row;
+  });
+}
+
+export function cancelInputRequests(store: Store, run: RunRow, now: number): void {
+  for (const r of pendingInputRequests(store, { runId: run.run_id })) {
+    setInputRequestState(store, r.request_id, "cancelled");
+    appendEvent(
+      store,
+      run.thread_id,
+      run.run_id,
+      "input.resolved",
+      { request_id: r.request_id, state: "cancelled", response: null, answered_by: null, surface: null, via: null },
+      now,
+    );
+  }
+}
+
+/** `runs.stop_by` holds the JSON Origin of whoever stopped the run. */
+export function stopByOf(row: RunRow): Origin | null {
+  return row.stop_by ? (JSON.parse(row.stop_by) as Origin) : null;
+}
