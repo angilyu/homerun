@@ -7,6 +7,22 @@ that you control from anywhere.*
 **Date:** 2026-09-25
 **Scope:** v1 architecture and build plan
 
+> **Changes from milestone 0.** The Agent SDK and packaging spike
+> ([results](spike-results.md), entries 1–25 of its
+> [Design impact](spike-results.md#design-impact)) revised these sections:
+> §4 (the shell holds the keychain), §5.1 (process tree, `claude` signature,
+> process groups, secrets from the shell), §5.2 (socket path fallback,
+> `secrets.set` and `secrets.persist`, the CLI's own token), §5.3 (SQLite store as a
+> mirror of a disposable local cache, isolation list: clean `/bin/bash`,
+> background tasks off, built-in skills), §5.4 (resume procedure for ambiguous
+> calls), §5.5 (Node and `uv` as on-demand components, registries, CPython
+> pre-fetch), §5.6 (`defer` with parallel tool calls, idempotent decisions),
+> §6 (`runs.claude_pid`, `sdk_transcripts.uuid`), §9.6 (the pairing key is
+> stored by the shell), §10.4 (the refresh token is stored by the shell),
+> §11 (hybrid signing, entitlements, keychain owned by the shell), §14 (install
+> size, components in updates), §16.1 (results per item) and §16.2 (SDK upgrade
+> tests).
+
 ---
 
 ## 1. Purpose
@@ -189,6 +205,7 @@ touching the scheduler, storage, protocol, or clients.
 │  │  │ Shell (Rust)  │──supervises──►│ homerund — runtime process  │  │  │
 │  │  │ tray, login   │◄─── socket ──►│ Claude SDK · scheduler      │  │  │
 │  │  │ item, updater │ launch token  │ tools · storage · relay     │  │  │
+│  │  │ keychain      │ secrets.set   │                             │  │  │
 │  │  └───────▲───────┘               └──────────────┬──────────────┘  │  │
 │  │          │ Tauri commands                       │                 │  │
 │  │  ┌───────┴───────┐ (no socket access)           │                 │  │
@@ -198,9 +215,10 @@ touching the scheduler, storage, protocol, or clients.
 │  │  └───────────────┘                              │                 │  │
 │  └─────────────────────────────────────────────────┼─────────────────┘  │
 │                                                    │                    │
-│   CLI ◄──── same socket · keychain token ──────────┤                    │
+│   CLI ◄── same socket · token in ──────────────────┤                    │
+│           CLI's own keychain item                  │                    │
 │                                                    │                    │
-│   SQLite · MCP servers (children) · Keychain ◄─────┘                    │
+│   SQLite · MCP servers (children) ◄────────────────┘                    │
 │                                                                         │
 │                          ▲ outbound WSS only                            │
 └──────────────────────────┼──────────────────────────────────────────────┘
@@ -225,7 +243,8 @@ One desktop install, three hosted-or-remote surfaces:
 
 1. **Homerun.app** — the single desktop application. Inside it:
    - **Shell** (Rust, Tauri) — menu-bar / tray presence, login item, window
-     management, updater. Spawns and supervises the runtime.
+     management, updater, and the keychain (§11). Spawns and supervises the
+     runtime, and hands it secrets.
    - **`homerund`** — the runtime, a child process of the app. Owns everything
      that matters: scheduling, storage, tools, the agent loop, and the relay
      connection.
@@ -277,16 +296,31 @@ Tauri sidecar.
 binary as a subprocess, so an active run adds one process:
 
 ```
-Homerun.app (shell)
+Homerun.app (shell)         owns the keychain (§11)
 └── homerund                runtime: scheduler, storage, relay, protocol
-    └── claude              one per active run, started by the Agent SDK
-        └── MCP servers     started per run, as configured
+    └── claude              one per active run, started by the Agent SDK,
+        │                   in its own process group
+        ├── bash            the Bash tool's shell (§5.3)
+        └── MCP servers     started per run, as configured; npx / uvx
+                            servers use the Node and uv components (§5.5)
 ```
 
-- The `claude` binary is shipped **inside the app bundle**, signed and notarized
-  with the app, and passed to the SDK through `pathToClaudeCodeExecutable`. It is
-  not extracted to a temporary directory at runtime.
+- The `claude` binary is shipped **inside the app bundle** and passed to the SDK
+  through `pathToClaudeCodeExecutable`. It is not extracted to a temporary
+  directory at runtime. It **keeps Anthropic's own signature**: the build
+  verifies it and never re-signs it (§11).
 - Each active run costs a process, so concurrency is capped (§5.3).
+- **Each `claude` runs in its own process group**, and the runtime records the
+  group in `runs` (§6). Children outlive their supervisors: a runtime killed
+  with SIGKILL leaves `claude` running (reparented to launchd) and finishing its
+  tool call, and a killed `claude` leaves its tool shell running. macOS does not
+  kill the children of a crashed app. So stopping a run kills the whole group,
+  and at start the runtime kills any recorded group that is still alive
+  **before** the crash-resume check (§5.4).
+- **Secrets come from the shell.** The runtime never calls the keychain. The
+  shell reads the API key and sends it over the authenticated local channel
+  (`secrets.set`, §5.2). The runtime keeps it in memory only and passes it only
+  into `claude`'s environment.
 
 **Lifecycle**
 
@@ -297,7 +331,7 @@ Homerun.app (shell)
 | Quit | If runs are active or schedules enabled, confirm: *"2 runs will pause and 5 schedules won't fire until Homerun is running."* Runtime checkpoints and exits cleanly. |
 | Tier 1 (web) update | Only the webview reloads. Runtime unaffected. |
 | Tier 2 (app) update | Deferred while runs are active unless the user chooses otherwise; runtime checkpoints first and resumes afterwards (§5.4). |
-| Runtime crash | Shell restarts it with backoff; runs resume from checkpoint. |
+| Runtime crash | Shell restarts it with backoff; orphaned `claude` process groups are killed, then runs resume from checkpoint (§5.4). |
 | Shell crash | Runtime detects parent exit (its stdin pipe closes), checkpoints, and exits. Next launch resumes. |
 
 - **macOS:** menu-bar app; the Dock icon is shown only while a window is open.
@@ -320,7 +354,7 @@ LaunchAgent without code changes.
 | Consumer | Transport |
 |---|---|
 | Desktop UI | Webview → Tauri commands → Rust shell → local socket. The webview never touches the socket. |
-| CLI | Local socket, with a keychain-stored token |
+| CLI | Local socket, with a token in the CLI's own keychain item |
 | iOS, anywhere | Outbound WSS to the relay; E2E encrypted frames (§9.4) |
 
 The runtime **never opens an inbound listener reachable from the internet** (§9.2).
@@ -334,20 +368,49 @@ do not stop same-user processes. Every local connection therefore authenticates.
 - **Socket placement.** A Unix socket in a `0700` directory inside the app's
   support folder on macOS; on Windows, a named pipe whose ACL admits only the
   current user. This stops other users on the machine, not same-user processes.
+  A Unix socket path is limited to 104 bytes (`sun_path`). If
+  `<support folder>/run/homerund.sock` would exceed it, the runtime falls back
+  to a short per-user path such as `$TMPDIR/hr-<uid>/homerund.sock` (directory
+  `0700`), and fails loudly if that is too long as well.
 - **The shell's launch token.** When the shell spawns the runtime, it generates
   a random 256-bit token and passes it over the runtime's stdin, never through
   arguments or environment variables, which other processes can read. The shell
   presents it on connect. The token is regenerated on every launch and never
   written to disk.
+- **Secrets travel over the shell's connection.** The shell owns the keychain
+  (§11). At startup, and whenever a secret changes, it sends `secrets.set` (or
+  `secrets.clear`) on its authenticated connection. The runtime accepts these
+  only from the shell's launch-token connection, never from the CLI or from
+  forwarded webview calls. It holds secrets in memory only and never writes
+  them to disk or logs. The shell runs whenever the runtime does (§5.1), so the
+  key is normally present. A headless runtime (the escape hatch in §5.1) has no
+  shell; there, runs that need the key wait in `waiting_input` with *"Open
+  Homerun to unlock"*.
+- **The runtime writes secrets back through the shell.** Some secrets are
+  created or changed by the runtime: the device keypair (§9.6) and rotated
+  refresh tokens (§10.4). It sends them to the shell with a `secrets.persist`
+  request, allowed only on the shell's connection. The shell stores the value
+  in the keychain and acknowledges. Until the acknowledgement arrives, the value
+  is *pending*:
+  - The runtime keeps a pending value in memory and uses it. It retries
+    `secrets.persist` when the shell reconnects. A `secrets.set` from the shell
+    never overwrites a newer pending value.
+  - If the runtime restarts before a pending refresh token is persisted, the
+    shell still holds the old token, which rotation has invalidated. The
+    runtime then falls back to a fresh sign-in (§10.4), and remote access is
+    paused until the user signs in again.
+  - A device keypair is never used for pairing until the shell has confirmed
+    storing it.
 - **The webview has no socket access.** It calls Tauri commands; the shell
   forwards an allowlisted set of methods to the runtime. A compromised webview
   can do only what the UI can do, and approvals are still enforced by the
   runtime.
 - **The CLI is approved once.** On first use, `homerun` asks the app for
   access. The app shows *"Allow the Homerun CLI to control your agents?"*. On
-  approval, the runtime issues a CLI token, stored in the keychain, where macOS
-  ties access to the CLI's code signature. The token can be revoked in
-  settings.
+  approval, the runtime issues a CLI token. The **CLI** stores it in its own
+  keychain item, where macOS ties access to the CLI's code signature. The
+  runtime keeps only what it needs to check the token, and never touches the
+  keychain. The token can be revoked in settings.
 - **Unauthenticated connections** get nothing: they are closed after the
   handshake times out.
 
@@ -372,10 +435,10 @@ SDK `query()` and translates between the SDK and Homerun:
 |---|---|
 | Streamed replies | `includePartialMessages` → `message.delta`, which clients see live and which is never persisted |
 | Chat history for clients | Assistant and user messages → `message.final` in `thread_events` |
-| Model-facing transcript | A `sessionStore` adapter writing to SQLite (§6). One database, no JSONL files |
+| Model-facing transcript | A `sessionStore` adapter writing to SQLite (§6), with `sessionStoreFlush: "eager"`. `claude` writes its local JSONL first and the SDK mirrors each entry to the store. The local copy is a disposable cache (below); resume needs only SQLite |
 | Follow-up message on an idle thread | A new `query()` with `resume: <sdk_session_id>` |
 | Message sent during a run | Pushed into the query's streaming input, and seen by the agent after its current step (§5.7) |
-| Stop | `interrupt()`, or abort the query's controller |
+| Stop | `interrupt()`, or abort the query's controller; then kill the run's process group (§5.1) |
 | Approvals and questions | A `PreToolUse` hook plus `canUseTool` → `input_requests` (§5.6) |
 | Budgets | `maxBudgetUsd` per run; the result's `total_cost_usd` is summed per task and globally |
 | Provider outage | SDK retries, plus `fallbackModel` (for example, Opus → Sonnet) |
@@ -385,10 +448,35 @@ Claude Code. By default the SDK loads `~/.claude` settings, skills, hooks, and
 MCP servers. A user's personal hook could then execute inside a Homerun run.
 Every `query()` therefore sets:
 - `settingSources: []`;
-- `CLAUDE_CONFIG_DIR` pointing at a Homerun-private directory;
-- an explicit list of tools and MCP servers built from the task spec.
+- `CLAUDE_CONFIG_DIR` pointing at a Homerun-private directory. It is a cache,
+  not a store: the transcripts `claude` writes under its `projects/` directory
+  are deleted after each run. Every resume also creates a temporary config
+  directory, which is orphaned if the process is killed, so stale ones are
+  swept at runtime start;
+- an explicit list of tools and MCP servers built from the task spec, with
+  `strictMcpConfig`. (In the spike, a run without these isolation settings
+  loaded every default source.) Built-in skills and slash commands are still
+  listed to the model even with `skills: []`. The tool list, which never
+  includes `Skill`, is what keeps them inert;
+- `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` in `claude`'s environment. Otherwise
+  the model can run a command with `run_in_background` (a real model did), or
+  `claude` can move a long command to the background itself. The tool call
+  then returns at once, and a crash leaves an orphaned process doing the work
+  but no ambiguous call to detect (§5.4). If background tasks are wanted later,
+  they need their own lifecycle in `runs`;
+- **a clean shell for the `Bash` tool.** By default `claude` runs Bash commands
+  in the user's login shell with their profile sourced. That leaks the user's
+  environment, aliases and secrets into runs, adds startup time and 45–80 MiB
+  per run, and makes runs behave differently per user. The runtime sets
+  `SHELL=/bin/bash`, points the tool shell's `HOME` at a Homerun-owned directory
+  that holds an empty `.bash_profile` and `.bashrc`, and sets `BASH_ENV` to
+  empty. The user's real home directory is passed in a separate variable, for
+  tools that need to find project files. A **per-task opt-in**, *"Use my shell
+  environment"*, runs with the user's `$SHELL` and real `HOME`. The UI labels it
+  clearly, because it also loads the user's aliases, `PATH` and profile secrets.
 
-Nothing is inherited implicitly.
+Nothing is inherited implicitly. Milestone 0 verified this on the real API
+([item 1](spike-results.md#1-isolation-from-the-developers-claude)).
 
 **Concurrency.** Each active run is a `claude` process, with its own memory and
 a share of the API rate limit.
@@ -443,20 +531,46 @@ effect happened. Handled at tool granularity:
 
 Resolution depends on a property each tool declares:
 
-- `read` / `idempotent` → retry automatically.
+- `read` / `idempotent` → resume, telling the model the call was interrupted and
+  may be retried.
 - everything else → **pause the run and ask the user.**
 
 This puts idempotency where it actually belongs — on the tool — rather than on
 the task as a whole.
 
-**With the Agent SDK:**
+**With the Agent SDK** (proven in milestone 0 on the real API, Haiku and
+Sonnet 5:
+[item 4](spike-results.md#4-kill-mid-tool-call-detect-the-ambiguous-call-inject-the-users-decision)):
 - The SDK's transcript, persisted through our `sessionStore`, is what `resume`
   reloads.
-- `PreToolUse` and `PostToolUse` hooks write `tool.call` and `tool.result` to
-  our log, so ambiguous calls remain detectable.
-- **Open spike:** how the SDK resumes a transcript that ends in a tool call with
-  no result, and how to inject a "the user says this did / did not happen"
-  outcome. This must be proven in milestone 4 before we rely on it.
+- `tool.call` is written by whichever of `PreToolUse` and `canUseTool` runs
+  first, idempotently on the `tool_use_id`, because `PreToolUse` is sometimes
+  skipped on resume. `tool.result` is written by `PostToolUse` and
+  `PostToolUseFailure`. So ambiguous calls remain detectable.
+- **A blind resume repeats the side effect.** When `claude` resumes a
+  transcript that ends in a `tool_use` with no result, it writes its own result
+  (*"[Request interrupted by user for tool use]"*) and persists it, and the
+  model then usually runs the call again. So the runtime never resumes an
+  ambiguous run before the question is settled:
+  1. At runtime start, after killing orphaned process groups (§5.1) and before
+     resuming any run, find ambiguous calls from `thread_events` (`tool.call`
+     with no `tool.result`), cross-checked against `sdk_transcripts`.
+  2. `read` / `idempotent` tools: resume with a message saying the call was
+     interrupted and may be retried.
+  3. Other tools: keep the run in `waiting_input` **without resuming**, and ask
+     the user *"Did this happen?"* (§5.6).
+  4. **Apply the answer by injection (primary path):** append a `tool_result`
+     for that `tool_use_id` to `sdk_transcripts`: *"completed; do not re-run"*
+     or *"did not run"*. **Fallback, truncation:** resume with
+     `resumeSessionAt` set to the entry before the call, plus a message stating
+     the outcome.
+  5. **Always resume with an explicit continuation message,** for example
+     *"The interrupted command completed. Continue the task."* Never a bare
+     "continue": after an injected result, a real model asked what to continue.
+- The injected entry's format is internal to the SDK, so the SDK upgrade gate
+  tests it (§16.2).
+- Background tasks are disabled (§5.3): a backgrounded command returns at once
+  and would leave no ambiguous call to detect.
 
 ### 5.5 Tools
 
@@ -473,12 +587,20 @@ the task as a whole.
 
 v1 targets **both developers and general users**. Most published MCP servers are
 started with `npx` (Node.js) or `uvx` (Python), which most people don't have
-installed. So Homerun ships the toolchain itself:
+installed. So Homerun provides the toolchain itself:
 
-- **A bundled Node.js LTS**, used for every `npx` server. The user's own Node, if
-  any, is never used, so integrations behave the same on every machine.
-- **A bundled `uv`**, used for every `uvx` server. It downloads a managed Python
-  on first use, so no Python ships in the installer.
+- **Node.js LTS (with npm) as an on-demand component**, used for every `npx`
+  server. The user's own Node, if any, is never used, so integrations behave the
+  same on every machine.
+- **`uv` as an on-demand component**, used for every `uvx` server. `uv`
+  downloads a managed Python (about 25 MB) on first use, so no Python ships in
+  the installer. **Decision:** Homerun starts that download in the background as
+  soon as the `uv` component is installed, so the first `uvx` server does not
+  wait for it.
+- **Configurable registries.** Managed networks may block the public npm and
+  PyPI registries. Per-install settings for the npm registry and the `uv` index
+  (`npm_config_registry`, `UV_INDEX_URL`) are passed only to Homerun's `npx`
+  and `uvx`.
 - **Private install locations.** Packages go into Homerun's own support
   directory, never global locations, so they neither affect nor depend on the
   user's development environment.
@@ -496,11 +618,40 @@ code on the user's machine.
 - Tools from any third-party server start as *requires approval* (tool policy,
   below).
 
-**Cost:** a larger install — Node adds roughly 40 MB compressed — and one more
-signed binary. Node, like Bun, needs JIT entitlements under the hardened
-runtime. Loading native add-ons from downloaded npm packages may also need
-`disable-library-validation` on the Node binary only. Milestone 0 verifies this
-(§16.1).
+**Toolchain components.** Node and `uv` are not in the app bundle. They are
+downloaded the first time the user installs a third-party MCP server that needs
+`npx` or `uvx`. This saves 58 MB of download and 167 MB on disk for users who
+never add one, and keeps them out of app updates (§14). The MCP install dialog
+shows a one-time *"Downloading tools (about 60 MB)"* step.
+
+- **Published:** for each architecture and version, a `.tar.zst` of the
+  binaries, re-signed with our Developer ID (§11) and notarized (submitted as a
+  zip, because a bare Mach-O cannot be stapled). A **component manifest** lists
+  the name, version, URL, the archive's `sha256`, and the `CDHash` of every
+  Mach-O. It is signed with the Tauri updater's ed25519 key (minisign format),
+  whose public key is compiled into our signed binaries.
+- **Installed by the runtime:** check the manifest's signature; download the
+  archive and check its `sha256`; extract it into a staging directory; verify
+  every Mach-O against our Team ID and its manifest `CDHash`
+  (`codesign --verify --strict -R '=anchor apple generic and
+  certificate leaf[subject.OU] = "<TEAMID>" and cdhash H"<cdhash>"'`, or
+  `SecStaticCodeCheckValidity` with that requirement); remove any
+  `com.apple.quarantine` attribute; then rename the directory atomically to
+  `~/Library/Application Support/dev.homerun.app/components/<name>/<version>/`,
+  owned by the user with mode `0700`. The previous version is kept until the new
+  one passes a smoke test (`node -e`, `uv --version`).
+- **Launched** only by the hardened runtime, by absolute path. Never on the
+  user's `PATH`.
+- **Re-verified on every runtime start** (`sha256` and `codesign`, about 0.4 s).
+  This is required, not optional: in milestone 0, a tampered `node` and a
+  tampered `uv` both still launched, because the kernel checks code pages
+  lazily, and only the pre-launch check caught them. Homerun does not set
+  `LSFileQuarantineEnabled`, so files it writes are not quarantined. The
+  explicit removal covers a proxy or MDM tool that adds the attribute: in the
+  spike, Gatekeeper killed quarantined, non-notarized binaries at launch.
+- **Entitlements:** Node needs the JIT entitlement and
+  `disable-library-validation`, to load native add-ons from npm packages. `uv`
+  needs none (§11).
 
 Every tool is classified: `read` | `write` | `destructive` | `network`. A task
 declares an allowlist; anything outside it requires approval (§13).
@@ -579,6 +730,32 @@ callback, which can simply stay pending.
   process exits and the run stays in `waiting_input`. When the answer arrives,
   the runtime resumes the session from the `sessionStore` and supplies the
   decision.
+  - **Supplying the decision.** On resume, `PreToolUse` may not fire again for
+    the deferred call, and `canUseTool` may be called twice. So the stored
+    decision is applied in both, idempotently, keyed by `tool_use_id`.
+    `canUseTool` never allows a call just because it was asked.
+  - Resuming a deferred call needs no new message: an empty input stream works.
+    Resuming after an injected tool result (§5.4) always sends a continuation
+    message.
+- **Never defer a parallel batch.** The model may put several tool calls in one
+  message, and parallel tool use cannot be turned off: the SDK has no
+  `disable_parallel_tool_use` passthrough, and
+  `CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY` only makes execution sequential. If
+  every call in a batch is deferred, the result names only one, and on resume
+  the others are gone from the model's context. So:
+  - The rule is **stateful per API message**. The first gated call in a message
+    defers. Every later gated call from the same message is denied with *"Not
+    run; re-issue after the pending approval"*. The SDK streams each call of a
+    batch as its own entry and runs `PreToolUse` before the next one has
+    streamed, so the runtime cannot know in advance whether more will follow.
+  - Only the deferred call gets an `input_requests` row. After the answer, the
+    model re-issues the denied calls as new calls, and each goes through the
+    policy again. Confirmed on the real API with Haiku and Sonnet 5
+    ([item 3](spike-results.md#3-defer-and-resume-later)).
+  - Not yet tested: an ungated call (for example `Read`) that streams after the
+    deferred one. The alternative, if this rule proves insufficient, is to keep
+    the process alive until every call is answered.
+  - We track an SDK feature request for a `disable_parallel_tool_use` option.
 
 This is what lets a scheduled run wait overnight for approval without holding a
 process, a power assertion, or a concurrency slot.
@@ -726,6 +903,7 @@ CREATE TABLE runs (
   ended_at      INTEGER,
   outcome       TEXT,                   -- monitors: 'changed' | 'no_change'
   error         TEXT,
+  claude_pid    INTEGER,                -- leader of the run's claude process group (§5.1); null when none
   UNIQUE (dedupe_key)                   -- prevents double-fire; see below
 );
 
@@ -766,14 +944,20 @@ CREATE TABLE monitor_state (
 -- Backing store for the Agent SDK's sessionStore adapter (§5.3).
 -- The model-facing transcript: owned by the SDK, opaque to clients.
 -- thread_events is the user-facing history; the two are never mixed.
+-- The SDK mirrors entries here on a best-effort basis and may send one twice,
+-- so inserts use INSERT OR IGNORE against the uuid index.
 CREATE TABLE sdk_transcripts (
   project_key   TEXT NOT NULL,
   session_id    TEXT NOT NULL,
   subpath       TEXT NOT NULL DEFAULT '',  -- subagent transcripts
   seq           INTEGER NOT NULL,
+  uuid          TEXT,                      -- the entry's uuid; idempotency key
   entry         TEXT NOT NULL,             -- JSON, as given by the SDK
   PRIMARY KEY (project_key, session_id, subpath, seq)
 );
+CREATE UNIQUE INDEX sdk_transcripts_uuid
+  ON sdk_transcripts(project_key, session_id, subpath, uuid)
+  WHERE uuid IS NOT NULL;
 
 -- Approvals and questions (§5.6).
 CREATE TABLE input_requests (
@@ -1280,8 +1464,10 @@ carries the desktop's key directly, so it skips the matching-code comparison of
 remote device linking (§10.5). Both methods produce the same pinned keys, and
 both require signing in, because all phone traffic goes through the relay.
 
-1. The runtime generates a static keypair at install; the private key goes in
-   the OS keychain.
+1. The runtime generates a static keypair at install. It hands the private key
+   to the shell with `secrets.persist`, and the shell stores it in the keychain
+   (§11). At every launch the shell restores it to the runtime with
+   `secrets.set` (§5.2).
 2. Desktop displays a QR code: `{device_id, static public key, one-time pairing
    code}`.
 3. Phone scans, completes the handshake, and proves possession of the pairing
@@ -1492,9 +1678,14 @@ configuration change plus a user migration, not a rewrite.
 ### 10.4 Sign-in flows
 
 - **Desktop:** the *runtime* (not the UI) runs Authorization Code + PKCE through
-  the **system browser** with a loopback redirect (RFC 8252). The refresh token
-  lives in the OS keychain, owned by the runtime — so remote access keeps working
-  with the window closed.
+  the **system browser** with a loopback redirect (RFC 8252). The runtime keeps
+  the refresh token in memory; the **shell** persists it in the keychain (§11)
+  and restores it with `secrets.set` at every launch. Remote access keeps
+  working with the window closed, because the shell stays running in the tray.
+  When the provider rotates the refresh token, the runtime writes the new one
+  back with `secrets.persist`. If the shell is not connected at that moment,
+  the §5.2 rules apply: hold it in memory and retry on reconnect, and fall back
+  to a fresh sign-in if the runtime restarts first.
 - **iOS:** `ASWebAuthenticationSession` + PKCE; tokens in the iOS Keychain.
 - **Relay:** verifies short-lived access tokens against the provider's JWKS on
   connect. No session state on our side.
@@ -1605,16 +1796,62 @@ What it takes to put this in other people's hands.
   users expect to control it. No helper or LaunchAgent is installed.
 - Guide the user through granting Full Disk Access and Automation only when a
   task actually needs them, never upfront.
-- The bundled `claude` binary is signed and notarized as part of the app
-  bundle (§5.1).
-- **Five signed executables** (shell, runtime, `claude`, Node, `uv`), all under
-  the hardened runtime. The Bun-compiled runtime needs the JIT entitlements
-  (`com.apple.security.cs.allow-jit`, and possibly
-  `allow-unsigned-executable-memory`), and so does Node. These go on those two
-  binaries only, never on the shell.
-- **Keychain items live in a shared access group** tied to our Team ID, not to
-  one binary's code signature. Otherwise an update that changes a signature
-  prompts *"Homerun wants to access your keychain"*.
+- **Signing is inside-out, by our own script,** because Tauri's bundler cannot
+  set per-helper entitlements. It is a hybrid:
+  - The shell and the runtime are signed with our Developer ID.
+  - **`claude` keeps Anthropic's Developer ID signature, unmodified.** The build
+    checks that it still meets Anthropic's designated requirement and is
+    hardened, instead of re-signing it. Its signature already includes
+    `allow-jit`. It also carries entitlements we did not choose
+    (`allow-unsigned-executable-memory`, `disable-library-validation`, Apple
+    Events, audio input). The shell needs the matching usage strings only if
+    `claude` ever uses those.
+  - The Node and `uv` components (§5.5) are re-signed with our Developer ID.
+    Node's vendor signature carries `get-task-allow`, which blocks
+    notarization.
+  - **Still to prove with our certificate:** that the notary service accepts
+    nested code signed by another team's Developer ID. It should, because
+    `claude` is hardened and timestamped. If it does not, re-sign `claude`
+    too, after confirming with Anthropic (§3.4).
+- **Three signed executables in the bundle** (shell, runtime, `claude`) and two
+  in on-demand components (Node, `uv`), all under the hardened runtime, each
+  with the fewest entitlements that work:
+
+  | Binary | Entitlements |
+  |---|---|
+  | Shell | `keychain-access-groups` only (below) |
+  | Runtime (Bun) | `allow-jit` |
+  | `claude` (Bun) | Anthropic's, which include `allow-jit`. Without it every turn fails |
+  | Node | `allow-jit`, `disable-library-validation` (native add-ons from npm) |
+  | `uv` | none |
+
+  `allow-unsigned-executable-memory` is not needed by Bun 1.4.2 or later, or by
+  Node 24.
+- **The shell owns the keychain.** `keychain-access-groups` is restricted under
+  Developer ID and needs an embedded provisioning profile, which a bare Mach-O
+  such as the runtime cannot carry.
+  - The shell, the bundle's main executable, carries the app's
+    `embedded.provisionprofile` and the `keychain-access-groups` entitlement.
+    Items live in the data-protection keychain, in a shared access group tied
+    to our Team ID rather than to one binary's code signature. Otherwise an
+    update that changes a signature prompts *"Homerun wants to access your
+    keychain"*.
+  - The runtime never calls Security.framework. The shell hands it secrets over
+    the authenticated channel (`secrets.set`, §5.2), and stores the ones the
+    runtime creates or rotates (`secrets.persist`).
+  - **Keychain reads never block.** A read from the legacy keychain can show a
+    modal dialog and block the calling thread, even when told not to. The shell
+    reads off the main thread with a timeout, and on timeout shows *"Keychain
+    access needs your approval"*.
+  - **Fallback** if the access group cannot be set up: with a Developer ID
+    build, the legacy keychain's `teamid:` partition should still prevent the
+    prompt after an update. The update test (§16.1 item 8) runs in CI for every
+    release.
+- **Release pipeline facts.** Tauri refuses to start if its executable path
+  contains a symlink (for example `/tmp`, which links to `/private/tmp`). A
+  crash during launch leaves AppKit's *"reopen windows?"* alert, which blocks
+  the next unattended launch, so test harnesses clear
+  `~/Library/Saved Application State/dev.homerun.app.savedState`.
 
 **Branding (all platforms):** "Homerun, powered by Claude" is allowed. "Claude
 Code", and visuals imitating it, are not (§3.4).
@@ -1759,6 +1996,14 @@ surfaces":
   start, plus OTA updates fetched on launch. Fixes reach Mac and Windows in
   minutes with no reinstall and no notarization round-trip.
 - **Tier 2 — shell and runtime (rare).** Signed Tauri updater, staged rollout.
+  Measured in milestone 0 (arm64, without Node and `uv`): the app is 276 MB on
+  disk, the DMG 135 MB, and the update payload 122 MB. `claude` alone is
+  208 MB uncompressed and changes with every SDK upgrade, so most tier 2
+  updates are dominated by it ([measurements](spike-results.md#measurements)).
+  A universal build roughly doubles the binaries and is not yet measured.
+- **Toolchain components (Node, `uv`)** update separately from the app (§5.5).
+  The update manifest lists component versions, and a component is downloaded
+  only if the user has installed it.
 
 **Every over-the-air update is signed, and verified before it runs.** Without
 this, OTA updates reintroduce exactly the weakness that §9.9 attributes to the
@@ -1836,35 +2081,70 @@ survives being killed.
 Every item is a yes/no test on a real, signed build. If any fails, the design is
 revised before milestone 1 starts.
 
+**Status after the spike** ([full results](spike-results.md)). Items 1–5 were
+run against a scripted mock API and then the real API. The packaging items used
+self-signed and ad-hoc builds, because no Developer ID was available. *Blocked*
+means the check needs our Apple Developer ID and Team ID to finish. Where an
+item failed, the design above has been revised.
+
 **Agent SDK behaviour**
 1. A Bun-compiled binary drives the bundled `claude` binary through
    `pathToClaudeCodeExecutable`, with `settingSources: []` and a private
    `CLAUDE_CONFIG_DIR`. Nothing from the developer's own `~/.claude` loads.
+   **Passed** (mock and real API), after the isolation additions in §5.3.
+   [Evidence](spike-results.md#1-isolation-from-the-developers-claude).
 2. A `sessionStore` round trip through SQLite: run, kill the process, resume
-   from the store alone.
+   from the store alone. **Passed** (mock and real API).
+   [Evidence](spike-results.md#2-sessionstore-round-trip-through-sqlite).
 3. `defer` from a `PreToolUse` hook; the process exits; resume hours later with
-   the answer.
+   the answer. **Passed** for defer, exit and resume (mock and real API),
+   after the parallel-call rule in §5.6. The resume after a long gap
+   **passed** after 189 minutes (mock API).
+   [Evidence](spike-results.md#3-defer-and-resume-later).
 4. Kill in the middle of a tool call; resume; the ambiguous call is detected
    and a user decision ("it did / did not happen") is injected (§5.4).
+   **Passed** (mock and real API), with the resume procedure revised in §5.4.
+   [Evidence](spike-results.md#4-kill-mid-tool-call-detect-the-ambiguous-call-inject-the-users-decision).
 5. Steering: a message pushed into streaming input mid-run is seen at the next
-   step.
+   step. **Passed** (mock and real API).
+   [Evidence](spike-results.md#5-steering).
 
 **Packaging (macOS)**
 6. One app bundle holding the Tauri shell, the Bun runtime, and `claude`, each
-   signed under the hardened runtime, with the JIT entitlements on the runtime
-   and Node only. The whole bundle notarizes, and Gatekeeper launches it on a clean
-   machine.
-7. The runtime reads and writes a keychain item in the shared access group.
-8. A full auto-update cycle to a newly signed build: no keychain prompt appears,
-   and a run in progress resumes afterwards.
+   signed under the hardened runtime, with JIT on the runtime, `claude` and
+   Node, and library validation off on Node only (§11). The whole bundle
+   notarizes, and Gatekeeper launches it on a clean machine. **Failed as
+   first written** (`claude` needs JIT too; Node needs library validation
+   off), now reworded; the bundle and entitlements pass with ad-hoc signing.
+   Notarization and the clean-machine launch are **blocked** on the Developer
+   ID. [Evidence](spike-results.md#6-bundle-hardened-runtime-entitlements-notarization-gatekeeper).
+7. A Developer ID build reads and writes a keychain item in the shared access
+   group, from the shell (§11). **Blocked** on the Team ID and provisioning
+   profile. [Evidence](spike-results.md#7-keychain-access-group).
+8. A full auto-update cycle to a newly signed Developer ID build: no keychain
+   prompt appears, and a run in progress resumes afterwards. **Partial:** the
+   update and resume passed; "no keychain prompt" failed with self-signed and
+   ad-hoc builds, as expected, and is **blocked** for Developer ID.
+   [Evidence](spike-results.md#8-auto-update-mid-run).
 9. `SMAppService.mainApp` login item: launches at login, and shows as
-   "Homerun" in Login Items.
-10. The bundled Node runs an `npx` MCP server that has a native add-on (for
-    example, one using `better-sqlite3`), and the bundled `uv` runs a `uvx`
-    server, both from inside the signed app on a clean machine.
+   "Homerun" in Login Items. **Partial:** registration and the name passed;
+   launch at login is untested (it needs a logout).
+   [Evidence](spike-results.md#9-login-item).
+10. Homerun's Node runs an `npx` MCP server that has a native add-on (for
+    example, one using `better-sqlite3`), and its `uv` runs a `uvx` server,
+    both launched by the signed runtime on a clean machine. **Passed on the
+    development machine**, from inside the bundle and from the on-demand
+    components directory (§5.5). The clean-machine run is scripted but not yet
+    run. [Evidence](spike-results.md#10-mcp-servers-via-bundled-node-and-uv).
 
 **Measure and record:** install size (with Node and `uv`), idle memory, and
-memory per active run.
+memory per active run. **Recorded** (arm64,
+[details](spike-results.md#measurements)):
+- Install size: app 443 MB on disk, DMG 205 MB, update 180 MB with Node and
+  `uv`; 276 MB, 135 MB and 122 MB without them (the shipping layout, §5.5).
+- Idle memory: runtime 64 MiB RSS; whole app 241 MiB RSS (85 MB footprint).
+- Per active run: about 215 MiB RSS (120 MB footprint) with the clean shell
+  (§5.3); 260–300 MiB with a user's own shell profile.
 
 ### 16.2 Testing strategy
 
@@ -1888,6 +2168,25 @@ upgrade can change agent behaviour without any change to our code.
   tool policy (§5.5), and settings isolation (§5.3).
 - The suite checks outcomes and policy (for example, "the tainted run asked
   before fetching an unknown domain"), not exact wording.
+- It also covers SDK behaviour that milestone 0 found to be undocumented or
+  internal, and that Homerun depends on:
+  - **Injected tool results:** the format of the `tool_result` entry appended
+    to `sdk_transcripts` for an ambiguous call (§5.4) still resumes cleanly,
+    and the model does not re-run the call. Truncation with `resumeSessionAt`
+    still works as the fallback.
+  - **Stateful sibling denial:** `PreToolUse` still fires once per call as each
+    call of a parallel batch streams. Deferring the first gated call and
+    denying the rest still leaves one input request, and the model re-issues
+    the denied calls after the answer (§5.6).
+  - **Background tasks stay off:** with
+    `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, neither the model nor `claude`
+    can move a `Bash` command to the background (§5.3).
+  - **Resume quirks:** `claude` still answers a dangling tool call as
+    "interrupted" on resume, and the stored decision for a deferred call is
+    still applied when `PreToolUse` is skipped on resume.
+  - **Isolation:** the negative control still loads the user's settings, and
+    the isolated run still loads none of them (§5.3); the tool shell is still
+    the clean `/bin/bash`.
 - Cadence: monthly, or immediately for security fixes.
 These set the concurrency defaults (§5.3).
 
