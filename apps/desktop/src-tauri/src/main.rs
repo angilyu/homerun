@@ -25,11 +25,15 @@ struct Runtime {
     restarts: AtomicU32,
 }
 
+/// Named separately from the bundle id: a data folder ending like a bundle (`dev.homerun.app`)
+/// was treated as one by macOS and writes were denied (spike entry 26).
+const DATA_DIR_NAME: &str = "Homerun";
+
 fn data_dir() -> PathBuf {
     if let Ok(d) = std::env::var("HOMERUN_DATA_DIR") {
         return PathBuf::from(d);
     }
-    dirs::data_dir().expect("no data dir").join("com.angilyu.homerun")
+    dirs::data_dir().expect("no data dir").join(DATA_DIR_NAME)
 }
 
 fn log(file: &str, line: &str) {
