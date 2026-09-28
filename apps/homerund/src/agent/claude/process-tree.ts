@@ -6,8 +6,8 @@ import { groupAlive, killGroup, killGroupAndWait, pidAlive } from "./spawn";
  * group, and with job control on, so is each pipeline in it. Killing the `claude` group alone
  * leaves them running, reparented to launchd, still doing the side effect. These helpers find them
  * by ancestry (while `claude` is alive), by session (after it died: `claude` is spawned as a
- * session leader, and its tools change group but not session), or by the config dir in their
- * command (a shell that got as far as sourcing the snapshot).
+ * session leader, and what it forks stays in its session), or by the config dir in their command
+ * (the Bash tool's shell, which calls `setsid` itself, sources a snapshot from there).
  */
 
 export interface Proc {
@@ -71,6 +71,18 @@ export function escapedTools(procs: readonly Proc[], claudeConfigDir: string): P
   return [...all.values()];
 }
 
+/**
+ * Tool processes whose `claude` is gone: `escapedTools` of this data dir, minus everything still
+ * below a live `claude` (a process whose command has `leaderMarker`), which belongs to another run.
+ * The Bash tool's shell calls `setsid`, so it leaves `claude`'s session as well as its group, and
+ * once `claude` dies only its command (the snapshot it sources) still ties it to us.
+ */
+export function orphanedTools(procs: readonly Proc[], claudeConfigDir: string, leaderMarker: string): Proc[] {
+  const live = procs.filter((p) => p.command.includes(leaderMarker)).map((p) => p.pid);
+  const owned = new Set([...live, ...descendants(procs, live).map((p) => p.pid)]);
+  return escapedTools(procs, claudeConfigDir).filter((p) => !owned.has(p.pid));
+}
+
 type GetSid = (pid: number) => number;
 let getsidFn: GetSid | null | undefined;
 
@@ -107,9 +119,9 @@ export function sessionOf(pid: number): number | null {
 
 /**
  * Processes in the session `sid` other than its leader. `claude` is spawned with `setsid`, so its
- * pid is the session id of every tool it started, even one that moved to its own group and
- * outlived it (reparented, its command not yet showing the config dir). A tool that calls `setsid`
- * itself leaves the session; `escapedTools` is the fallback for those.
+ * pid is the session id of what it forks, even a process that moved to its own group and outlived
+ * it. A tool that calls `setsid` itself (the Bash tool's shell does) leaves the session;
+ * `orphanedTools` finds those.
  */
 export function sessionMembers(procs: readonly Proc[], sid: number): Proc[] {
   const self = process.pid;
@@ -148,15 +160,18 @@ export async function killProcs(procs: readonly Proc[], timeoutMs = 5000): Promi
  * their own groups, and every process left in its session. The tree is snapshotted first, while
  * the parent links still exist. While the leader is alive it must still be `claude` (its command
  * contains `leaderMarker`): a reused pid's children and session are not ours. Once it is gone, its
- * session members are the tools it left behind. The group itself is always killed, as before.
+ * session members and, given `claudeConfigDir`, the `orphanedTools` of the data dir are what it
+ * left behind. The group itself is always killed, as before.
  */
-export async function killRunTree(claudePid: number, leaderMarker: string, timeoutMs = 5000): Promise<number[]> {
+export async function killRunTree(claudePid: number, leaderMarker: string, timeoutMs = 5000, claudeConfigDir?: string): Promise<number[]> {
   const procs = listProcs();
   const leader = procs.find((p) => p.pid === claudePid);
-  const isClaude = !!leader && leader.command.includes(leaderMarker);
+  const dead = !leader || !pidAlive(claudePid);
+  const isClaude = !dead && leader.command.includes(leaderMarker);
   const tree = isClaude ? descendants(procs, [claudePid]) : [];
-  const session = !leader || isClaude ? sessionMembers(procs, claudePid) : [];
-  const targets = new Map([...tree, ...session].map((p) => [p.pid, p]));
+  const session = dead || isClaude ? sessionMembers(procs, claudePid) : [];
+  const orphans = dead && claudeConfigDir ? orphanedTools(procs, claudeConfigDir, leaderMarker) : [];
+  const targets = new Map([...tree, ...session, ...orphans].map((p) => [p.pid, p]));
   killGroup(claudePid, "SIGKILL");
   const killed = await killProcs([...targets.values()], timeoutMs);
   await killGroupAndWait(claudePid, timeoutMs);

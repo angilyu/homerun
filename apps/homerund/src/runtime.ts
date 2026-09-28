@@ -113,7 +113,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     }
 
     const secrets = new SecretStore();
-    const engine = o.engine ? o.engine(store) : new ClaudeEngine({ claudePath: config.claudePath, sessionStore: new SqliteSessionStore(store) });
+    const engine = o.engine ? o.engine(store) : new ClaudeEngine({ claudePath: config.claudePath, claudeConfigDir: config.claudeConfigDir, sessionStore: new SqliteSessionStore(store) });
     const ctx: RunContext = {
       store,
       config,
