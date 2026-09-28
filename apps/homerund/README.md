@@ -46,6 +46,9 @@ cd apps/homerund
 bun run src/main.ts serve --no-launch-token --dev-auto-approve   # development
 ```
 
+- Packages come from registry.npmjs.org: the repo-root `.npmrc` overrides any
+  user-level registry, and `scripts/check-registry.sh` (run in CI) fails if
+  `pnpm-lock.yaml` names another registry host.
 - In production the shell writes a launch token on stdin line 1. It is the
   `shell` role credential (§5.2). The runtime serves until stdin closes.
 - `--no-launch-token` is development-only. Connect with the token in
