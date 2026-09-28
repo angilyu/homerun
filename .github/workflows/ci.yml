@@ -34,8 +34,9 @@ jobs:
 
   homerund:
     name: apps/homerund
-    # The runtime targets macOS first (§5.1): process groups, the bundled darwin claude.
-    runs-on: macos-latest
+    # Linux: the runtime's process-group, ps and socket code is POSIX, and the SDK ships a
+    # linux-x64 claude (in the lockfile), so replay runs the real bundled claude here too.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

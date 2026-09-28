@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { PersistedThreadEvent, type ThreadEvent } from "@homerun/core";
+import { groupAlive } from "../../src/agent/claude/spawn";
 import type { RpcClient } from "../../src/rpc/client";
 import { sessionSpec, uuid } from "../helpers";
 import { HOMERUND_DIR, Homerund, REPLAY_KEY, Subscription, loadEnvLocal, scratchDir } from "./harness";
@@ -43,15 +44,6 @@ function sql<T>(hr: Homerund, q: string, ...args: Array<string | number | null>)
     return db.query(q).all(...args) as T[];
   } finally {
     db.close();
-  }
-}
-
-function groupAlive(pgid: number): boolean {
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 

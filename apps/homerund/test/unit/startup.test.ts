@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { echoScript, type FakeScript } from "../../src/agent/fake-engine";
-import { groupAlive } from "../../src/agent/claude/spawn";
+import { groupAlive, pidAlive } from "../../src/agent/claude/spawn";
 import { bootTime } from "../../src/runs/process-groups";
 import { RESTART_NOTE } from "../../src/runs/recovery";
 import { openDb } from "../../src/store/db";
@@ -169,14 +169,7 @@ describe("startup recovery (§5.4)", () => {
     const childOf = (pid: number) => Number(Bun.spawnSync(["/usr/bin/pgrep", "-P", String(pid)]).stdout.toString().trim().split("\n")[0]);
     let escaped = 0;
     let job = 0;
-    const alive = (pid: number) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+    const alive = pidAlive;
     const { b } = await crashAndRestart(
       async (s) => {
         await s.nextInput();

@@ -103,7 +103,7 @@ pnpm --filter @homerun/homerund test:replay   # real claude against recorded API
 scripts/check-no-secrets.sh                   # from the repo root
 ```
 
-CI runs all of these on macOS (`.github/workflows/ci.yml`, job `homerund`).
+CI runs all of these on Linux (`ubuntu-latest`; `.github/workflows/ci.yml`, job `homerund`). The code is POSIX-only (process groups, `ps`, unix sockets) and is tested on macOS and Linux; liveness checks ignore zombies, which `kill(pid, 0)` still reports as alive.
 
 ### Replay harness (§16.2)
 
