@@ -92,6 +92,8 @@ export interface EngineRun {
   closeInput(): void;
   /** SIGKILL the whole process group. */
   kill(): void;
+  /** SIGKILL the group and wait until every member is gone (stray children included). */
+  reap(): Promise<void>;
   readonly pid: number | null;
   /** Resolves when the agent process has exited and the event stream has ended. */
   readonly exited: Promise<EngineExit>;
