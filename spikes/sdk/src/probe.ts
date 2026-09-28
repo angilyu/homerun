@@ -49,6 +49,17 @@ function policyFrom(spec: string): Policy {
     const tools = spec.slice(6).split(",");
     return async (name) => (tools.includes(name) || tools.includes("*") ? "defer" : "allow");
   }
+  if (spec.startsWith("defer-one:")) {
+    // F3 mitigation: defer the first gated call of a batch; deny its siblings so they get a
+    // real tool_result (and stay in the transcript) instead of being silently dropped.
+    const tools = spec.slice(10).split(",");
+    let deferred: string | undefined;
+    return async (name, _input, id) => {
+      if (!(tools.includes(name) || tools.includes("*"))) return "allow";
+      if (deferred === undefined || deferred === id) { deferred = id; return "defer"; }
+      return { deny: "Not run: another tool call in this batch is waiting for the user's approval. Re-issue this exact call, on its own, after that approval." };
+    };
+  }
   if (spec === "answer") {
     const ans = JSON.parse(a.answer ?? "{}");
     return async (name, input) => {
@@ -94,7 +105,8 @@ async function turn() {
     return d;
   };
 
-  const extraEnv: Record<string, string> = {};
+  // Spike-only: extra claude env as JSON, e.g. {"CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY":"1"}.
+  const extraEnv: Record<string, string> = JSON.parse(process.env.HOMERUN_PROBE_EXTRA_ENV ?? "{}");
   if (a.proxy) extraEnv.ANTHROPIC_BASE_URL = a.proxy;
 
   const h = startRun({

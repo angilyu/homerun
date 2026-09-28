@@ -2,18 +2,20 @@
 # F4: how to ship the third-party pre-signed helpers (claude, node, uv).
 #   A = keep the vendor's Developer ID signature (nested code under other Team IDs)
 #   B = re-sign with our identity and our minimal entitlements
+#   H = hybrid: keep Anthropic's signature on claude, re-sign node and uv (recommended)
 # For each: strict deep verify, Gatekeeper assessment, Apple's pre-notarization check
 # (syspolicy_check notary-submission), and launch of every helper as a child of the
 # hardened-runtime homerund inside the bundle (helpers.check via the shell autotest).
 #   spikes/packaging/f4.sh            (uses the last unsigned Tauri build)
+#   F4_VARIANTS="H" spikes/packaging/f4.sh
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC="$ROOT/apps/desktop/src-tauri/target/release/bundle/macos/Homerun.app"
 RES="$ROOT/.spike/results/f4"; mkdir -p "$RES"
-for v in A B; do
+for v in ${F4_VARIANTS:-A B H}; do
   W="$ROOT/.spike/f4/$v"; rm -rf "$W"; mkdir -p "$W"
   ditto "$SRC" "$W/Homerun.app"
-  tp=$([[ $v == A ]] && echo keep || echo resign)
+  case $v in A) tp=keep ;; B) tp=resign ;; H) tp=hybrid ;; esac
   THIRD_PARTY=$tp IDENTITY="${IDENTITY:--}" "$ROOT/scripts/macos/sign.sh" "$W/Homerun.app" > "$RES/$v-sign.txt" 2>&1
   "$ROOT/scripts/macos/verify.sh" "$W/Homerun.app" > "$RES/$v-verify.txt" 2>&1; vrc=$?
   syspolicy_check notary-submission "$W/Homerun.app" > "$RES/$v-notary-precheck.txt" 2>&1; nrc=$?
