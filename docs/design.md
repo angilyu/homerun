@@ -2147,8 +2147,12 @@ item failed, the design above has been revised.
     example, one using `better-sqlite3`), and its `uv` runs a `uvx` server,
     both launched by the signed runtime on a clean machine. **Passed on the
     development machine**, from inside the bundle and from the on-demand
-    components directory (§5.5). The clean-machine run is scripted but not yet
-    run. [Evidence](spike-results.md#10-mcp-servers-via-bundled-node-and-uv).
+    components directory (§5.5), and **on a clean macOS 26 VM** with the
+    self-signed build and quarantine removed. The same run with quarantine
+    kept is **blocked** on the notarized Developer ID build (item 6). The
+    clean VM found two issues proposed for review (spike-results entries 26
+    and 27: the data dir name, and a CLT install dialog from `uvx`).
+    [Evidence](spike-results.md#10-mcp-servers-via-bundled-node-and-uv).
 
 **Measure and record:** install size (with Node and `uv`), idle memory, and
 memory per active run. **Recorded** (arm64,

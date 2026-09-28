@@ -230,6 +230,7 @@ fn autotest(app: &AppHandle) {
                     let _ = rt(&app, "mcp.probe", json!({"runner": "npx", "pkg": pkg, "bin": bin, "tool": "sqlite_version"}));
                 }
                 let _ = rt(&app, "mcp.probe", json!({"runner": "uvx", "pkg": "mcp-server-time==2026.8.18", "tool": "get_current_time", "toolArgs": {"timezone": "UTC"}}));
+                log("shell.log", "autotest selftest done: app.exit(0)");
                 app.exit(0);
             }
             // Item 8: store the API key + canary, start a long run, update mid-run.
@@ -267,6 +268,7 @@ fn autotest(app: &AppHandle) {
 }
 
 fn main() {
+    std::panic::set_hook(Box::new(|p| log("shell.log", &format!("panic: {p}"))));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
@@ -287,10 +289,17 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build app");
 
-    app.run(|app, ev| {
-        if let RunEvent::Exit = ev {
+    app.run(|app, ev| match ev {
+        // Diagnostics for the clean-VM early-exit finding (spike-results item 10).
+        RunEvent::ExitRequested { code, .. } => log("shell.log", &format!("exit requested code={code:?}")),
+        RunEvent::WindowEvent { label, event: e @ (tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed), .. } => {
+            log("shell.log", &format!("window {label} {e:?}"))
+        }
+        RunEvent::Exit => {
+            log("shell.log", "run loop exit");
             let rt = app.state::<Arc<Runtime>>().inner().clone();
             stop_runtime(&rt);
         }
+        _ => {}
     });
 }
