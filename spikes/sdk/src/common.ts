@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HookCallbackMatcher, HookEvent, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { openDb, ThreadLog } from "../../../apps/homerund/src/store/db";
-import { SqliteSessionStore } from "../../../apps/homerund/src/store/sqlite-session-store";
+import { openDb, ThreadLog } from "../../homerund-m0/src/store/db";
+import { SqliteSessionStore } from "../../homerund-m0/src/store/sqlite-session-store";
 
 /** Load KEY=VALUE lines from the repo-root .env.local into process.env (never printed). */
 export function loadEnvLocal(root: string): void {
