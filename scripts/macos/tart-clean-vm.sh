@@ -12,7 +12,9 @@
 #
 # Pass criteria (printed at the end):
 #   gatekeeper   spctl --assess → "accepted, source=Notarized Developer ID" (requires the real
-#                Developer ID + notarize.sh; ad-hoc/self-signed builds are expected to be rejected)
+#                Developer ID + notarize.sh; ad-hoc/self-signed builds are expected to be rejected).
+#                The vanilla image has the Developer ID rules disabled, so even a notarized build is
+#                rejected unless "App Store & Known Developers" is selected in the VM (see "rules").
 #   launch       the app starts via `open` with the quarantine flag set, homerund answers ping
 #   helpers      claude, node, uv start as children of homerund (helpers.check)
 #   keychain     keychain.set/get round trip from the bundle
@@ -67,6 +69,12 @@ echo "## no-toolchain: (xcode-select -p: $(xcode-select -p 2>&1); /usr/bin/pytho
 echo "## clt-prompt before launch: $(pgrep -fl 'Install Command Line Developer Tools' || echo none)"
 echo "## gatekeeper:"; spctl --assess --type execute -vvv /Applications/Homerun.app 2>&1 | sed 's/^/  /'
 syspolicy_check distribution /Applications/Homerun.app 2>&1 | sed 's/^/  /' || true
+# The vanilla image ships with the Developer ID rules disabled ("App Store" only). spctl can't change
+# that on macOS 15+ and the DB is SIP-protected, so a notarized build is rejected here with
+# "lack of matching active rule" until someone picks "App Store & Known Developers" in the UI.
+echo "## gatekeeper rules (label|disabled; macOS default: Developer ID rules 0):"
+echo admin | sudo -S sqlite3 /var/db/SystemPolicyConfiguration/SystemPolicy \
+  "select distinct label, disabled from authority where label like '%Developer ID%';" 2>/dev/null | sed 's/^/  /'
 echo "## launch (open, as Finder would), autotest selftest"
 cp "/Volumes/My Shared Files/share/mcp-native.tgz" /tmp/mcp-native.tgz
 open -a /Applications/Homerun.app --env HOMERUN_SELFTEST_NPX_PKG="/tmp/mcp-native.tgz#homerun-spike-mcp-native" --args --autotest selftest
