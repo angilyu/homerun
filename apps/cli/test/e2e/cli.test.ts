@@ -220,6 +220,15 @@ describe("send", () => {
     const piped = await cli(srt.dir, ["chat", task.thread_id], { stdin: "and now?\nnever sent\n", timeoutMs: 5_000 });
     expect(piped.code).toBe(75);
     expect(piped.stderr).toContain("delivered with the answer");
+
+    // Stopped instead of answered: the held messages were never delivered, and nothing sends
+    // them later; history shows them with a way to resend (§5.7).
+    expect((await cli(srt.dir, ["stop", task.thread_id])).code).toBe(0);
+    const shown = await cli(srt.dir, ["threads", "show", task.thread_id]);
+    expect(shown.stdout).toContain("— cancelled");
+    expect(shown.stdout).toContain("✗ not delivered: still there?");
+    expect(shown.stdout).toContain("✗ not delivered: and now?");
+    expect(shown.stdout).toContain(`resend it: homerun send ${task.thread_id.slice(0, 8)} 'still there?'`);
     const task2 = await (await srt.dev()).call("tasks.create", { spec: sessionSpec() as never });
     const asked = await cli(srt.dir, ["chat", task2.thread_id], { stdin: "go\nnever sent\n", timeoutMs: 5_000 });
     expect(asked.code).toBe(75);

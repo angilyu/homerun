@@ -9,7 +9,7 @@ import { contentText, headLines, inputSummary, partialStdout, table, truncate } 
 import { matchPrefix } from "../../src/ids";
 import { main } from "../../src/main";
 import { Output, colorWanted } from "../../src/output";
-import { EventRenderer } from "../../src/render";
+import { EventRenderer, resendCommand } from "../../src/render";
 import type { Io } from "../../src/context";
 
 const code = (f: () => unknown) => {
@@ -147,6 +147,37 @@ describe("rendering", () => {
     tr.render({ ...base, seq: 1, type: "user.message", payload: { client_msg_id: "c", text: "hi", origin: { device_id: "d", surface: "ios" }, disposition: "started_run" } } as never);
     tr.render(final("hello"));
     expect(t.out()).toBe("you · ios› hi\nclaude› hello\n");
+  });
+
+  test("a held message the run never delivered is shown as not delivered, with a resend command (§5.7)", () => {
+    const msg = (seq: number, text: string, disposition: string, client_msg_id = `c${seq}`) =>
+      ({ ...base, seq, type: "user.message", payload: { client_msg_id, text, origin: { device_id: "d", surface: "cli" }, disposition } }) as never;
+    const end = (seq: number, state: string) => ({ ...base, seq, type: "run.end", payload: { state, outcome: null, error: null, authority: "full", cost_usd: null } }) as never;
+    const t = capture();
+    const r = new EventRenderer(t.o, { role: "cli", transcript: true, own: new Set(["c2"]) });
+    r.render(msg(1, "go", "started_run"));
+    r.render(msg(2, "it's done?", "held", "c2"));
+    r.render({ ...base, seq: 3, type: "run.cancelled", payload: { by: null, reason: "user" } } as never);
+    r.render(end(4, "cancelled"));
+    expect(t.out()).toBe(
+      [
+        "you› go",
+        "— stopping (requested)",
+        "— cancelled",
+        "  ✗ not delivered: it's done? (sent while the run waited; the run ended first)",
+        "    resend it: homerun send 11111111 'it'\\''s done?'",
+        "",
+      ].join("\n"),
+    );
+
+    // Delivered with the answer: nothing to report.
+    const d = capture();
+    const rd = new EventRenderer(d.o, { role: "cli", transcript: true });
+    for (const e of [msg(1, "go", "started_run"), msg(2, "status?", "held"), { ...base, seq: 3, type: "run.resumed", payload: { reason: "ambiguity_resolved" } } as never, end(4, "succeeded")]) rd.render(e);
+    expect(d.out()).not.toContain("not delivered");
+
+    expect(resendCommand(base.thread_id, "-v please")).toBe("homerun send 11111111 -- '-v please'");
+    expect(resendCommand(base.thread_id, "two\nlines")).toBe("homerun send 11111111 TEXT");
   });
 
   test("own messages are not echoed", () => {
