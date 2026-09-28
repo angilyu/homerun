@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, RunEvent, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -183,6 +183,53 @@ fn login_item_impl(_action: &str) -> Result<Value, String> {
     Err("macOS only in milestone 0".into())
 }
 
+/// Data-protection keychain, owned by the shell (design §11). `group` None = the default access group
+/// (the first `keychain-access-groups` entry). Needs the entitlement + embedded profile (sign.sh TEAM_ID).
+#[cfg(target_os = "macos")]
+fn shell_keychain(op: &str, account: &str, value: Option<&[u8]>, group: Option<&str>) -> Value {
+    use security_framework::passwords::{delete_generic_password_options, generic_password, set_generic_password_options};
+    use security_framework::passwords_options::PasswordOptions;
+    let opts = || {
+        let mut o = PasswordOptions::new_generic_password("com.angilyu.homerun", account);
+        o.use_protected_keychain();
+        if let Some(g) = group {
+            o.set_access_group(g);
+        }
+        o
+    };
+    let t0 = Instant::now();
+    let (r, len) = match op {
+        "set" => (set_generic_password_options(value.unwrap_or_default(), opts()), None),
+        "get" => match generic_password(opts()) {
+            Ok(v) => (Ok(()), Some(v.len())),
+            Err(e) => (Err(e), None),
+        },
+        _ => (delete_generic_password_options(opts()), None),
+    };
+    let status = r.as_ref().err().map_or(0, |e| e.code());
+    let name = match status {
+        0 => "errSecSuccess",
+        -34018 => "errSecMissingEntitlement",
+        -25300 => "errSecItemNotFound",
+        -25299 => "errSecDuplicateItem",
+        -25308 => "errSecInteractionNotAllowed",
+        _ => "other",
+    };
+    let out = json!({"op": op, "account": account, "group": group, "status": status, "name": name,
+                     "length": len, "ms": t0.elapsed().as_millis() as u64, "dataProtection": true});
+    log("shell.log", &format!("shell keychain {out}"));
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn shell_keychain(_op: &str, _account: &str, _value: Option<&[u8]>, _group: Option<&str>) -> Value {
+    json!({"error": "macOS only in milestone 0"})
+}
+
+fn keychain_group() -> String {
+    std::env::var("HOMERUN_KEYCHAIN_GROUP").unwrap_or_else(|_| "NMJBY8WL8T.com.angilyu.homerun.shared".into())
+}
+
 #[tauri::command]
 async fn update_now(app: AppHandle) -> Result<String, String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -230,6 +277,7 @@ fn autotest(app: &AppHandle) {
                     let _ = rt(&app, "mcp.probe", json!({"runner": "npx", "pkg": pkg, "bin": bin, "tool": "sqlite_version"}));
                 }
                 let _ = rt(&app, "mcp.probe", json!({"runner": "uvx", "pkg": "mcp-server-time==2026.8.18", "tool": "get_current_time", "toolArgs": {"timezone": "UTC"}}));
+                log("shell.log", "autotest selftest done: app.exit(0)");
                 app.exit(0);
             }
             // Item 8: store the API key + canary, start a long run, update mid-run.
@@ -239,6 +287,11 @@ fn autotest(app: &AppHandle) {
                     // Only the pre-update build writes the item, so the post-update read is a real test.
                     if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
                         let _ = rt(&app, "keychain.set", json!({"account": "anthropic-api-key", "value": k}));
+                        if std::env::var("HOMERUN_KEYCHAIN_GROUP").is_ok() {
+                            let g = keychain_group();
+                            let _ = shell_keychain("delete", "anthropic-api-key", None, Some(&g));
+                            shell_keychain("set", "anthropic-api-key", Some(k.as_bytes()), Some(&g));
+                        }
                     }
                     let prompt = std::env::var("HOMERUN_UPDATE_PROMPT").unwrap_or_else(|_| {
                         "Use the Bash tool to run exactly: sleep 25 && echo step1 >> progress.log . When it finishes, run: echo step2 >> progress.log . Then reply DONE.".into()
@@ -251,11 +304,29 @@ fn autotest(app: &AppHandle) {
                     log("shell.log", &format!("autotest update -> {r:?}"));
                 } else {
                     log("shell.log", "autotest update-flow: post-update launch, waiting for resumed run");
+                    if std::env::var("HOMERUN_KEYCHAIN_GROUP").is_ok() {
+                        shell_keychain("get", "anthropic-api-key", None, Some(&keychain_group()));
+                    }
                 }
             }
             "update" => {
                 let r = update_now(app.clone()).await;
                 log("shell.log", &format!("autotest update -> {r:?}"));
+            }
+            // Item 7: the shell reads and writes the shared access group in the data-protection keychain.
+            "keychain-dp" => {
+                let g = keychain_group();
+                let acct = "selftest-dp";
+                let _ = shell_keychain("delete", acct, None, Some(&g));
+                shell_keychain("set", acct, Some(b"from-shell"), Some(&g));
+                shell_keychain("get", acct, None, Some(&g));
+                shell_keychain("get", acct, None, None); // default group = first entitled group
+                shell_keychain("delete", acct, None, Some(&g));
+                shell_keychain("get", acct, None, Some(&g)); // expect errSecItemNotFound
+                // Negative control: a group outside our entitlement must be refused.
+                shell_keychain("set", acct, Some(b"x"), Some(&g.replace(".shared", ".not-entitled")));
+                log("shell.log", "autotest keychain-dp done: app.exit(0)");
+                app.exit(0);
             }
             "login-register" | "login-unregister" | "login-status" => {
                 let _ = login_item_impl(what.trim_start_matches("login-"));
@@ -267,6 +338,7 @@ fn autotest(app: &AppHandle) {
 }
 
 fn main() {
+    std::panic::set_hook(Box::new(|p| log("shell.log", &format!("panic: {p}"))));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
@@ -287,10 +359,17 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build app");
 
-    app.run(|app, ev| {
-        if let RunEvent::Exit = ev {
+    app.run(|app, ev| match ev {
+        // Diagnostics for the clean-VM early-exit finding (spike-results item 10).
+        RunEvent::ExitRequested { code, .. } => log("shell.log", &format!("exit requested code={code:?}")),
+        RunEvent::WindowEvent { label, event: e @ (tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed), .. } => {
+            log("shell.log", &format!("window {label} {e:?}"))
+        }
+        RunEvent::Exit => {
+            log("shell.log", "run loop exit");
             let rt = app.state::<Arc<Runtime>>().inner().clone();
             stop_runtime(&rt);
         }
+        _ => {}
     });
 }

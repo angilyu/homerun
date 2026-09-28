@@ -5,15 +5,16 @@
 #
 # Env: VERSION (default 0.0.1), IDENTITY / SPIKE_KEYCHAIN / THIRD_PARTY (see sign.sh),
 #      NOTARY_PROFILE (optional; runs notarize.sh — needs the user's Apple account),
-#      UPDATER_ENDPOINT (default http://127.0.0.1:8799/latest.json, the local spike server).
-# Output: dist/macos/$VERSION/{Homerun.app,Homerun.dmg,Homerun.app.tar.gz,Homerun.app.tar.gz.sig}
+#      UPDATER_ENDPOINT (default http://127.0.0.1:8799/latest.json, the local spike server),
+#      OUT (output dir, default dist/macos/$VERSION; e.g. dist/macos/devid-$VERSION).
+# Output: $OUT/{Homerun.app,Homerun.dmg,Homerun.app.tar.gz,Homerun.app.tar.gz.sig}
 #
 # Tauri's bundler cannot give each helper its own entitlements, so it builds an
 # unsigned .app and sign.sh does the inside-out signing afterwards.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 VERSION="${VERSION:-0.0.1}"
-OUT="$ROOT/dist/macos/$VERSION"
+OUT="${OUT:-$ROOT/dist/macos/$VERSION}"
 KEYDIR="$ROOT/.spike/updater"
 KEY="$KEYDIR/homerun-updater.key"
 ENDPOINT="${UPDATER_ENDPOINT:-http://127.0.0.1:8799/latest.json}"

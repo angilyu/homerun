@@ -7,11 +7,14 @@ set -euo pipefail
 APP="${1:?usage: notarize.sh Homerun.app [Homerun.dmg]}"
 DMG="${2:-}"
 PROFILE="${NOTARY_PROFILE:?set NOTARY_PROFILE (xcrun notarytool store-credentials)}"
-codesign -dvv "$APP" 2>&1 | grep -q '^Authority=Developer ID Application' \
+# Capture first: with pipefail, `grep -q` exiting early SIGPIPEs codesign and fails the check.
+sig="$(codesign -dvv "$APP" 2>&1)"
+grep -q '^Authority=Developer ID Application' <<<"$sig" \
   || { echo "refusing: $APP is not Developer ID signed (run sign.sh with IDENTITY=…)" >&2; exit 1; }
 ZIP="$(mktemp -d)/Homerun.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
-out="$(xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait --output-format json)"
+# notarytool may exit non-zero on "Invalid"; keep going so the log is still fetched.
+out="$(xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait --output-format json)" || true
 echo "$out"
 id="$(echo "$out" | plutil -extract id raw - 2>/dev/null || true)"
 status="$(echo "$out" | plutil -extract status raw - 2>/dev/null || true)"
