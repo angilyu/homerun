@@ -2095,9 +2095,9 @@ Every item is a yes/no test on a real, signed build. If any fails, the design is
 revised before milestone 1 starts.
 
 **Status after the spike** ([full results](spike-results.md)). Items 1–5 were
-run against a scripted mock API and then the real API. The packaging items used
-self-signed and ad-hoc builds, because no Developer ID was available. *Blocked*
-means the check needs our Apple Developer ID and Team ID to finish. Where an
+run against a scripted mock API and then the real API. The packaging items were
+first run with self-signed and ad-hoc builds, then items 6–8 again with our
+Developer ID, provisioning profile and notarization. Where an
 item failed, the design above has been revised.
 
 **Agent SDK behaviour**
@@ -2128,16 +2128,25 @@ item failed, the design above has been revised.
    Node, and library validation off on Node only (§11). The whole bundle
    notarizes, and Gatekeeper launches it on a clean machine. **Failed as
    first written** (`claude` needs JIT too; Node needs library validation
-   off), now reworded; the bundle and entitlements pass with ad-hoc signing.
-   Notarization and the clean-machine launch are **blocked** on the Developer
-   ID. [Evidence](spike-results.md#6-bundle-hardened-runtime-entitlements-notarization-gatekeeper).
+   off), now reworded; the bundle and entitlements pass. **Notarization
+   passed** with the Developer ID and hybrid signing (§11): Apple accepted
+   the bundle with Anthropic's signature kept on `claude`, and the app and
+   DMG are stapled. Gatekeeper accepts it on the development machine,
+   including a quarantined install. **Partial** on the clean VM: that image
+   has the Developer ID rules disabled ("App Store" only, not changeable from
+   the command line on macOS 15+), so the launch after Gatekeeper still needs
+   one manual step (spike-results entry 29).
+   [Evidence](spike-results.md#6-bundle-hardened-runtime-entitlements-notarization-gatekeeper).
 7. A Developer ID build reads and writes a keychain item in the shared access
-   group, from the shell (§11). **Blocked** on the Team ID and provisioning
-   profile. [Evidence](spike-results.md#7-keychain-access-group).
+   group, from the shell (§11). **Passed:** the shell, with the embedded
+   provisioning profile, sets and gets the item with no prompt; a group it
+   isn't entitled to returns `errSecMissingEntitlement`.
+   [Evidence](spike-results.md#7-keychain-access-group).
 8. A full auto-update cycle to a newly signed Developer ID build: no keychain
-   prompt appears, and a run in progress resumes afterwards. **Partial:** the
-   update and resume passed; "no keychain prompt" failed with self-signed and
-   ad-hoc builds, as expected, and is **blocked** for Developer ID.
+   prompt appears, and a run in progress resumes afterwards. **Passed** with
+   the Developer ID: the run resumed after 0.0.1 → 0.0.2 and no keychain
+   prompt appeared (the shell's data-protection read and the legacy fallback
+   both passed). Self-signed and ad-hoc builds prompt, as expected.
    [Evidence](spike-results.md#8-auto-update-mid-run).
 9. `SMAppService.mainApp` login item: launches at login, and shows as
    "Homerun" in Login Items. **Partial:** registration and the name passed;
@@ -2148,8 +2157,9 @@ item failed, the design above has been revised.
     both launched by the signed runtime on a clean machine. **Passed on the
     development machine**, from inside the bundle and from the on-demand
     components directory (§5.5), and **on a clean macOS 26 VM** with the
-    self-signed build and quarantine removed. The same run with quarantine
-    kept is **blocked** on the notarized Developer ID build (item 6). The
+    self-signed build and quarantine removed, and again with the notarized
+    Developer ID build. The same run with quarantine kept waits on the item 6
+    VM step. The
     clean VM found two issues proposed for review (spike-results entries 26
     and 27: the data dir name, and a CLT install dialog from `uvx`).
     [Evidence](spike-results.md#10-mcp-servers-via-bundled-node-and-uv).

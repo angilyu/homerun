@@ -10,6 +10,11 @@ section it touches.
 > It is now `com.angilyu.homerun` (see the "Changes from milestone 2" note in `design.md`). The old
 > identifier is left as-is below because it is what the evidence was captured with.
 
+> **Developer ID pass (later).** Items 6, 7 and 8 were rerun with the real identity
+> (`Developer ID Application: Wenjing Yu (NMJBY8WL8T)`), a Developer ID provisioning profile for
+> `NMJBY8WL8T.com.angilyu.homerun`, hybrid signing (entry 14), and notarized, stapled 0.0.1 and 0.0.2 builds
+> (`dist/macos/devid-<v>`). That evidence uses the new identifier and is marked **(Developer ID)** below.
+
 Environment: macOS 26.7 on Apple silicon (arm64). Bun 1.4.2 (pinned). `@anthropic-ai/claude-agent-sdk` 0.3.278,
 bundled `claude` 2.1.278. Tauri 2 (CLI 2.11.5). Node 24.21.0, uv 0.12.19.
 
@@ -45,11 +50,11 @@ bundled `claude` 2.1.278. Tauri 2 (CLI 2.11.5). Node 24.21.0, uv 0.12.19.
 | 3 | `defer` from `PreToolUse`; process exits; resume hours later with the answer | **PASS (mock API) for defer → exit → resume** (Bash approval and `AskUserQuestion`), 6/6 immediate resumes. **PASS (real API)** on Haiku and Sonnet 5 (immediate resume); the F3 mitigation also passes on both. **Long gap: see [item 3](#3-defer-and-resume-later)** (**PASS (mock API) after a 189-minute gap**: bash approval, `AskUserQuestion` and the parallel batch all resumed). Needs **design changes** in §5.6 (F3, F6) | `stop_reason: tool_deferred`, exit code 0, no `claude` left running, victim file untouched until approval |
 | 4 | Kill mid-tool-call; resume; ambiguous call detected; "did / did not happen" injected | **PASS (mock API)** · **PASS (real API, Haiku and Sonnet 5)**, both **with a required design change** to §5.4. The real models confirm F7, and Haiku adds F10 (background Bash) | Detection works from `thread_events` and from the store. Three injection methods work. **But `claude` auto-answers the dangling call as "interrupted" on resume, and a naive resume re-ran the side effect** (F7). The tool process also outlives both a runtime and a `claude` SIGKILL (F8) |
 | 5 | Steering message mid-run is seen at the next step | **PASS (mock API)** · **PASS (real API, Haiku)** | Pushed while Bash ran; delivered inside the next `tool_result` as a system-reminder; the model acted on it in the same run |
-| 6 | One bundle, all binaries hardened-runtime, JIT entitlements on runtime and Node only; notarizes; Gatekeeper launches it on a clean machine | **FAIL as written** (claude needs `allow-jit` too; Node also needs `disable-library-validation`) + **BLOCKED** (notarization and clean-machine Gatekeeper need the Developer ID) | 5 binaries, all `flags=runtime`, `codesign --verify --deep --strict` OK. Self-signed bundle is rejected by `spctl` as expected. Clean VM: quarantined launch held at the Gatekeeper prompt (expected, blocked on Developer ID) |
-| 7 | Runtime reads/writes a keychain item in the shared access group | **BLOCKED** (Team ID + provisioning profile) | Legacy login keychain read/write from the bundle: OK. Data-protection keychain: `errSecMissingEntitlement` (-34018) without an access-group entitlement, which needs a provisioning profile |
-| 8 | Auto-update to a newly signed build; no keychain prompt; in-progress run resumes | **Update + resume: PASS. "No keychain prompt": FAIL for self-signed and ad-hoc, BLOCKED for Developer ID** | 0.0.1 → 0.0.2 mid-tool-call: run `completed`, `resumes=1`, both steps done. The post-update keychain read **shows a prompt** (timed out at 5 s) in both variants; the creating binary reads with no prompt |
+| 6 | One bundle, all binaries hardened-runtime, JIT entitlements on runtime and Node only; notarizes; Gatekeeper launches it on a clean machine | **FAIL as written** (claude needs `allow-jit` too; Node also needs `disable-library-validation`). **Notarization: PASS (Developer ID)**, with Anthropic's signature kept on `claude`. **Gatekeeper: PASS on this Mac; PARTIAL on the clean VM** (the image has the Developer ID rules disabled) | 5 binaries, all `flags=runtime`, strict deep verify OK. notarytool `Accepted` for both apps and DMGs; stapled; `spctl` → `accepted, source=Notarized Developer ID` (also for a quarantined install); `syspolicy_check distribution` passes, also inside the VM. The VM's `spctl` rejects with "lack of matching active rule" because its Developer ID rules are disabled ("App Store" only), which spctl can't change on macOS 15+ |
+| 7 | Runtime reads/writes a keychain item in the shared access group | **PASS (Developer ID)**, from the **shell** (entry 15) | With the embedded profile and `keychain-access-groups` on the shell: data-protection set/get/delete in `NMJBY8WL8T.com.angilyu.homerun.shared` all `errSecSuccess`, no prompt, ≤ 2 ms; a not-entitled group gives -34018. `homerund` (no entitlement) gets -34018, as entry 15 intends |
+| 8 | Auto-update to a newly signed build; no keychain prompt; in-progress run resumes | **PASS (Developer ID)**. Self-signed and ad-hoc: update + resume pass, but the post-update keychain read prompts | Developer ID 0.0.1 → 0.0.2 mid-tool-call: run `completed`, `resumes=1`. The shell's data-protection read after the update succeeds, and the runtime's legacy read (the entry 17 fallback) returns the item with `prompted:false`. 0 securityd prompts in both runs |
 | 9 | `SMAppService.mainApp`: launches at login; shows as "Homerun" in Login Items | **PARTIAL**: registration PASS; launch at login **untested** (needs a logout/login) | Background Task Management lists it as `Name: Homerun`, `enabled, allowed`; `Developer Name: (null)` without a Team ID |
-| 10 | Bundled Node runs an `npx` MCP server with a native add-on; bundled `uv` runs a `uvx` server; from inside the signed app on a clean machine | **PASS on this machine** (signed bundle, scrubbed PATH) and **PASS on a clean macOS 26.6.2 VM** with quarantine removed (self-signed build; a Gatekeeper-approved launch is blocked on the Developer ID) | `better-sqlite3` server returned `sqlite 3.53.2` via bundled `node`; `mcp-server-time` via bundled `uv`. The clean VM also found two new issues: lost writes under a data dir named `dev.homerun.app` (entry 26) and a CLT install dialog from `uvx` (entry 27) |
+| 10 | Bundled Node runs an `npx` MCP server with a native add-on; bundled `uv` runs a `uvx` server; from inside the signed app on a clean machine | **PASS on this machine** (signed bundle, scrubbed PATH) and **PASS on a clean macOS 26.6.2 VM** with quarantine removed (self-signed build, and again with the notarized Developer ID build; a Gatekeeper-approved launch on the VM needs the image's Developer ID rules turned on, see item 6) | `better-sqlite3` server returned `sqlite 3.53.2` via bundled `node`; `mcp-server-time` via bundled `uv`. The clean VM also found two new issues: lost writes under a data dir named `dev.homerun.app` (entry 26) and a CLT install dialog from `uvx` (entry 27) |
 
 Measurements (details in [Measurements](#measurements)):
 
@@ -333,7 +338,7 @@ scripts/macos/verify.sh dist/macos/0.0.2/Homerun.app        # → .spike/results
 HOMERUN_DATA_DIR=/tmp/hr-mcp apps/desktop/src-tauri/binaries/homerund-aarch64-apple-darwin mcp-selftest npx \
   "/tmp/homerun-spike-mcp-native-0.0.1.tgz#homerun-spike-mcp-native"   # populates the better-sqlite3 add-on the matrix loads
 spikes/signing/entitlement-matrix.sh                        # → .spike/results/entitlement-matrix.tsv
-NOTARY_PROFILE=homerun-notary scripts/macos/notarize.sh dist/macos/0.0.2/Homerun.app dist/macos/0.0.2/Homerun.dmg   # BLOCKED: needs Apple account
+NOTARY_PROFILE=homerun-notary scripts/macos/notarize.sh dist/macos/0.0.2/Homerun.app dist/macos/0.0.2/Homerun.dmg   # needs a Developer ID build; see "Developer ID pass" below
 scripts/macos/tart-clean-vm.sh dist/macos/0.0.2/Homerun.dmg # clean-VM Gatekeeper + item 10 → .spike/results/tart-clean-vm/report-run5-pass.txt
 ```
 
@@ -377,7 +382,7 @@ signature anyway.
 
 Gatekeeper: `spctl --assess` on a quarantined copy of the self-signed bundle → `rejected`, and
 `syspolicy_check distribution` → "Notary Ticket Missing". This is the expected result without a Developer ID and
-notarization. **Blocked on the user's certificate.**
+notarization. See the Developer ID pass below.
 
 **Clean VM** (`tart-clean-vm.sh`, Tart `macos-tahoe-vanilla`, macOS 26.6.2; see [item 10](#10-mcp-servers-via-bundled-node-and-uv)
 for the functional part). The DMG is copied in with a Safari-style `com.apple.quarantine` flag, mounted, and the
@@ -396,7 +401,73 @@ app is `ditto`ed to `/Applications`, which keeps the flag as a Finder drag would
   Not tested: whether a user who answers the prompt and relaunches is affected (answering should resolve the
   evaluation). It matters for scripted tests.
 
+**Developer ID pass.** Evidence in `.spike/results/item6-devid/`.
+
+Commands:
+```sh
+IDENTITY="Developer ID Application: Wenjing Yu (NMJBY8WL8T)" THIRD_PARTY=hybrid TEAM_ID=NMJBY8WL8T \
+  PROVISIONING_PROFILE=.spike/signing/Homerun.provisionprofile NOTARY_PROFILE=homerun-notary \
+  VERSION=0.0.1 OUT=$PWD/dist/macos/devid-0.0.1 scripts/macos/package.sh      # and VERSION=0.0.2
+PATH=$HOME/.local/bin:$PATH scripts/macos/tart-clean-vm.sh dist/macos/devid-0.0.1/Homerun.dmg
+```
+
+- **Notarization accepts Anthropic's nested signature.** Both apps and both DMGs came back `Accepted` with
+  `issues: null`. Submission ids: app 0.0.1 `5188df0f-…`, DMG 0.0.1 `287fe9ff-…`, DMG 0.0.2 `a5e03266-…`. The
+  ticket lists cdhashes for `homerund`, `uv`, `claude`, `node` and the shell (`notary-log-0.0.{1,2}-app.json`).
+  `claude` keeps `Authority=Developer ID Application: Anthropic PBC (Q6L2SF6YDW)` and its own entitlements.
+  `node`, `uv` and `homerund` carry ours. Option B wasn't needed, so it wasn't submitted.
+- **Checks on this Mac** (`checks-0.0.1.txt`, `checks-0.0.2.txt`):
+  - `spctl -a -vvv -t exec` on the app → `accepted, source=Notarized Developer ID`;
+  - the same for the DMG (`-t open --context context:primary-signature`);
+  - `stapler validate` passes on the app and the DMG;
+  - `syspolicy_check distribution` → "App passed all pre-distribution checks";
+  - `codesign --verify --deep --strict` OK.
+  - A quarantined copy installed from the DMG is also `accepted` (`host-quarantined-spctl.txt`).
+- **Entitlements as built:**
+  - shell: `keychain-access-groups`, `application-identifier`, `team-identifier`, plus `embedded.provisionprofile`;
+  - `homerund`: `allow-jit`;
+  - `node`: `allow-jit` + `disable-library-validation`;
+  - `uv`: none;
+  - `claude`: Anthropic's own set.
+- **Clean VM: PARTIAL.** Inside the VM, `syspolicy_check distribution` passes, strict deep verify passes, and
+  `claude`'s Anthropic authority is intact. But `spctl` reports `rejected` with `source=Notarized Developer ID`,
+  and syspolicyd logs **"rejecting due to lack of matching active rule"**; the ticket lookup itself succeeds. The
+  cause: the Tart vanilla image ships with every `Developer ID` and `Notarized Developer ID` rule
+  **`disabled=1`**, which is the "App Store" only setting. `spctl --global-enable` turns assessments back on but
+  leaves those rules off. On macOS 26, `spctl --enable --label` is "no longer supported", and the rule DB is
+  SIP-protected (`gatekeeper-devid-rules-disabled.txt`). A stock Mac defaults to "App Store & Known Developers",
+  where these rules are active, as the host result above shows. The quarantined launch then waited at
+  `Prompt shown (7, 0)`, so phase 2 (quarantine removed) ran and passed launch, helpers, keychain, npx and uvx.
+  **To finish:** in the VM (`KEEP_VM=1`, then `tart run` with a window), choose System Settings → Privacy &
+  Security → "App Store & Known Developers", then open the quarantined app from Finder and click **Open** on the
+  first-launch prompt. Or use a VM image that keeps the default policy. The harness now prints the rule state.
+
 ### 7. Keychain access group
+
+**(Developer ID) PASS, from the shell.** Command:
+```sh
+HOMERUN_KEYCHAIN_GROUP=NMJBY8WL8T.com.angilyu.homerun.shared \
+  spikes/packaging/run-app.sh "$PWD/dist/macos/devid-0.0.1/Homerun.app" /private/tmp/hr7/d keychain-dp 30
+# → .spike/results/item7-keychain-dp-devid-0.0.1.txt
+```
+
+Per entry 15, the shell owns the keychain. It is the bundle's main executable, so it carries the embedded Developer
+ID profile (app id `NMJBY8WL8T.com.angilyu.homerun`, `keychain-access-groups = NMJBY8WL8T.*`) and the entitlement
+`keychain-access-groups = [NMJBY8WL8T.com.angilyu.homerun.shared]`. `sign.sh` checks the profile's app id
+matches before embedding it.
+
+| Data-protection keychain op (shell, `security-framework`) | Result |
+|---|---|
+| set in `NMJBY8WL8T.com.angilyu.homerun.shared` | `errSecSuccess`, 1 ms |
+| get from the group / from the default group | `errSecSuccess`, 10 bytes |
+| delete, then get | `errSecSuccess`, then `errSecItemNotFound` (-25300) |
+| set in `NMJBY8WL8T.com.angilyu.homerun.not-entitled` (negative control) | `errSecMissingEntitlement` (-34018) |
+
+No prompt at any point; the data-protection keychain has no per-app ACL dialog. In the item 8 run with the group
+set, `homerund` itself tried the same group and got -34018 before and after the update. That's the intended split:
+the runtime can't reach the keychain, and gets the key via `secrets.set`.
+
+Earlier result (self-signed, no Team ID), from `homerund`:
 
 **Command:** `…/homerund keychain-selftest [--data-protection] [--group TEAMID.dev.homerun.shared] --account X`
 → `.spike/results/item7.txt`.
@@ -410,10 +481,30 @@ app is `ditto`ed to `/Applications`, which keeps the flag as a Finder drag would
 On macOS the data-protection keychain requires a `keychain-access-groups` (or application-identifier) entitlement.
 For Developer ID distribution that is a *restricted* entitlement and needs an **embedded provisioning profile**,
 and a profile can only be embedded in a **bundle** (Apple TN3125, "Inside Code Signing: Provisioning Profiles"). `homerund` is currently a bare Mach-O in `Contents/MacOS/`.
-[`sign.sh`](../scripts/macos/sign.sh) has the `TEAM_ID` + `PROVISIONING_PROFILE` path scripted. **Blocked on the
-Team ID and a Developer ID provisioning profile**; see Design impact §11.
+[`sign.sh`](../scripts/macos/sign.sh) has the `TEAM_ID` + `PROVISIONING_PROFILE` path scripted; the Developer ID
+result above uses it.
 
 ### 8. Auto-update mid-run
+
+**(Developer ID) PASS.** Commands:
+```sh
+HOMERUN_KEYCHAIN_GROUP=NMJBY8WL8T.com.angilyu.homerun.shared \
+  spikes/packaging/update-flow.sh devid dist/macos/devid-0.0.1 dist/macos/devid-0.0.2   # → .spike/results/item8-devid/
+spikes/packaging/update-flow.sh devid-legacy dist/macos/devid-0.0.1 dist/macos/devid-0.0.2  # → .spike/results/item8-devid-legacy/
+```
+
+| Developer ID 0.0.1 → 0.0.2 | shell data-protection keychain (`devid`) | runtime legacy keychain (`devid-legacy`) |
+|---|---|---|
+| Update installed, both binaries 0.0.2, `codesign --verify` OK | yes | yes |
+| Run resumed and completed (`resumes=1`, `runtime_version=0.0.2`) | yes, 49 s | yes, 49 s |
+| Key written by 0.0.1 | shell `set` `errSecSuccess` | `homerund` creates the item |
+| **Key read by 0.0.2** | **shell `get` `errSecSuccess`, 0 ms** | **`status 0`, 76 ms, `prompted:false`** |
+| securityd "displaying keychain prompt" events during the run | 0 | 0 |
+
+So the `teamid:NMJBY8WL8T` partition does carry legacy items across a Developer ID update, as the earlier
+analysis predicted. Entry 17's fallback holds, and the §11 plan (entry 15) works too.
+
+Earlier result (self-signed and ad-hoc):
 
 **Commands:**
 ```sh
@@ -450,8 +541,7 @@ The self-signed build keeps the same designated requirement across versions
 since macOS 10.12 legacy keychain items carry a **partition list**. For Apple-issued signatures the partition is
 `teamid:<TEAMID>`, which survives updates. Without a Team ID (self-signed or ad-hoc) it is the binary's
 **cdhash**, which changes with every build. A Developer ID build should therefore not prompt, even on the legacy
-keychain. That is **unverified here and blocked on the certificate**. The §11 plan (shared access group,
-data-protection keychain) avoids the question entirely but depends on item 7.
+keychain. **Confirmed by the Developer ID run above.**
 
 ### 9. Login item
 
@@ -675,9 +765,10 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
     Verified ad-hoc as variant H: strict verify, in-bundle selftest, and the pre-notarization check (only
     "Adhoc Signed App"). `sign.sh` checks that `claude` still satisfies Anthropic's requirement and is hardened.
     Every real-API run in this report used this same file (`cmp`-identical, Anthropic signature), so real turns under
-    their signature and entitlements are proven, including the SharedArrayBuffer/JIT case. **Still needs the certificate:** whether the notary service accepts nested code signed by
-    another Team's Developer ID. It should, because `claude` is hardened and timestamped. Check at the first real
-    submission; the fallback is option B for `claude` after confirming with Anthropic (§3.4).
+    their signature and entitlements are proven, including the SharedArrayBuffer/JIT case. **Confirmed with the
+    certificate:** the notary service accepted the hybrid bundle with `claude` still signed by Anthropic's Team
+    (Q6L2SF6YDW), `issues: null`, for 0.0.1 and 0.0.2 (item 6). Option B for `claude` stays as the fallback only
+    if a future `claude` build loses its hardened runtime or secure timestamp.
 15. **The keychain access group needs a bundled helper and a provisioning profile.** `keychain-access-groups` is
     restricted under Developer ID and requires an embedded provisioning profile, which a bare Mach-O cannot carry.
     *Recommendation: option 2.* All keychain access lives in the shell, and the runtime never calls
@@ -693,14 +784,16 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
     - *Change §5.1/§5.2/§11:* move keychain ownership from the runtime to the shell, add `secrets.set` /
       `secrets.clear` to the runtime protocol, and never write the key to disk or logs. Entry 16 then applies to the
       shell: keychain reads are off the main thread and time out.
-    - The spike's `homerund keychain-*` code remains only as test tooling. Item 7 still needs the Team ID to prove
-      the access group, now from the shell.
+    - The spike's `homerund keychain-*` code remains only as test tooling. **Proven (item 7, Developer ID):** the
+      shell, with the embedded profile, reads and writes `NMJBY8WL8T.com.angilyu.homerun.shared` with no prompt,
+      and `homerund` gets -34018 for the same group.
 16. **Keychain reads must never block the runtime.** The legacy keychain shows a modal dialog and blocks the
     calling thread, ignoring `kSecUseAuthenticationUIFail`. *Add:* read with a timeout off the serving path
     (implemented), surface "keychain access needs your approval" in the UI, and never read on startup before the
     socket is serving.
 17. **Fallback if item 7 is not solved:** with a Developer ID build, the legacy keychain's `teamid:` partition
     should prevent the post-update prompt (item 8 analysis). Keep the item 8 test in CI for every release.
+    **Confirmed:** the Developer ID 0.0.2 `homerund` read 0.0.1's legacy item with `prompted:false` (item 8).
 18. Two Tauri packaging facts for the release pipeline:
     - Tauri refuses to start if its executable path contains a symlink (e.g. `/tmp` → `/private/tmp`).
     - A crash during launch leaves AppKit's "reopen windows?" alert, which blocks the next unattended launch. Clear
@@ -807,6 +900,25 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
     decision (download CPython in the background right after the uv component installs), the dialog would
     otherwise appear at that moment, unprompted.
 
+### Added by the Developer ID pass
+
+28. **Signing and notarizing need an unlocked, awake Mac, or a pre-authorised key** (§11 release pipeline). The
+    first `codesign` with the Developer ID key failed with `errSecInternalComponent`. securityd logged
+    `ACL partition mismatch: client apple:` and then `inDarkWake`: it had to ask the user, but can't show the
+    prompt while the display is asleep or the screen is locked, so it fails instead of waiting. It worked once
+    the user unlocked the Mac and chose **Always Allow**. *Add to §11:* the release job runs in a dedicated,
+    unlocked keychain, and after importing the identity it runs
+    `security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k <kc-password> <kc>`, so `codesign`
+    never prompts. The same applies to the notarytool credential item.
+29. **Clean-VM Gatekeeper tests need an image with the default policy** (§11/§16 CI). The Tart vanilla image has
+    every `Developer ID` / `Notarized Developer ID` rule disabled ("App Store" only). On macOS 15+ neither `spctl`
+    nor root can re-enable them; the rule DB is SIP-protected. A notarized build is therefore rejected there
+    ("lack of matching active rule") even though `syspolicy_check distribution` passes in the same VM. *Add to the
+    release test plan:* build the Gatekeeper test image once with "App Store & Known Developers" selected in
+    System Settings (or via an MDM `SystemPolicyControl` profile with `AllowIdentifiedDevelopers`). The harness
+    prints the rule state, so a misconfigured image shows up. The first-launch "downloaded from the Internet"
+    prompt still needs one click (or UI automation) even when the policy is right.
+
 ### §16.1 itself
 
 23. Item 6's wording "JIT on the runtime and Node only" should change per entry 13. Items 7 and 8 should say
@@ -818,9 +930,7 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
 
 | What | Blocked on | How to finish |
 |---|---|---|
-| Item 6 notarization + Gatekeeper | Developer ID + notary credentials | `xcrun notarytool store-credentials homerun-notary …`, `IDENTITY="Developer ID Application: …" VERSION=0.0.1 NOTARY_PROFILE=homerun-notary scripts/macos/package.sh`, then `scripts/macos/tart-clean-vm.sh dist/macos/<v>/Homerun.dmg` (Tart and the base image are already installed and cached; expect `accepted` and a launch with quarantine kept) |
-| Item 7 access group | Team ID + Developer ID provisioning profile with `keychain-access-groups` | `TEAM_ID=… PROVISIONING_PROFILE=… scripts/macos/sign.sh`, then `homerund keychain-selftest --data-protection --group <TEAMID>.dev.homerun.shared`. Needs design entry 15 |
-| Item 8 "no prompt" | Developer ID build | package 0.0.1 and 0.0.2 with the Developer ID, `spikes/packaging/update-flow.sh devid` → expect `prompted:false` |
+| Item 6 Gatekeeper on the clean VM | a VM with "App Store & Known Developers" (entry 29) | `KEEP_VM=1 scripts/macos/tart-clean-vm.sh dist/macos/devid-0.0.1/Homerun.dmg`, open the kept VM with a window, pick "App Store & Known Developers" in Privacy & Security, reinstall with quarantine and click **Open** on the first-launch prompt. Notarization, stapling and `spctl` on this Mac already pass |
 | Item 9 launch at login | a logout/login | manual steps in item 9 |
-| Item 10 with quarantine kept | the notarized Developer ID build (item 6) | the same `tart-clean-vm.sh` run: phase 1 then covers item 10 with the default data dir (expect entry 26's lost writes until it is fixed) |
+| Item 10 with quarantine kept | same as item 6 on the VM | phase 1 of the same run; phase 2 (quarantine removed) already passes with the Developer ID build |
 | Entries 26, 27 fixes | milestone 1 | move the default data dir; add the `install_name_tool` shim and curated `PATH`; rerun `tart-clean-vm.sh` and expect `clt-prompt after run: none` |
