@@ -36,6 +36,28 @@ that you control from anywhere.*
 > lost writes, against 0 of 10 with `…/Homerun`). The runtime and the shell share it; logs stay
 > in its `logs/` folder.
 
+> **Changes from milestone 4.**
+>
+> §5.1: tool processes a dead `claude` left behind are found by session id. `claude` is
+> spawned detached, which calls `setsid`, so its pid is also its session id. Its tool shells
+> keep that session after they are reparented. So the runtime kills the recorded group, the
+> process tree, and every process still in a dead `claude`'s session. No marker file is
+> needed. A tool that calls `setsid` itself still escapes.
+>
+> §5.4, step 4: the runtime writes the injected `tool_result` when the run resumes, not when
+> the user answers. It does this for every `tool_use` left open, not only the ambiguous ones:
+> - a result the SDK mirror lost;
+> - a call the gate never allowed ("did not start");
+> - a call in a run that was stopped while it waited ("outcome unknown").
+>
+> Truncation is a development switch (`HOMERUN_DEV_AMBIGUITY_MODE=truncate`). It resumes
+> from before the whole assistant message that made the call. Its known limit: messages
+> already delivered after that point are not re-sent.
+>
+> §16.2: the crash harness runs against a simulated `claude`, not the real one. With real
+> `claude`, a kill at every boundary would need a cassette per boundary. Replay cassettes
+> cover the real `claude` paths.
+
 ---
 
 ## 1. Purpose
