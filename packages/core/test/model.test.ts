@@ -106,6 +106,19 @@ describe("input rules", () => {
     }
     expect(checkResponse(ambiguous, notRun, app("cli"))).toContain("answer this in the Homerun app");
     expect(checkResponse(ambiguous, notRun, app("cli_dev"))).toEqual([]);
+  });
+
+  test("did this happen: web answers only read calls; desktop and iOS answer all (D5)", () => {
+    const ambiguous = (cls: string) =>
+      ({ type: "ambiguous_tool_call", tool: "Write", tool_call_id: F.TOOL_CALL, class: cls, input: F.inline({}) }) as InputPrompt;
+    const notRun = { type: "ambiguous_tool_call", outcome: "not_run" } as const;
+    expect(requiredAuthority(ambiguous("read"))).toBe("any");
+    for (const cls of ["write", "destructive", "network"]) {
+      expect(requiredAuthority(ambiguous(cls))).toBe("full");
+      expect(checkResponse(ambiguous(cls), notRun, app("web"))).toContain("approve on your phone or Mac");
+      for (const r of ["shell", "webview", "ios", "cli_dev"] as const) expect(checkResponse(ambiguous(cls), notRun, app(r))).toEqual([]);
+    }
+    expect(checkResponse(ambiguous("read"), notRun, app("web"))).toEqual([]);
     expect(checkResponse(question, { type: "question", answers: [{ selected: ["main"] }] }, app("cli"))).toEqual([]);
     expect(INPUT_ANSWER_RIGHTS.cli).toEqual(["question"]);
     expect(mayAnswer("cli", "ambiguous_tool_call")).toBe(false);

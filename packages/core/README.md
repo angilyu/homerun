@@ -188,7 +188,7 @@ No linter is configured in the repository, so CI runs typecheck, tests and `sche
 `docs/design.md` is the source of truth. Where turning it into schemas needed a decision, it is
 recorded here.
 
-### Decided after review (PR #2)
+### Decided in review (PR #2)
 
 - **Q1. Web cannot edit tasks.** §9.9 says the `web_read_only` run is "the only per-surface
   difference in authority". But a web client that could edit a monitor's prompt, tools or roots
@@ -212,14 +212,13 @@ recorded here.
     `surface: "cli"` (`SURFACE_OF_ROLE`).
   - The CLI still can't grant itself access: `cli.approve` and `cli.deny` are shell-only.
 
-### Open question
-
-- **Q3. Should the web client answer "Did this happen?" for non-read calls?** D5 lets web answer
-  it, like a question. But after "not run", the model re-issues the call, and an existing grant
-  in a full-authority run would let that call through without a new approval. So a web answer
-  could cause a repeated `write` side effect. Q2 already treats this prompt as an approval for
-  the CLI. **Recommendation:** make `requiredAuthority` follow the call's class, as it does for
-  approvals, so web answers it only for `read` calls. Not changed here.
+- **Q3. "Did this happen?" needs full authority unless the call was `read`.** After "not run",
+  the model re-issues the call, and an existing grant in a full-authority run would let it
+  through with no new approval. So a web answer could repeat a `write` side effect.
+  **Decision:** `requiredAuthority` follows the call's class, as for approvals: `read` → any,
+  otherwise full. §5.4 resumes read calls without asking, so in practice only desktop (shell or
+  webview) and iOS answer it, plus `cli_dev` (Q2). This matches the D5 approval ("requires full
+  authority, never web").
 
 ### Decisions (approved in the milestone 1 plan)
 
@@ -238,8 +237,8 @@ recorded here.
   shell.
 - **D5. "Did this happen?"** (§5.4) is its own prompt, `ambiguous_tool_call`, with the response
   `outcome: completed | not_run`. It is stored as `kind: "question"` because §6 allows only
-  approval|question. Web can answer it (but see Q3): after "not run" the model re-issues the
-  call, which goes through policy again. For who may answer it, it counts as an approval (Q2).
+  approval|question. It needs full authority unless the call was `read` (Q3), and for who may
+  answer it, it counts as an approval (Q2): desktop, iOS and `cli_dev` only.
 - **D6. AskUserQuestion shape.** A question prompt holds 1–4 questions in the SDK's shape
   (options with label and description, `multi_select`, optional free-form text), and the
   response holds one answer per question.
