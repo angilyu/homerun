@@ -87,6 +87,12 @@ export class Scheduler {
     await Promise.all([...this.active.values()].map((d) => d.shutdown(graceMs)));
   }
 
+  /** Tests simulating a crash: start nothing more, and leave active runs as they are. */
+  halt(): void {
+    this.stopped = true;
+    this.unsubscribe();
+  }
+
   /** Tests: wait until nothing is running. */
   async idle(timeoutMs = 10_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;

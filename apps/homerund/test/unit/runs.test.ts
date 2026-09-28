@@ -4,7 +4,7 @@ import { RESUME_LIMIT } from "../../src/runs/recovery";
 import { NO_RESULT, STOPPED_REASON } from "../../src/runs/driver";
 import { getRunRow, pendingInputRequests } from "../../src/store/rows";
 import { APPROVALS_UNAVAILABLE } from "../../src/agent/policy";
-import { DESKTOP, persisted, testRuntime, types, until, uuid, type TestRuntime } from "../helpers";
+import { DESKTOP, persisted, sessionSpec, testRuntime, types, until, uuid, type TestRuntime } from "../helpers";
 
 let rt: TestRuntime | null = null;
 afterEach(() => {
@@ -319,16 +319,7 @@ describe("the agent dies while the runtime keeps running (Q11)", () => {
       { env: { HOMERUN_DEV_AUTO_APPROVE: "1" } },
     );
     // A task with Bash, so the call is in the spec.
-    const task = rt.manager.createTask({
-      kind: "session",
-      format: 1,
-      name: "t",
-      prompt: "p",
-      budget: { max_run_usd: 1 },
-      tools: { builtin: ["Bash"], mcp_servers: [], homerun: [] },
-      policy: { roots: [], egress: { mode: "allowlist", domains: [] }, bash_patterns: [], use_shell_environment: false, input_timeout: { action: "wait", remind_after_ms: null }, retention_days: 30 },
-      model: { model: "haiku" },
-    } as never);
+    const task = rt.manager.createTask(sessionSpec() as never);
     const r = send("go", task.thread.thread_id);
     await until(() => run(r.run_id).state === "waiting_input");
     await rt.scheduler.idle();
