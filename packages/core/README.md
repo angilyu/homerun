@@ -32,7 +32,7 @@ src/
   grants.ts         ToolGrant and its shape rules, effectiveEgressDomains()
   input.ts          input prompts and responses, requiredAuthority(), checkResponse()
   domain.ts         Device, Task, TaskVersion, Thread, Run (+ transitions), MonitorState, ThreadSummary
-  events.ts         thread_events: persisted and live-only unions, parseThreadEventLenient()
+  events.ts         thread_events: persisted and live-only unions, parseThreadEventLenient(), HeldMessages
   protocol/
     jsonrpc.ts      JSON-RPC 2.0 frames, error codes, classifyFrame()
     handshake.ts    PROTOCOL_VERSION, CallerRole, hello params and result, negotiation
@@ -170,6 +170,10 @@ has `layer: "refinement"` vectors.
   role and `via`), so they aren't schema-level at all. Use `vectors/answer-rules.json`.
 - **Release builds refuse `cli_dev`** (`DEV_ONLY_ROLES`). This is a build-time rule, not a
   schema rule.
+- **Held messages** (`HeldMessages`, `undeliveredMessages`): a message sent while its run waits
+  for input is held (§5.7). It is delivered if a `run.resumed` of that run follows it. If the
+  run's `run.end` comes first (for example, the run was stopped while it waited), it was not
+  delivered: show it that way and offer to resend it. Homerun never sends it later on its own.
 
 ## Commands
 
