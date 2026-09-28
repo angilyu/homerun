@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   ALLOWLISTS,
   CALLER_ROLES,
+  DEV_ONLY_ROLES,
+  HelloParams,
+  SURFACE_OF_ROLE,
+  roleAllowedInBuild,
   KNOWN_ERROR_CODES,
   METHODS,
   METHOD_NAMES,
@@ -35,6 +39,27 @@ describe("handshake", () => {
   test("capabilities are the sorted intersection", () => {
     expect(negotiateCapabilities(["b", "a", "c", "a"], ["c", "a", "z"])).toEqual(["a", "c"]);
     expect(negotiateCapabilities([], ["a"])).toEqual([]);
+  });
+});
+
+describe("development-mode CLI (§16 M3, M6)", () => {
+  test("cli_dev is refused by release builds and has the release CLI's methods", () => {
+    expect(DEV_ONLY_ROLES).toEqual(["cli_dev"]);
+    expect(roleAllowedInBuild("cli_dev", "release")).toBe(false);
+    expect(roleAllowedInBuild("cli_dev", "development")).toBe(true);
+    for (const r of CALLER_ROLES) if (r !== "cli_dev") expect(roleAllowedInBuild(r, "release")).toBe(true);
+    expect(ALLOWLISTS.cli_dev.filter((m) => m !== "cli.request_access")).toEqual(ALLOWLISTS.cli.filter((m) => m !== "cli.request_access"));
+    expect(SURFACE_OF_ROLE.cli_dev).toBe("cli");
+  });
+
+  test("only a dev token authenticates cli_dev, and it authenticates nothing else", () => {
+    const base = { protocol: { min: 1, max: 1 }, client: { name: "homerun-cli", version: "0" }, capabilities: [] };
+    const token = "A".repeat(43);
+    const ok = (role: string, kind: string) => HelloParams.safeParse({ ...base, role, auth: { kind, token } }).success;
+    expect(ok("cli_dev", "dev_token")).toBe(true);
+    expect(ok("cli_dev", "cli_token")).toBe(false);
+    expect(ok("cli", "dev_token")).toBe(false);
+    expect(ok("shell", "dev_token")).toBe(false);
   });
 });
 

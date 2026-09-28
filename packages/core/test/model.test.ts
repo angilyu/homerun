@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   ACTIVE_RUN_STATES,
   BUILTIN_TOOL_CLASS,
@@ -13,14 +15,19 @@ import {
   authorityAfterMessage,
   canTransition,
   checkResponse,
+  mayAnswer,
+  AnswerVia,
+  CALLER_ROLES,
+  CallerRole,
+  INPUT_ANSWER_RIGHTS,
+  InputPrompt,
+  InputResponse,
   effectiveEgressDomains,
   hasShellMetacharacters,
   inputKindOf,
   isTerminal,
   requiredAuthority,
   upgradeSpec,
-  type InputPrompt,
-  type InputResponse,
   type ToolGrant as ToolGrantT,
 } from "../src/index";
 import * as F from "../scripts/vectors/fixtures";
@@ -77,7 +84,7 @@ describe("input rules", () => {
   const approval = (cls: string, over: Record<string, unknown> = {}) => F.approvalPrompt({ class: cls, ...over }) as InputPrompt;
   const question = F.questionPrompt() as InputPrompt;
   const allow = { type: "approval", decision: "allow" } as const;
-  const app = (surface: "desktop" | "cli" | "ios" | "web") => ({ surface, via: "app" as const });
+  const app = (role: CallerRole) => ({ role, via: "app" as const });
 
   test("web may answer only read approvals and questions (§9.9)", () => {
     expect(requiredAuthority(approval("read"))).toBe("any");
@@ -88,20 +95,47 @@ describe("input rules", () => {
     expect(checkResponse(question, { type: "question", answers: [{ selected: ["main"] }] }, app("web"))).toEqual([]);
   });
 
-  test("the CLI answers questions and approvals (§16 M6)", () => {
-    // §16 M6 "answer from CLI" (see README, open question Q2).
-    expect(checkResponse(approval("destructive"), allow, app("cli"))).toEqual([]);
+  test("release CLI answers questions only; the development CLI answers everything (§5.2, §16 M6)", () => {
+    const ambiguous = { type: "ambiguous_tool_call", tool: "Write", tool_call_id: F.TOOL_CALL, class: "write", input: F.inline({}) } as InputPrompt;
+    const notRun = { type: "ambiguous_tool_call", outcome: "not_run" } as const;
+    const deny = { type: "approval", decision: "deny" } as const;
+    for (const cls of ["read", "write", "destructive", "network"]) {
+      expect(checkResponse(approval(cls), allow, app("cli"))).toContain("answer this in the Homerun app");
+      expect(checkResponse(approval(cls), deny, app("cli"))).toContain("answer this in the Homerun app");
+      expect(checkResponse(approval(cls), allow, app("cli_dev"))).toEqual([]);
+    }
+    expect(checkResponse(ambiguous, notRun, app("cli"))).toContain("answer this in the Homerun app");
+    expect(checkResponse(ambiguous, notRun, app("cli_dev"))).toEqual([]);
     expect(checkResponse(question, { type: "question", answers: [{ selected: ["main"] }] }, app("cli"))).toEqual([]);
+    expect(INPUT_ANSWER_RIGHTS.cli).toEqual(["question"]);
+    expect(mayAnswer("cli", "ambiguous_tool_call")).toBe(false);
+    for (const r of CALLER_ROLES) if (r !== "cli") expect(mayAnswer(r, "approval")).toBe(true);
+  });
+
+  test("answer-rule vectors match checkResponse", () => {
+    const { cases } = JSON.parse(readFileSync(join(import.meta.dir, "../vectors/answer-rules.json"), "utf8")) as {
+      cases: { name: string; prompt: unknown; response: unknown; from: { role: string; via: string }; allowed: boolean }[];
+    };
+    expect(cases.length).toBeGreaterThan(30);
+    for (const c of cases) {
+      const errs = checkResponse(InputPrompt.parse(c.prompt), InputResponse.parse(c.response), {
+        role: CallerRole.parse(c.from.role),
+        via: AnswerVia.parse(c.from.via),
+      });
+      expect({ name: c.name, allowed: errs.length === 0 }).toEqual({ name: c.name, allowed: c.allowed });
+    }
+    const roles = new Set(cases.map((c) => c.from.role));
+    for (const r of CALLER_ROLES) expect(roles.has(r)).toBe(true);
   });
 
   test("always allow: only when offered, never destructive, never from web or a notification", () => {
     const always = { type: "approval", decision: "allow_always", grant: { tool: "Bash", pattern: "npm install", class: "write" } } as const;
-    expect(checkResponse(approval("write"), always, app("desktop"))).toEqual([]);
-    expect(checkResponse(approval("write", { offer_always: false }), always, app("desktop"))).not.toEqual([]);
-    expect(checkResponse(approval("destructive"), always, app("desktop"))).not.toEqual([]);
-    expect(checkResponse(approval("write"), always, { surface: "ios", via: "notification" })).not.toEqual([]);
+    expect(checkResponse(approval("write"), always, app("webview"))).toEqual([]);
+    expect(checkResponse(approval("write", { offer_always: false }), always, app("webview"))).not.toEqual([]);
+    expect(checkResponse(approval("destructive"), always, app("webview"))).not.toEqual([]);
+    expect(checkResponse(approval("write"), always, { role: "ios", via: "notification" })).not.toEqual([]);
     const other = { ...always, grant: { tool: "Write", pattern: null, class: "write" } } as const;
-    expect(checkResponse(approval("write"), other, app("desktop"))).toContain("the grant must be for the requested tool");
+    expect(checkResponse(approval("write"), other, app("webview"))).toContain("the grant must be for the requested tool");
   });
 
   test("lock screen: read/write approvals and short questions; destructive opens the app (§9.7)", () => {
@@ -110,7 +144,7 @@ describe("input rules", () => {
     expect(answerableFromNotification(approval("destructive"))).toBe(false);
     expect(answerableFromNotification(approval("network"))).toBe(false);
     expect(answerableFromNotification(question)).toBe(true);
-    expect(checkResponse(approval("destructive"), allow, { surface: "ios", via: "notification" })).not.toEqual([]);
+    expect(checkResponse(approval("destructive"), allow, { role: "ios", via: "notification" })).not.toEqual([]);
   });
 
   test("question answers must match the options", () => {
@@ -118,11 +152,11 @@ describe("input rules", () => {
       questions: [{ question: "Pick", options: [{ label: "a" }, { label: "b" }], multi_select: false, allow_freeform: false }],
     }) as InputPrompt;
     const ans = (selected: string[], text?: string): InputResponse => ({ type: "question", answers: [{ selected, ...(text ? { text } : {}) }] });
-    expect(checkResponse(q, ans(["a"]), app("desktop"))).toEqual([]);
-    expect(checkResponse(q, ans(["c"]), app("desktop"))).not.toEqual([]);
-    expect(checkResponse(q, ans(["a", "b"]), app("desktop"))).not.toEqual([]);
-    expect(checkResponse(q, ans([], "other"), app("desktop"))).not.toEqual([]);
-    expect(checkResponse(q, allow, app("desktop"))).not.toEqual([]);
+    expect(checkResponse(q, ans(["a"]), app("webview"))).toEqual([]);
+    expect(checkResponse(q, ans(["c"]), app("webview"))).not.toEqual([]);
+    expect(checkResponse(q, ans(["a", "b"]), app("webview"))).not.toEqual([]);
+    expect(checkResponse(q, ans([], "other"), app("webview"))).not.toEqual([]);
+    expect(checkResponse(q, allow, app("webview"))).not.toEqual([]);
   });
 
   test("ambiguous-call prompts are stored as questions (§6 kind)", () => {

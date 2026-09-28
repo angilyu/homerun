@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { named } from "../registry";
-import { DeviceId } from "../common";
+import { DeviceId, type Surface } from "../common";
 
 /**
  * Handshake (§5.2): the first request on every connection is `hello`. Both sides send the range
@@ -27,13 +27,35 @@ export type ProtocolRange = z.infer<typeof ProtocolRange>;
 
 /**
  * Who is on the other end. The runtime derives the role from the credentials, never from the
- * claim alone: the launch token proves `shell`, a CLI token proves `cli`, and a paired device's
- * E2E session proves `ios` or `web` (§9.4). Forwarded webview calls ride the shell's connection
- * and are tagged `webview` by the shell (§5.2).
+ * claim alone: the launch token proves `shell` or `webview`, a CLI token proves `cli`, a
+ * development token proves `cli_dev`, and a paired device's E2E session proves `ios` or `web`
+ * (§9.4). Forwarded webview calls use their own connection with role `webview` (§5.2).
  */
-export const CallerRole = named("CallerRole", z.enum(["shell", "webview", "cli", "ios", "web"]));
+export const CallerRole = named("CallerRole", z.enum(["shell", "webview", "cli", "cli_dev", "ios", "web"]));
 export type CallerRole = z.infer<typeof CallerRole>;
 export const CALLER_ROLES = CallerRole.options;
+
+/**
+ * Roles a release build of the runtime must refuse at `hello` (UNAUTHENTICATED). `cli_dev` is the
+ * development-mode CLI token (§16 M3), the only CLI credential allowed to answer approvals.
+ */
+export const DEV_ONLY_ROLES = ["cli_dev"] as const satisfies readonly CallerRole[];
+
+export type BuildChannel = "release" | "development";
+
+export function roleAllowedInBuild(role: CallerRole, build: BuildChannel): boolean {
+  return build === "development" || !(DEV_ONLY_ROLES as readonly CallerRole[]).includes(role);
+}
+
+/** The surface recorded on origins and answers for each role. */
+export const SURFACE_OF_ROLE: Readonly<Record<CallerRole, Surface>> = {
+  shell: "desktop",
+  webview: "desktop",
+  cli: "cli",
+  cli_dev: "cli",
+  ios: "ios",
+  web: "web",
+};
 
 const Hex256 = z.string().regex(/^[0-9a-f]{64}$/);
 /** CLI tokens are 256-bit random, base64url without padding. */
@@ -44,6 +66,8 @@ export const HelloAuth = named(
   z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("launch_token"), token: Hex256 }),
     z.object({ kind: z.literal("cli_token"), token: CliToken }),
+    /** Development-mode CLI token (§16 M3). Release builds reject it. */
+    z.object({ kind: z.literal("dev_token"), token: CliToken }),
     /** Remote clients: the E2E session already authenticated the device; this names it. */
     z.object({ kind: z.literal("paired_device"), device_id: DeviceId }),
   ]),
@@ -69,6 +93,7 @@ export const HelloParams = named(
       const ok =
         (p.auth.kind === "launch_token" && (p.role === "shell" || p.role === "webview")) ||
         (p.auth.kind === "cli_token" && p.role === "cli") ||
+        (p.auth.kind === "dev_token" && p.role === "cli_dev") ||
         (p.auth.kind === "paired_device" && (p.role === "ios" || p.role === "web"));
       if (!ok) ctx.addIssue({ code: "custom", path: ["auth"], message: `${p.auth.kind} cannot authenticate role ${p.role}` });
     }),

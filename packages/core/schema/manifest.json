@@ -53,6 +53,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -77,6 +78,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -91,6 +93,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -105,6 +108,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -119,6 +123,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -133,6 +138,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios"
       ],
       "params": "TasksCreateParams",
@@ -146,6 +152,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios"
       ],
       "params": "TasksUpdateParams",
@@ -159,6 +166,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios"
       ],
       "params": "TasksArchiveParams",
@@ -172,6 +180,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -186,6 +195,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -200,6 +210,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios"
       ],
       "params": "SchedulesSetEnabledParams",
@@ -213,6 +224,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -227,6 +239,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -241,6 +254,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios"
       ],
       "params": "GrantsCreateParams",
@@ -254,6 +268,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -268,6 +283,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -282,6 +298,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -296,6 +313,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -310,6 +328,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -324,6 +343,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -338,6 +358,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -352,6 +373,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -366,6 +388,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -380,6 +403,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -394,6 +418,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -408,6 +433,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -422,6 +448,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -436,12 +463,13 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
       "params": "InputAnswerParams",
       "result": "InputAnswerResult",
-      "description": "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller's surface may not answer it."
+      "description": "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller may not answer it (`INPUT_ANSWER_RIGHTS`, `checkResponse`)."
     },
     "monitors.state.get": {
       "direction": "to_runtime",
@@ -450,6 +478,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -464,6 +493,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios"
       ],
       "params": "MonitorsStateSetParams",
@@ -477,6 +507,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios"
       ],
       "params": "MonitorsStateResetParams",
@@ -490,6 +521,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -575,6 +607,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],
@@ -587,6 +620,7 @@
         "shell",
         "webview",
         "cli",
+        "cli_dev",
         "ios",
         "web"
       ],

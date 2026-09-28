@@ -71,13 +71,13 @@ function def<P extends z.ZodType, R extends z.ZodType>(
 
 // ---------------------------------------------------------------- caller groups
 
-const EVERYONE = ["shell", "webview", "cli", "ios", "web"] as const satisfies readonly CallerRole[];
+const EVERYONE = ["shell", "webview", "cli", "cli_dev", "ios", "web"] as const satisfies readonly CallerRole[];
 /**
  * Everyone except the web client. The web bundle is served by a third party and can be swapped
  * (§9.9), so it gets no method that raises the agent's reach: creating or editing tasks,
  * enabling schedules, adding grants, or writing monitor state.
  */
-const NOT_WEB = ["shell", "webview", "cli", "ios"] as const satisfies readonly CallerRole[];
+const NOT_WEB = ["shell", "webview", "cli", "cli_dev", "ios"] as const satisfies readonly CallerRole[];
 /** Local app UI only: settings screens that manage local credentials. */
 const LOCAL_UI = ["shell", "webview"] as const satisfies readonly CallerRole[];
 /** The shell's own launch-token connection, never forwarded webview calls (§5.2). */
@@ -316,7 +316,7 @@ export const METHODS = {
       z.object({ status: z.literal("already_resolved"), state: InputRequestState, answered_by: z.string().nullable() }),
     ]),
     callers: EVERYONE,
-    description: "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller's surface may not answer it.",
+    description: "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller may not answer it (`INPUT_ANSWER_RIGHTS`, `checkResponse`).",
   }),
 
   // ---- monitor state (§8.3)

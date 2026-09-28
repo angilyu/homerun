@@ -248,6 +248,27 @@
     },
     {
       "schema": "HelloParams",
+      "name": "hello: development cli",
+      "valid": true,
+      "value": {
+        "protocol": {
+          "min": 1,
+          "max": 1
+        },
+        "role": "cli_dev",
+        "auth": {
+          "kind": "dev_token",
+          "token": "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx"
+        },
+        "client": {
+          "name": "homerun-cli",
+          "version": "0.1.0-dev"
+        },
+        "capabilities": []
+      }
+    },
+    {
+      "schema": "HelloParams",
       "name": "hello: ios with capabilities",
       "valid": true,
       "value": {
@@ -381,6 +402,50 @@
         "auth": {
           "kind": "launch_token",
           "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "client": {
+          "name": "homerun-shell",
+          "version": "0.1.0"
+        },
+        "capabilities": []
+      }
+    },
+    {
+      "schema": "HelloParams",
+      "name": "hello: release cli with a dev token",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "protocol": {
+          "min": 1,
+          "max": 1
+        },
+        "role": "cli",
+        "auth": {
+          "kind": "dev_token",
+          "token": "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx"
+        },
+        "client": {
+          "name": "homerun-shell",
+          "version": "0.1.0"
+        },
+        "capabilities": []
+      }
+    },
+    {
+      "schema": "HelloParams",
+      "name": "hello: cli_dev with a release cli token",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "protocol": {
+          "min": 1,
+          "max": 1
+        },
+        "role": "cli_dev",
+        "auth": {
+          "kind": "cli_token",
+          "token": "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx"
         },
         "client": {
           "name": "homerun-shell",

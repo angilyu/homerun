@@ -125,8 +125,14 @@ except `hello` and `cli.request_access` is **provisional until milestone 7** (D8
     hand (list below). The test suite checks both directions of this label with Ajv, so it stays
     accurate.
 
-There are 406 cases across 121 schemas, 52 of them refinement-only. Every event type, method
+There are 409 cases across 121 schemas, 54 of them refinement-only. Every event type, method
 and notification has at least one valid vector.
+
+`vectors/answer-rules.json` has a different shape, because the answer rules depend on who
+answers. Each case is `{name, prompt, response, from: {role, via}, allowed}`. It covers every
+caller role × approval class, question and "Did this happen?", plus lock-screen answers and
+"Always allow". The `allowed` values are written by hand, and the tests check that
+`checkResponse` agrees with them.
 
 ### Rules that JSON Schema can't express
 
@@ -145,7 +151,8 @@ has `layer: "refinement"` vectors.
   - `input.resolved`: `response`, `answered_by`, `surface` and `via` are set exactly when the state
     is `answered`.
   - `run.end`: `state` is terminal, plus the same outcome and error rules as `Run`.
-  - `HelloParams`: the auth kind matches the role.
+  - `HelloParams`: the auth kind matches the role (`launch_token`: shell or webview;
+    `cli_token`: cli; `dev_token`: cli_dev; `paired_device`: ios or web).
   - `cli.access_decision`: `token` ⇔ `approved`.
   - `ProtocolRange`: `min ≤ max`.
   - `SealedInner`: `expires_at > created_at`.
@@ -159,8 +166,10 @@ has `layer: "refinement"` vectors.
   - `Bash` grants need a metacharacter-free pattern;
   - the class must match the built-in class table;
   - `WebFetch` grants take a domain pattern.
-- **Answer rules** (`checkResponse`): these take context (the answering surface), so they aren't
-  schema-level at all.
+- **Answer rules** (`checkResponse`, `INPUT_ANSWER_RIGHTS`): these take context (the answering
+  role and `via`), so they aren't schema-level at all. Use `vectors/answer-rules.json`.
+- **Release builds refuse `cli_dev`** (`DEV_ONLY_ROLES`). This is a build-time rule, not a
+  schema rule.
 
 ## Commands
 
@@ -179,25 +188,38 @@ No linter is configured in the repository, so CI runs typecheck, tests and `sche
 `docs/design.md` is the source of truth. Where turning it into schemas needed a decision, it is
 recorded here.
 
-### Open questions: confirm before milestone 6 or 10
+### Decided after review (PR #2)
 
-- **Q1. Can the web client edit tasks?** §9.9 says the `web_read_only` run is "the only
-  per-surface difference in authority". But a web client that can edit a monitor's prompt, tools
-  or roots gets full authority at the next scheduled fire, because scheduled runs have no origin.
-  That would bypass §9.9 entirely. §9.9 also says the policy "can be relaxed only on the desktop".
-  - **Current choice (conservative):** web may not call `tasks.create`, `tasks.update`,
-    `tasks.archive`, `schedules.set_enabled`, `grants.create`, `monitors.state.set` or
-    `monitors.state.reset`. Widening an allowlist later is additive; narrowing it would break web
-    clients.
-  - **Alternative:** allow the edits, but record the authority on `task_versions`, so a version
-    edited from the web runs `web_read_only`.
-- **Q2. Can the CLI answer approvals?** The §5.2 threat model says approvals always happen "in
-  UI the user can see", and anything running as the user can invoke the CLI binary. But the §16
-  M6 exit criterion includes "answer from CLI", and M6 comes before the desktop app (M7).
-  - **Current choice:** `input.answer` is open to the CLI and `checkResponse` doesn't
-    restrict it, so M6 can be built. The CLI still can't grant itself access: `cli.approve` and
-    `cli.deny` are shell-only.
-  - **To decide in M6 or M7:** keep this, or restrict CLI approvals to development-mode tokens.
+- **Q1. Web cannot edit tasks.** §9.9 says the `web_read_only` run is "the only per-surface
+  difference in authority". But a web client that could edit a monitor's prompt, tools or roots
+  would get full authority at the next scheduled fire, because scheduled runs have no origin.
+  **Decision:** web may not call `tasks.create`, `tasks.update`, `tasks.archive`,
+  `schedules.set_enabled`, `grants.create`, `monitors.state.set` or `monitors.state.reset`
+  (`NOT_WEB` in `methods.ts`). Widening the allowlist later is additive.
+- **Q2. Only the development-mode CLI answers approvals.** The §5.2 threat model says approvals
+  always happen "in UI the user can see", and anything running as the user can invoke the CLI
+  binary. The §16 M6 exit criterion includes "answer from CLI", and M6 comes before the desktop
+  app (M7). **Decision:**
+  - A separate caller role, `cli_dev`, is authenticated by `auth.kind: "dev_token"` (the
+    development-mode token of §16 M3). Release builds of the runtime refuse it at `hello`
+    (`DEV_ONLY_ROLES`, `roleAllowedInBuild`). It has the same methods as `cli`. How a
+    dev token is issued is for M3 to define; it uses the same 43-character format as CLI tokens.
+  - `INPUT_ANSWER_RIGHTS` (also in `schema/callers.json`) lists the prompt types each role may
+    answer. The release `cli` role answers questions only. `cli_dev` answers everything.
+  - **"Did this happen?" counts as an approval** for this rule, so the release CLI can't answer
+    it: the answer decides whether a side effect is repeated or treated as done.
+  - `checkResponse` takes the answering role, not a surface. Both CLI roles still record
+    `surface: "cli"` (`SURFACE_OF_ROLE`).
+  - The CLI still can't grant itself access: `cli.approve` and `cli.deny` are shell-only.
+
+### Open question
+
+- **Q3. Should the web client answer "Did this happen?" for non-read calls?** D5 lets web answer
+  it, like a question. But after "not run", the model re-issues the call, and an existing grant
+  in a full-authority run would let that call through without a new approval. So a web answer
+  could cause a repeated `write` side effect. Q2 already treats this prompt as an approval for
+  the CLI. **Recommendation:** make `requiredAuthority` follow the call's class, as it does for
+  approvals, so web answers it only for `read` calls. Not changed here.
 
 ### Decisions (approved in the milestone 1 plan)
 
@@ -216,8 +238,8 @@ recorded here.
   shell.
 - **D5. "Did this happen?"** (§5.4) is its own prompt, `ambiguous_tool_call`, with the response
   `outcome: completed | not_run`. It is stored as `kind: "question"` because §6 allows only
-  approval|question. Web can answer it: after "not run" the model re-issues the call, which goes
-  through policy again.
+  approval|question. Web can answer it (but see Q3): after "not run" the model re-issues the
+  call, which goes through policy again. For who may answer it, it counts as an approval (Q2).
 - **D6. AskUserQuestion shape.** A question prompt holds 1–4 questions in the SDK's shape
   (options with label and description, `multi_select`, optional free-form text), and the
   response holds one answer per question.
