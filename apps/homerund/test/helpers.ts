@@ -138,13 +138,13 @@ export async function socketRuntime(opts: { script?: FakeScript; env?: Record<st
 }
 
 /** A minimal valid session task spec (core TaskSpec, format 1). */
-export function sessionSpec(o: { builtin?: string[]; mcp_servers?: unknown[]; name?: string; prompt?: string; roots?: unknown[] } = {}) {
+export function sessionSpec(o: { builtin?: string[]; mcp_servers?: unknown[]; name?: string; prompt?: string; roots?: unknown[]; max_run_usd?: number } = {}) {
   return {
     kind: "session" as const,
     format: 1 as const,
     name: o.name ?? "t",
     prompt: o.prompt ?? "p",
-    budget: { max_run_usd: 1 },
+    budget: { max_run_usd: o.max_run_usd ?? 1 },
     tools: { builtin: o.builtin ?? ["Bash"], mcp_servers: o.mcp_servers ?? [], homerun: [] },
     policy: {
       roots: o.roots ?? [],
