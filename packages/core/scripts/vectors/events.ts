@@ -110,6 +110,7 @@ export const events: Vector[] = [
     attempt: 0,
   })),
   ok(E, "run.resumed", P("run.resumed", { reason: "runtime_restart" })),
+  ok(E, "run.resumed after the agent exited", P("run.resumed", { reason: "agent_exited" })),
   bad(E, "run.resumed unknown reason", P("run.resumed", { reason: "because" })),
   ok(E, "run.cancelled by user", P("run.cancelled", { by: F.origin("desktop"), reason: "user" })),
   ok(E, "run.cancelled by input timeout", P("run.cancelled", { by: null, reason: "input_timeout" })),

@@ -3346,6 +3346,7 @@
               "type": "string",
               "enum": [
                 "runtime_restart",
+                "agent_exited",
                 "input_answered",
                 "ambiguity_resolved"
               ]
