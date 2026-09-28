@@ -2060,7 +2060,7 @@ part.
 | # | Milestone | Exit criteria |
 |---|---|---|
 | 0 | **Spike: SDK + packaging** | See §16.1. Build first; the design is revised if any item fails |
-| 1 | `packages/core` | Task spec, event types, IPC protocol as Zod schemas |
+| 1 | [`packages/core`](../packages/core/README.md) | Task spec, event types, IPC protocol as Zod schemas |
 | 2 | `homerund` runtime | Prompt → Agent SDK `query()` → streamed deltas, persisted `thread_events`, isolated from `~/.claude`; replay harness (§16.2) in CI |
 | 3 | CLI | Drive the runtime end-to-end with no UI; authenticated socket (§5.2), with a development-mode token until the app exists |
 | 4 | **Crash resume** | Kill at every event boundary (§16.2); resume correctly, including ambiguous tool calls |

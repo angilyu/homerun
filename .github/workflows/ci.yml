@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: packages/core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # Root devDependency `bun` pins the Bun version used by `bun test`.
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/core..." --filter "@homerun/homerund"
+      - name: Typecheck
+        run: pnpm --filter @homerun/core --filter @homerun/homerund typecheck
+      - name: Test
+        run: pnpm --filter @homerun/core test
+      - name: Generated JSON Schema and vectors are up to date
+        run: pnpm --filter @homerun/core schema:check
