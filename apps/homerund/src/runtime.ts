@@ -14,7 +14,7 @@ import { makeHandlers } from "./rpc/handlers";
 import { RpcServer } from "./rpc/server";
 import type { RunContext } from "./runs/context";
 import { RunManager } from "./runs/manager";
-import { bootTime, killStaleGroup, sweepTemp } from "./runs/process-groups";
+import { bootTime, killEscapedTools, killStaleGroup, sweepTemp } from "./runs/process-groups";
 import { recoverRun, type RecoveryOutcome } from "./runs/recovery";
 import { Scheduler } from "./runs/scheduler";
 import { SecretStore } from "./secrets";
@@ -40,6 +40,8 @@ export interface RuntimeOptions {
 export interface StartupReport {
   migration: MigrateOutcome;
   killedGroups: number[];
+  /** Tool processes that escaped their claude group (F8). */
+  killedTools: number[];
   swept: string[];
   recovered: Array<{ run_id: string; outcome: RecoveryOutcome }>;
 }
@@ -89,10 +91,11 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       .all();
     for (const r of withGroups) {
       for (const pgid of new Set([r.claude_pid, r.reap_pgid].filter((p): p is number => p !== null))) {
-        if (await killStaleGroup(pgid, r.claude_boot, boot, markers)) killedGroups.push(pgid);
+        if (await killStaleGroup(pgid, r.claude_boot, boot, markers, config.claudePath)) killedGroups.push(pgid);
       }
       updateRun(store, r.run_id, { claude_pid: null, reap_pgid: null });
     }
+    const killedTools = await killEscapedTools(config.claudeConfigDir);
 
     // 2. Caches a killed claude leaves behind (F1, F5). The SDK puts claude-resume-* in TMPDIR.
     if (o.setTmpdir !== false) process.env.TMPDIR = config.tmpDir;
@@ -145,7 +148,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       manager,
       server,
       devToken,
-      report: { migration, killedGroups, swept, recovered },
+      report: { migration, killedGroups, killedTools, swept, recovered },
       shutdown: () =>
         (stopping ??= (async () => {
           server.stop();

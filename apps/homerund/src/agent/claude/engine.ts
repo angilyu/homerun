@@ -10,7 +10,8 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEngine, EngineExit, EngineRun, EngineStart, UserInput } from "../engine";
 import { buildQueryOptions } from "./options";
-import { killGroup, killGroupAndWait, spawnInGroup } from "./spawn";
+import { killRunTree } from "./process-tree";
+import { spawnInGroup } from "./spawn";
 import { Translator } from "./translate";
 
 /** A push-based AsyncIterable used as the query's streaming input (§5.7 steering). */
@@ -169,9 +170,11 @@ export class ClaudeEngine implements AgentEngine {
         }
       },
       closeInput: () => queue.close(),
-      kill: () => killGroup(pid, "SIGKILL"),
+      kill: () => {
+        if (pid !== null) void killRunTree(pid, this.rt.claudePath, 5000);
+      },
       reap: async () => {
-        if (pid !== null) await killGroupAndWait(pid, 5000);
+        if (pid !== null) await killRunTree(pid, this.rt.claudePath, 5000);
       },
       get pid() {
         return pid;

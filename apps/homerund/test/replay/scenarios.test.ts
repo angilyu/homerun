@@ -119,7 +119,7 @@ async function scene(name: string, o: { forbid?: RegExp; home?: (root: string) =
     expect(server.errors).toEqual([]);
   } catch (e) {
     if (server.errors.length) console.error(`replay server errors for ${name}:\n${server.errors.join("\n")}`);
-    if (process.env.HOMERUN_REPLAY_VERBOSE) console.error(hr.stderr);
+    console.error(`homerund stderr (last 60 lines) for ${name}:\n${hr.stderr.split("\n").slice(-60).join("\n")}`);
     throw e;
   } finally {
     server.stop();
@@ -181,6 +181,12 @@ function outputText(hr: Homerund, r: Of<"tool.result">): string {
   const o = r.payload.output;
   if (!o) return "";
   return o.kind === "blob" ? blobText(hr, o.sha256) : JSON.stringify(o.value);
+}
+
+/** Commands of live processes started under the scene root (a snapshot path names it) that contain `needle`. */
+function liveCommands(root: string, needle: string): string[] {
+  const out = Bun.spawnSync(["/bin/ps", "-Aww", "-o", "command="]).stdout.toString();
+  return out.split("\n").filter((c) => c.includes(needle) && (c.includes(root) || c.includes(realpathSync(root))));
 }
 
 describe(`replay (${MODE})`, () => {
@@ -306,6 +312,8 @@ describe(`replay (${MODE})`, () => {
 
         await s.crashAndRestart();
         expect(groupAlive(before!.claude_pid)).toBe(false);
+        // The tool's shell runs in its own group and outlives claude (F8); startup must kill it too.
+        expect(liveCommands(s.root, "echo ran >> side.log")).toEqual([]);
         const sub2 = await s.subscribe(threadId);
         const end = await runEnd(sub2, sent.run_id);
         expect(end.payload.state).toBe("succeeded");
@@ -334,6 +342,8 @@ describe(`replay (${MODE})`, () => {
 
         await s.crashAndRestart();
         expect(groupAlive(before!.claude_pid)).toBe(false);
+        // The tool's shell runs in its own group and outlives claude (F8); startup must kill it too.
+        expect(liveCommands(s.root, "echo ran >> side.log")).toEqual([]);
         const sub2 = await s.subscribe(threadId);
         const asked = (await sub2.waitFor((e) => e.type === "input.requested", 10_000, "input.requested")) as Of<"input.requested">;
         expect(asked.payload.prompt).toMatchObject({ type: "ambiguous_tool_call", tool: "Bash", tool_call_id: call.payload.tool_call_id });

@@ -156,6 +156,58 @@ describe("startup recovery (§5.4)", () => {
     expect(row(b, run_id).state).toBe("pending");
   });
 
+  test("tool shells that escaped claude's group are killed at startup (F8)", async () => {
+    const procs: ReturnType<typeof spawn>[] = [];
+    cleanups.push(() => {
+      for (const p of procs) {
+        try {
+          process.kill(-p.pid!, "SIGKILL");
+        } catch {}
+      }
+    });
+    const pgidOf = (pid: number) => Number(Bun.spawnSync(["/bin/ps", "-o", "pgid=", "-p", String(pid)]).stdout.toString().trim());
+    const childOf = (pid: number) => Number(Bun.spawnSync(["/usr/bin/pgrep", "-P", String(pid)]).stdout.toString().trim().split("\n")[0]);
+    let escaped = 0;
+    let job = 0;
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const { b } = await crashAndRestart(
+      async (s) => {
+        await s.nextInput();
+        await never();
+      },
+      echoScript,
+      {
+        beforeRestart: (dir) => {
+          // Like the Bash tool: a shell in its own group sourcing a snapshot under CLAUDE_CONFIG_DIR,
+          // whose pipeline got yet another group (job control), both orphaned.
+          const snap = join(dir, "claude-config", "shell-snapshots", "snapshot-bash-1.sh");
+          const sh = spawn("/bin/bash", ["-c", `set -m; sleep 30 & wait; : ${snap}`], { detached: true, stdio: "ignore" });
+          const lookalike = spawn("/bin/bash", ["-c", `sleep 30; : ${dir}-other/claude-config/x`], { detached: true, stdio: "ignore" });
+          procs.push(sh, lookalike);
+          escaped = sh.pid!;
+          for (let i = 0; i < 100 && !job; i++) {
+            Bun.sleepSync(20);
+            job = childOf(escaped) || 0;
+          }
+          expect(job).toBeGreaterThan(0);
+          expect(pgidOf(job)).toBe(job);
+        },
+      },
+    );
+    expect(b.rt.report.killedTools).toContain(escaped);
+    expect(b.rt.report.killedTools).toContain(job);
+    expect(alive(escaped)).toBe(false);
+    expect(alive(job)).toBe(false);
+    expect(groupAlive(procs[1]!.pid!)).toBe(true);
+  });
+
   test("caches left by a killed claude are swept", async () => {
     const { b } = await crashAndRestart(
       async (s) => {
