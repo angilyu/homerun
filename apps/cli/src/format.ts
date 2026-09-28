@@ -41,11 +41,19 @@ export function inputSummary(c: Content, max = 160): string {
   return truncate(typeof v === "string" ? oneLine(v) : JSON.stringify(v), max);
 }
 
-/** The text of an output: a string as is, anything else as JSON. */
+/**
+ * The text of an output: a string as is, a shell result (`{ stdout, stderr, … }`, like Bash's) as
+ * its output, anything else as JSON. A blob's preview is a prefix of the stored text, so a
+ * shell result's `stdout` is decoded from the partial JSON.
+ */
 export function contentText(c: Content): string {
-  if (c.kind === "blob") return c.preview;
+  if (c.kind === "blob") return partialStdout(c.preview) ?? c.preview;
   const v = c.value;
   if (typeof v === "string") return v;
+  if (v && typeof v === "object" && !Array.isArray(v) && typeof (v as { stdout?: unknown }).stdout === "string") {
+    const { stdout, stderr } = v as { stdout: string; stderr?: unknown };
+    return typeof stderr === "string" && stderr ? `${stdout.replace(/\n$/, "")}\n${stderr}` : stdout;
+  }
   if (Array.isArray(v) && v.every((p) => p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string"))
     return v.map((p) => (p as { text: string }).text).join("\n");
   return JSON.stringify(v, null, 2);
@@ -67,3 +75,16 @@ export function table(rows: string[][], widths?: number[]): string {
 
 // eslint-disable-next-line no-control-regex
 const visible = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+/** The `stdout` string at the start of a (possibly cut off) JSON object, or null. */
+export function partialStdout(json: string): string | null {
+  const m = /^\{\s*"stdout"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(json);
+  if (!m) return null;
+  // Drop an escape sequence cut off at the end, then decode as a JSON string.
+  const body = m[1]!.replace(/\\(u[0-9a-fA-F]{0,3})?$/, "");
+  try {
+    return JSON.parse(`"${body}"`) as string;
+  } catch {
+    return null;
+  }
+}

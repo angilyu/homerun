@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { parse, helpText, COMMANDS } from "../../src/args";
 import { devSwitchesUsed, refuseDevSwitches } from "../../src/connect";
 import { CliError } from "../../src/exit";
-import { headLines, inputSummary, table, truncate } from "../../src/format";
+import { contentText, headLines, inputSummary, partialStdout, table, truncate } from "../../src/format";
 import { matchPrefix } from "../../src/ids";
 import { main } from "../../src/main";
 import { Output, colorWanted } from "../../src/output";
@@ -85,6 +85,13 @@ describe("format", () => {
     expect(inputSummary({ kind: "inline", value: { a: 1 } })).toBe('{"a":1}');
     expect(inputSummary({ kind: "blob", sha256: "0".repeat(64), size: 5000, preview: "big", expired: false })).toBe("big [4.9 KB]");
     expect(table([["A", "BB"], ["ccc", "d"]])).toBe("A    BB\nccc  d\n");
+    expect(contentText({ kind: "inline", value: { stdout: "out\n", stderr: "err", interrupted: false } })).toBe("out\nerr");
+    expect(contentText({ kind: "inline", value: { stdout: "out", stderr: "" } })).toBe("out");
+    const preview = JSON.stringify({ stdout: "a\nb \"q\" \u00e9\n" + "x".repeat(50) }).slice(0, 30);
+    expect(contentText({ kind: "blob", sha256: "0".repeat(64), size: 9000, preview, expired: false })).toBe('a\nb "q" é\n' + "x".repeat(5));
+    expect(partialStdout('{"stdout":"ab\\')).toBe("ab");
+    expect(partialStdout('{"stdout":"ab\\u00')).toBe("ab");
+    expect(partialStdout('{"other":1}')).toBeNull();
   });
 
   test("colour: only when wanted and on a terminal; never in JSON", () => {

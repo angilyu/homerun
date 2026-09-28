@@ -38,6 +38,20 @@ run/homerund.sock   0700 dir; falls back to $TMPDIR/hr-<uid>/ when the path is t
 run/dev-token       development builds only (0600)
 ```
 
+## RPC methods
+
+Params, results and callers are defined in `@homerun/core` (`src/protocol/methods.ts`).
+
+- `hello`, `ping`; `secrets.set`/`secrets.clear` (shell only).
+- `threads.create`, `threads.list`, `threads.history`, `threads.subscribe`/`unsubscribe`.
+  `threads.list` pages on `updated_before`, and a page never ends inside a group of threads
+  with the same `updated_at`, so paging can't skip one. Its `unread_count` is always 0 until
+  read markers arrive (milestone 7).
+- `messages.send`: starts a run, steers the active one, or is held while the run waits for input.
+- `runs.get`, `runs.list`, `runs.stop`; `tasks.create`, `tasks.get`, `tasks.list`.
+- `input.list_pending`. `input.answer` returns UNAVAILABLE until milestones 4 and 6.
+- `blobs.get`: a stored tool input or output over 4 KB, in pages (`offset`, `length`).
+
 ## Running
 
 ```sh

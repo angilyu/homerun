@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   core:
-    name: packages/core
+    name: packages/core and packages/client
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,11 +26,11 @@ jobs:
       - name: Packages resolve from registry.npmjs.org only
         run: scripts/check-registry.sh
       # Root devDependency `bun` pins the Bun version used by `bun test`.
-      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/core..." --filter "@homerun/homerund"
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/core..." --filter "@homerun/client..." --filter "@homerun/homerund"
       - name: Typecheck
-        run: pnpm --filter @homerun/core --filter @homerun/homerund typecheck
+        run: pnpm --filter @homerun/core --filter @homerun/client --filter @homerun/homerund typecheck
       - name: Test
-        run: pnpm --filter @homerun/core test
+        run: pnpm --filter @homerun/core --filter @homerun/client test
       - name: Generated JSON Schema and vectors are up to date
         run: pnpm --filter @homerun/core schema:check
 
@@ -57,5 +57,32 @@ jobs:
       # Recorded cassettes, real bundled claude, no API key and no network to the API (§16.2).
       - name: Replay tests
         run: pnpm --filter @homerun/homerund test:replay
+        env:
+          ANTHROPIC_API_KEY: ""
+
+  cli:
+    name: apps/cli
+    # The CLI's end-to-end and replay tests start homerund (from source, and its bundled linux-x64
+    # claude for replay), so this job installs homerund's dependencies too.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/cli..."
+      - name: Typecheck
+        run: pnpm --filter @homerun/cli typecheck
+      - name: Unit tests
+        run: pnpm --filter @homerun/cli test:unit
+      # homerund with the fake engine, the CLI spawned from source; the build gate compiles both builds.
+      - name: End-to-end tests
+        run: pnpm --filter @homerun/cli test:e2e
+      # homerund's recorded cassettes, real bundled claude, no API key (§16.2).
+      - name: Replay tests
+        run: pnpm --filter @homerun/cli test:replay
         env:
           ANTHROPIC_API_KEY: ""

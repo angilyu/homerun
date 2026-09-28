@@ -20,8 +20,15 @@ export interface Spawned {
   done: Promise<CliResult>;
 }
 
+export interface CliOptions {
+  stdin?: string;
+  env?: Record<string, string>;
+  /** SIGKILL the CLI after this long (default 20 s). */
+  timeoutMs?: number;
+}
+
 /** Start the CLI from source (a development build) against a data dir. */
-export function spawnCli(dataDir: string, args: string[], o: { stdin?: string; env?: Record<string, string> } = {}): Spawned {
+export function spawnCli(dataDir: string, args: string[], o: CliOptions = {}): Spawned {
   const proc = Bun.spawn([process.execPath, MAIN, ...args], {
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dataDir, TMPDIR: tmpdir(), HOMERUN_DATA_DIR: dataDir, NO_COLOR: "1", ...o.env },
     stdin: "pipe",
@@ -37,7 +44,7 @@ export function spawnCli(dataDir: string, args: string[], o: { stdin?: string; e
     for await (const chunk of s) add(dec.decode(chunk, { stream: true }));
   };
   const reading = Promise.all([read(proc.stdout, (t) => (out += t)), read(proc.stderr, (t) => (err += t))]);
-  const timer = setTimeout(() => proc.kill("SIGKILL"), 20_000);
+  const timer = setTimeout(() => proc.kill("SIGKILL"), o.timeoutMs ?? 20_000);
   const done = (async () => {
     const code = await proc.exited;
     await reading;
@@ -47,7 +54,7 @@ export function spawnCli(dataDir: string, args: string[], o: { stdin?: string; e
   return { proc, stdout: () => out, stderr: () => err, done };
 }
 
-export const cli = (dataDir: string, args: string[], o: { stdin?: string; env?: Record<string, string> } = {}) => spawnCli(dataDir, args, o).done;
+export const cli = (dataDir: string, args: string[], o: CliOptions = {}) => spawnCli(dataDir, args, o).done;
 
 /** A runtime with the fake engine and the mock API key, as the dev shell would set it up. */
 export async function runtime(opts: { script?: FakeScript; env?: Record<string, string> } = {}): Promise<SocketRuntime> {
