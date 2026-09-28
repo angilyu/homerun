@@ -17,6 +17,9 @@ const ROOT = resolve(import.meta.dir, "../../..");
 const SPIKE = join(ROOT, ".spike");
 const BIN = join(SPIKE, "bin");
 const PROBE = join(BIN, "probe");
+// HOMERUN_SPIKE_NS namespaces work dirs and result files so real-API reruns don't clobber mock evidence.
+const NS = process.env.HOMERUN_SPIKE_NS ?? "";
+const WORK = NS ? join(SPIKE, NS) : SPIKE;
 const RESULTS = join(SPIKE, "results");
 mkdirSync(RESULTS, { recursive: true });
 loadEnvLocal(ROOT);
@@ -113,7 +116,7 @@ const sdk = (r: ProbeResult, type: string) => r.events.filter((e) => e.kind === 
 const init = (r: ProbeResult) => sdk(r, "system/init")[0];
 const result = (r: ProbeResult) => sdk(r, "result").at(-1);
 const cost = (...rs: ProbeResult[]) => rs.reduce((s, r) => s + (result(r)?.total_cost_usd ?? 0), 0);
-const save = (name: string, data: object) => writeFileSync(join(RESULTS, `${name}.json`), JSON.stringify({ mode: MODE, ...data }, null, 2));
+const save = (name: string, data: object) => writeFileSync(join(RESULTS, `${name}${NS ? `-${NS}` : ""}.json`), JSON.stringify({ mode: MODE, model: process.env.HOMERUN_MODEL ?? "claude-haiku-4-5", ...data }, null, 2));
 const ls = (p: string): string[] => {
   if (!existsSync(p)) return [];
   return spawnSync("find", [p, "-type", "f"], { encoding: "utf8" }).stdout.split("\n").filter(Boolean).map((f) => f.slice(p.length + 1));
@@ -123,7 +126,7 @@ const fresh = (d: string) => { rmSync(d, { recursive: true, force: true }); mkdi
 
 // ───────────────────────────── item 1 ─────────────────────────────
 async function item1() {
-  const base = fresh(join(SPIKE, "item1"));
+  const base = fresh(join(WORK, "item1"));
   const home = join(base, "home"), project = join(base, "project"), markers = join(base, "markers");
   for (const d of [home, project, markers]) mkdirSync(d, { recursive: true });
   const touch = (name: string) => `/usr/bin/touch ${join(markers, name)}`;
@@ -231,7 +234,7 @@ async function item1() {
 
 // ───────────────────────────── item 2 ─────────────────────────────
 async function item2() {
-  const base = fresh(join(SPIKE, "item2"));
+  const base = fresh(join(WORK, "item2"));
   const state = fresh(join(base, "state")), cwd = fresh(join(base, "cwd"));
   const word = `zebra${Math.floor(Math.random() * 9000 + 1000)}`;
   const a = await runProbe(["turn", "--state", state, "--cwd", cwd, "--tools", "Bash", "--prompt", `The secret word is ${word}. Remember it. Now run the Bash command \`sleep 30 && echo finished\` and wait for it.`], {
@@ -255,7 +258,7 @@ async function item2() {
 
 // ───────────────────────────── item 3 ─────────────────────────────
 async function item3a() {
-  const base = fresh(join(SPIKE, "item3"));
+  const base = fresh(join(WORK, "item3"));
   const out: any = {};
   // (i) approval: gated Bash deferred
   {
@@ -286,7 +289,7 @@ async function item3a() {
 }
 
 async function item3b(label = "3b") {
-  const a = JSON.parse(readFileSync(join(RESULTS, "item3-phaseA.json"), "utf8"));
+  const a = JSON.parse(readFileSync(join(RESULTS, `item3-phaseA${NS ? `-${NS}` : ""}.json`), "utf8"));
   const out: any = { deferredAt: a.deferredAt, resumedAt: new Date().toISOString(), gapMinutes: (Date.now() - Date.parse(a.deferredAt)) / 60000 };
   // Resume each deferred session in a fresh process; local transcripts removed so the store is the only source.
   for (const k of ["bash", "ask", "parallel"] as const) rmSync(join(a[k].state, "claude-config", "projects"), { recursive: true, force: true });
@@ -317,9 +320,36 @@ async function item3b(label = "3b") {
   console.log(`ITEM 3 resume (${out.gapMinutes.toFixed(1)} min later): ${out.pass ? "PASS" : "FAIL"}`);
 }
 
+// F3 mitigation: defer one call of a parallel batch, deny the siblings, then resume with approval.
+async function item3m() {
+  const base = fresh(join(WORK, "item3m"));
+  const state = fresh(join(base, "state")), cwd = fresh(join(base, "cwd"));
+  const prompt = "In ONE response, issue three Bash tool calls in parallel: `echo a > a.txt`, `echo b > b.txt`, `echo c > c.txt`. Do not run them one at a time. If any call is not run, follow the instructions in its result.";
+  const a = await runProbe(["turn", "--state", state, "--cwd", cwd, "--tools", "Bash", "--policy", "defer-one:Bash", "--prompt", prompt], { label: "3m-defer" });
+  const sid = init(a)?.session_id;
+  const toolUses = sdk(a, "assistant").flatMap((m) => m.content.filter((c: any) => c.tool_use));
+  const phaseA = { sessionId: sid, result: result(a), toolUsesEmitted: toolUses.length, hookDecisions: a.events.filter((e) => e.kind === "hook.pre").map((e) => e.data), filesAfterDefer: readdirSync(cwd).sort() };
+  rmSync(join(state, "claude-config", "projects"), { recursive: true, force: true });
+  const dumpEntries = () => spawnSync(PROBE, ["dump", "--state", state, "--session", sid], { encoding: "utf8" }).stdout.split("\n").filter((l) => l.includes('"kind":"entry"')).map((l) => JSON.parse(l.slice(3)).data);
+  const deniedInStore = dumpEntries().filter((e: any) => e.type === "user" && /Not run: another tool call/.test(JSON.stringify(e.message?.content))).length;
+  const resumeArgs = ["turn", "--state", state, "--cwd", cwd, "--tools", "Bash", "--resume", sid, "--policy", "answer", "--answer", JSON.stringify({ decision: "allow" })];
+  let b = await runProbe([...resumeArgs, "--empty-stream"], { label: "3m-resume-empty", timeoutMs: 90_000 });
+  let resumeMode = "empty-stream";
+  if (!result(b)) { b = await runProbe([...resumeArgs, "--prompt", "continue"], { label: "3m-resume-prompt" }); resumeMode = "prompt:continue"; }
+  const files = readdirSync(cwd).sort();
+  const out = {
+    phaseA, deniedSiblingResultsInStore: deniedInStore, resumeMode,
+    toolCallsOnResume: b.events.filter((e) => e.kind === "tool.call").map((e) => e.data.tool_input?.command),
+    filesAfterResume: files, result: result(b), cost: cost(a, b),
+  };
+  const pass = phaseA.result?.stop_reason === "tool_deferred" && phaseA.filesAfterDefer.length === 0 && ["a.txt", "b.txt", "c.txt"].every((f) => files.includes(f));
+  save("item3m", { pass, ...out });
+  console.log(`ITEM 3m (F3 mitigation): ${pass ? "PASS" : "FAIL"}`);
+}
+
 // ───────────────────────────── item 4 ─────────────────────────────
 async function item4() {
-  const base = fresh(join(SPIKE, "item4"));
+  const base = fresh(join(WORK, "item4"));
   const proxyDir = (n: string) => join(base, "proxy", n);
   const proxies: Array<ReturnType<typeof spawn>> = [];
   const startProxy = async (port: number, dir: string) => {
@@ -413,7 +443,7 @@ async function item4() {
 
 // ───────────────────────────── item 5 ─────────────────────────────
 async function item5() {
-  const base = fresh(join(SPIKE, "item5"));
+  const base = fresh(join(WORK, "item5"));
   const state = fresh(join(base, "state")), cwd = fresh(join(base, "cwd"));
   const r = await runProbe(["turn", "--state", state, "--cwd", cwd, "--tools", "Bash", "--stream",
     "--prompt", "Run the Bash command `sleep 8 && echo step1`. When it finishes, follow any newer instruction from me; if there is none, reply NO-STEER.",
@@ -438,7 +468,7 @@ async function item5() {
 
 ensureBinary();
 const which = process.argv[2] ?? "all";
-const table: Record<string, () => Promise<void>> = { "1": item1, "2": item2, "3a": item3a, "3b": () => item3b(process.argv[3] ?? "3b"), "4": item4, "5": item5 };
+const table: Record<string, () => Promise<void>> = { "1": item1, "2": item2, "3a": item3a, "3b": () => item3b(process.argv[3] ?? "3b"), "3m": item3m, "4": item4, "5": item5 };
 if (which === "all") { for (const k of ["1", "2", "3a", "3b", "4", "5"]) await table[k](); }
 else await table[which]();
 mockProc?.kill("SIGTERM");

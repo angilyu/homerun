@@ -10,15 +10,18 @@ bundled `claude` 2.1.278. Tauri 2 (CLI 2.11.5). Node 24.21.0, uv 0.12.19.
 
 ## How to read this
 
-- **No Anthropic API key was available**, so items 1–5 ran the real SDK and the real bundled
+- **Items 1–5 were first run against a scripted mock**, before an API key was available, and then
+  **rerun against the real API** (Haiku 4.5 for all five items, Sonnet 5 for items 3 and 4). See
+  [Real-API rerun](#real-api-rerun). The mock runs used the real SDK and the real bundled
   `claude` binary against a **scripted mock Messages API**
   ([`spikes/sdk/src/mock-api.ts`](../spikes/sdk/src/mock-api.ts)). The mock speaks the documented
   SSE format and enforces the API's `tool_use`/`tool_result` pairing rule (it returns the real 400
   error for an unanswered `tool_use`). The *model* is scripted, so these results show what the SDK
   and `claude` do (transcripts, hooks, resume, process lifetime). They don't show what a real model
-  would decide. Results are labelled **pass (mock API)**. Every request `claude` sent is saved as
-  evidence, so the SDK-side claims can be checked directly. To rerun against the real API, put
-  `ANTHROPIC_API_KEY=…` in `.env.local` (gitignored; Bun loads it) and use the same commands.
+  would decide. Those results are labelled **pass (mock API)**, and the real-API results **PASS (real API)**.
+  Every request `claude` sent is saved as evidence, so the SDK-side claims can be checked directly. The real-API
+  runs read `ANTHROPIC_API_KEY` from `.env.local` (gitignored; Bun loads it). The recording proxy redacts
+  `x-api-key`/`authorization` and scrubs the key value from everything it writes.
 - **No Apple Developer ID was available.** Builds are signed with a *self-signed* code-signing
   identity ([`make-selfsigned-identity.sh`](../scripts/macos/make-selfsigned-identity.sh)): stable
   designated requirement, no Team ID, kept in a private throwaway keychain. There are also
@@ -32,11 +35,11 @@ bundled `claude` 2.1.278. Tauri 2 (CLI 2.11.5). Node 24.21.0, uv 0.12.19.
 
 | # | Check (§16.1) | Result | One-line evidence |
 |---|---|---|---|
-| 1 | Bun binary drives bundled `claude` via `pathToClaudeCodeExecutable`, `settingSources: []`, private `CLAUDE_CONFIG_DIR`; nothing from `~/.claude` loads | **PASS (mock API)**, with caveats | Isolated runs saw no user/project hooks, skills, agents, commands, MCP servers or settings env; the negative control loads all of them. Caveats: built-in skills are still listed, and the Bash tool sources the user's *login shell* profile (F9) |
-| 2 | `sessionStore` round trip through SQLite; kill; resume from the store alone | **PASS (mock API)** | SIGKILL mid-tool, local JSONL deleted, resumed from `sdk_transcripts` only, same session id, recalled the secret word |
-| 3 | `defer` from `PreToolUse`; process exits; resume hours later with the answer | **PASS (mock API) for defer → exit → resume** (Bash approval and `AskUserQuestion`), 6/6 immediate resumes. **Long gap: see [item 3](#3-defer-and-resume-later)** (<!-- 3H-RESULT -->pending, scheduled 3 h run). Needs **design changes** in §5.6 (F3, F6) | `stop_reason: tool_deferred`, exit code 0, no `claude` left running, victim file untouched until approval |
-| 4 | Kill mid-tool-call; resume; ambiguous call detected; "did / did not happen" injected | **PASS (mock API) with a required design change** to §5.4 | Detection works from `thread_events` and from the store. Three injection methods work. **But `claude` auto-answers the dangling call as "interrupted" on resume, and a naive resume re-ran the side effect** (F7). The tool process also outlives both a runtime and a `claude` SIGKILL (F8) |
-| 5 | Steering message mid-run is seen at the next step | **PASS (mock API)** | Pushed while Bash ran; delivered inside the next `tool_result` as a system-reminder; the model acted on it in the same run |
+| 1 | Bun binary drives bundled `claude` via `pathToClaudeCodeExecutable`, `settingSources: []`, private `CLAUDE_CONFIG_DIR`; nothing from `~/.claude` loads | **PASS (mock API)** · **PASS (real API, Haiku)**, with caveats | Isolated runs saw no user/project hooks, skills, agents, commands, MCP servers or settings env; the negative control loads all of them. Caveats: built-in skills are still listed, and the Bash tool sources the user's *login shell* profile (F9) |
+| 2 | `sessionStore` round trip through SQLite; kill; resume from the store alone | **PASS (mock API)** · **PASS (real API, Haiku)** | SIGKILL mid-tool, local JSONL deleted, resumed from `sdk_transcripts` only, same session id, recalled the secret word |
+| 3 | `defer` from `PreToolUse`; process exits; resume hours later with the answer | **PASS (mock API) for defer → exit → resume** (Bash approval and `AskUserQuestion`), 6/6 immediate resumes. **PASS (real API)** on Haiku and Sonnet 5 (immediate resume); the F3 mitigation also passes on both. **Long gap: see [item 3](#3-defer-and-resume-later)** (<!-- 3H-RESULT -->pending, scheduled 3 h run). Needs **design changes** in §5.6 (F3, F6) | `stop_reason: tool_deferred`, exit code 0, no `claude` left running, victim file untouched until approval |
+| 4 | Kill mid-tool-call; resume; ambiguous call detected; "did / did not happen" injected | **PASS (mock API)** · **PASS (real API, Haiku and Sonnet 5)**, both **with a required design change** to §5.4. The real models confirm F7, and Haiku adds F10 (background Bash) | Detection works from `thread_events` and from the store. Three injection methods work. **But `claude` auto-answers the dangling call as "interrupted" on resume, and a naive resume re-ran the side effect** (F7). The tool process also outlives both a runtime and a `claude` SIGKILL (F8) |
+| 5 | Steering message mid-run is seen at the next step | **PASS (mock API)** · **PASS (real API, Haiku)** | Pushed while Bash ran; delivered inside the next `tool_result` as a system-reminder; the model acted on it in the same run |
 | 6 | One bundle, all binaries hardened-runtime, JIT entitlements on runtime and Node only; notarizes; Gatekeeper launches it on a clean machine | **FAIL as written** (claude needs `allow-jit` too; Node also needs `disable-library-validation`) + **BLOCKED** (notarization and clean-machine Gatekeeper need the Developer ID) | 5 binaries, all `flags=runtime`, `codesign --verify --deep --strict` OK. Self-signed bundle is rejected by `spctl` as expected |
 | 7 | Runtime reads/writes a keychain item in the shared access group | **BLOCKED** (Team ID + provisioning profile) | Legacy login keychain read/write from the bundle: OK. Data-protection keychain: `errSecMissingEntitlement` (-34018) without an access-group entitlement, which needs a provisioning profile |
 | 8 | Auto-update to a newly signed build; no keychain prompt; in-progress run resumes | **Update + resume: PASS. "No keychain prompt": FAIL for self-signed and ad-hoc, BLOCKED for Developer ID** | 0.0.1 → 0.0.2 mid-tool-call: run `completed`, `resumes=1`, both steps done. The post-update keychain read **shows a prompt** (timed out at 5 s) in both variants; the creating binary reads with no prompt |
@@ -53,6 +56,93 @@ Measurements (details in [Measurements](#measurements)):
 | Idle memory, whole app (shell + 3 WebKit processes + runtime) | 241 MiB RSS · 85 MB footprint |
 | Memory per active run | **≈215 MiB RSS / ≈120 MB footprint** with a clean shell. **≈260–300 MiB RSS / ≈150–190 MB footprint** with the user's own zsh profile (this machine's conda hook starts a `python` per shell) |
 
+## Real-API rerun
+
+Items 1–5 were rerun on the real Messages API with `claude-haiku-4-5`, and items 3 (with the F3
+mitigation) and 4 with `claude-sonnet-5`. Same binaries, same harness, `maxBudgetUsd` 0.25 (Haiku) or 1.00
+(Sonnet) per query. Results are namespaced so they don't overwrite the mock evidence:
+`.spike/results/item<N>-real-<model>.json`. Total reported spend for all real runs was about **$0.28**
+(sum of `total_cost_usd`; SIGKILLed runs report none).
+
+```sh
+# .env.local holds ANTHROPIC_API_KEY (never printed; the proxy redacts it)
+for it in 1 2 3a "3b 3b-immediate" 3m 4 5; do
+  HOMERUN_SPIKE_NS=real-haiku HOMERUN_MODEL=claude-haiku-4-5 HOMERUN_MAX_BUDGET_USD=0.25 bun run spikes/sdk/src/orchestrate.ts $it
+done
+for it in 3a "3b 3b-immediate" 3m 4; do
+  HOMERUN_SPIKE_NS=real-sonnet HOMERUN_MODEL=claude-sonnet-5 HOMERUN_MAX_BUDGET_USD=1 HOMERUN_CHILD_SHELL=/bin/bash bun run spikes/sdk/src/orchestrate.ts $it
+done
+# item 4 again with the recommended shell, with and without background tasks
+HOMERUN_SPIKE_NS=real-haiku-bash HOMERUN_MODEL=claude-haiku-4-5 HOMERUN_CHILD_SHELL=/bin/bash bun run spikes/sdk/src/orchestrate.ts 4
+HOMERUN_SPIKE_NS=real-haiku-bash-nobg HOMERUN_MODEL=claude-haiku-4-5 HOMERUN_CHILD_SHELL=/bin/bash \
+  HOMERUN_PROBE_EXTRA_ENV='{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":"1"}' bun run spikes/sdk/src/orchestrate.ts 4
+```
+
+| # | Mock API | Real API | Notes from the real runs |
+|---|---|---|---|
+| 1 | PASS | **PASS (real API)**, Haiku | Isolated and store-resumed runs: no canary markers, and the Bash tool printed `canary=.` (no settings env). The negative control fired all 11 markers and printed `canary=local-settings-env.`. The real `HOME` run showed no leaks. `apiKeySource: ANTHROPIC_API_KEY` |
+| 2 | PASS | **PASS (real API)**, Haiku | SIGKILL mid-`sleep 30`, local JSONL deleted, 14 store entries. The resumed session answered `zebra3094` with the same session id |
+| 3 | PASS | **PASS (real API)**, Haiku and Sonnet 5 | Bash and `AskUserQuestion` deferred (`stop_reason: tool_deferred`, exit 0, victim untouched). The resume ran the `rm` and answered `BLUE`. The parallel case reproduces F3 exactly: 3 × `defer`, only `echo c` reported |
+| 3m | (mechanics only) | **PASS (real API)**, Haiku and Sonnet 5 | F3 mitigation: see below |
+| 4 | PASS | **PASS (real API)**, Haiku and Sonnet 5 | Ambiguous call detected from `thread_events` and the store after a runtime SIGKILL. Strategy outcomes are in the table below. The `claude` SIGKILL leaves the tool shell running and the side effect happens (F8), seen on Sonnet and on Haiku with `/bin/bash` |
+| 5 | PASS | **PASS (real API)**, Haiku | Steering pushed 0.5 s into `sleep 8`. The model then ran `echo STEERED` and replied `PINEAPPLE` in the same run (1 result) |
+
+**What a real model does, as the review asked:**
+
+- **Item 4, re-run after each strategy.** The side-effect log counts executions. Same results on Haiku (user's zsh,
+  and `/bin/bash` with background tasks disabled) and on Sonnet 5:
+
+  | Strategy | Haiku | Sonnet 5 | Re-ran the command? |
+  |---|---|---|---|
+  | naive resume ("continue") | re-ran | re-ran | **yes**: the model sees `claude`'s synthetic "[Request interrupted by user for tool use]" and retries (F7) |
+  | `message` (decision as a user message) | `ACK-DID-HAPPEN` | `ACK-DID-HAPPEN` | **no** |
+  | `inject-did` (decision as the `tool_result`) | no call; "already completed…" | no call; "already completed … nothing left to run" | **no** |
+  | `inject-did-not` | re-ran | re-ran | yes, as intended |
+  | `truncate` + message | `ACK-DID-HAPPEN` | `ACK-DID-HAPPEN` | **no** |
+
+  After `inject-did` the empty-stream resume produced no turn, so the harness sent "continue". Haiku then
+  replied, a little confused, "I'm not sure what you'd like me to continue with…" (once), and Sonnet said the task
+  was done. **Design impact entry 7 stands**: inject, then resume with a short explicit message such as "The
+  interrupted command completed; continue with the task", not a bare "continue".
+- **F3, re-issue of dropped siblings after a parallel defer (no mitigation).** Both Haiku and Sonnet 5
+  **re-issued** the two dropped calls after the reported one ran (`echo c`, then `echo a`, `echo b`; all three
+  files created). They did this only because the user's prompt still listed all three: the dropped `tool_use`s are
+  absent from the transcript, so the model is rediscovering them, not resuming them. Also, the runtime has already
+  recorded three pending input requests, and two of them now belong to calls that no longer exist.
+- **F3 mitigation (deny siblings, defer one), end to end** (`probe --policy defer-one:Bash`, `orchestrate.ts 3m`).
+  - Phase A: hooks `defer, deny, deny`. `stop_reason: tool_deferred`, and `deferred_tool_use` is the *first* call,
+    the one we chose. No files created. Both deny results are persisted in the store (2 entries).
+  - On resume: all three `tool_use`s are in the transcript sent to the model, with the two deny messages.
+  - After the approval ran `echo a`, **both models re-issued `echo b` and `echo c`** as new calls. All three files
+    exist. Sonnet explained: "the initial parallel batch only ran the first call…".
+  - **PASS on both models.** On Haiku the deferred call was again approved via `canUseTool` without `PreToolUse`
+    (F6, twice for the same id). The stored decision was applied there, so it still passed.
+  - The mock shows the same mechanics, but its scripted model treats a denied call as done and doesn't re-issue it.
+- **Item 5, acting on steering.** Yes: Haiku ran the steered `echo STEERED` and ended with `PINEAPPLE`.
+- **Can parallel tool use be disabled?** **No supported switch in this SDK/CLI.**
+  - SDK 0.3.278 `Options` has no `tool_choice` or `disable_parallel_tool_use`, and no pass-through for Messages API
+    request fields.
+  - The `claude` 2.1.278 binary contains no `disable_parallel_tool_use` string; `tool_choice` is used internally
+    only.
+  - The closest setting, `CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=1`, limits how many calls *execute* at once, not how
+    many the model emits. With it set, Haiku still emitted three calls in one message, all three got `defer`, and only
+    the last was reported (`.spike/results/parallel-conc1-real-haiku.txt`).
+  - So the deny-siblings mitigation is required (entry 10). A prompt instruction such as "one tool call per message"
+    would only reduce how often it happens.
+- **New: F10, Haiku backgrounded the command.** In one item-4 run (`real-haiku-bash`), Haiku called Bash with
+  `run_in_background: true`. The tool call returned at once ("Command running in background with ID …"), so after
+  the runtime was killed there was **no ambiguous call** (the store had `tool_use` and `tool_result`), while the
+  `sleep` was still running as an orphan. With `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`
+  (`real-haiku-bash-nobg`), the command ran in the foreground and item 4 behaved as above. `claude` also has
+  `CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS`, which can background long commands automatically. See entry 24.
+- **Timing artefact, F9.** In the first Haiku run (`real-haiku`, user's zsh), the `claude` SIGKILL landed while
+  the login-shell snapshot was still sourcing the user's profile (conda). This was more than 3 s after
+  `PreToolUse`, so the command never started and nothing survived. With `/bin/bash` the snapshot is fast, and the
+  kill hit the running command as intended.
+- Model quirk for item 1: in the negative control, Haiku did not append the `BANANA-*` token from the leaked
+  `CLAUDE.md`. The pass relies on the hook and MCP markers, the settings env and the init lists, not on the
+  model's obedience.
+
 ## Repository layout
 
 ```
@@ -64,7 +154,8 @@ apps/homerund/            TypeScript runtime, compiled with `bun build --compile
   src/mcp-probe.ts        spawn an MCP server with bundled node/uv, call one tool
 apps/desktop/             Tauri v2 shell: sidecar supervision, updater, SMAppService, autotests
 spikes/sdk/               probe CLI + orchestrator for items 1–5, mock Messages API, logging proxy
-spikes/packaging/         update-flow, memory, shell-idle, socket-auth, F4 signing comparison
+spikes/packaging/         update-flow, memory, shell-idle, socket-auth, F4 signing comparison (A/B/hybrid),
+                          components-e22 (on-demand Node/uv from Application Support)
 spikes/signing/           entitlement matrix
 spikes/mcp-native/        tiny MCP server using better-sqlite3 (the item 10 fixture)
 scripts/macos/            fetch-toolchain, package, sign (inside-out), verify, notarize,
@@ -259,17 +350,24 @@ exercised):
 **Vendor signatures (F4).** `claude` is signed by Anthropic (Developer ID, Q6L2SF6YDW) with a broad
 entitlement set: JIT, unsigned-executable-memory, apple-events, audio-input. `node` is signed by the Node.js Foundation
 with **`get-task-allow`**, which notarization rejects. `uv` is signed by OpenAI (2DC432GLL2).
-[`spikes/packaging/f4.sh`](../spikes/packaging/f4.sh) builds both options and runs the in-bundle selftest on
-each (`.spike/results/f4/`):
+[`spikes/packaging/f4.sh`](../spikes/packaging/f4.sh) builds each option and runs the in-bundle selftest on
+it (`.spike/results/f4/`):
 - **A: keep the vendor signatures** (`THIRD_PARTY=keep`). The bundle verifies and every helper launches as a
   child of the hardened runtime. But Apple's notarization requirements reject `get-task-allow`, so `node`'s
   vendor signature would fail notarization. This is Apple's documented rule; it was not submitted, because that
   needs the account. The helpers also keep entitlements we didn't choose.
-- **B: re-sign everything with our identity** (default). The bundle verifies, all helpers launch, and we choose
-  the entitlements.
+- **B: re-sign everything with our identity** (`THIRD_PARTY=resign`). The bundle verifies, all helpers launch, and
+  we choose the entitlements.
+- **H: hybrid, recommended** (`THIRD_PARTY=hybrid`, `F4_VARIANTS=H spikes/packaging/f4.sh`). `node` and `uv` are
+  re-signed with our identity; `claude` keeps Anthropic's signature untouched (`Authority=Developer ID Application:
+  Anthropic PBC (Q6L2SF6YDW)`, `flags=0x10000(runtime)`, secure timestamp present, entitlements include
+  `allow-jit`). Results: strict deep verify OK. The in-bundle selftest passes: `claude --version` and
+  `claude mcp list`, a node JIT loop, the `npx` server with the `better-sqlite3` add-on (`sqlite 3.53.2`), the
+  `uvx` time server, and keychain set/get. `syspolicy_check notary-submission` reports the same single issue for A,
+  B and H: "Adhoc Signed App" (`.spike/results/f4/H-*.txt`).
 
-Recommendation: **B for `node`** (required), **B for `uv`**, and for `claude` **B** unless Anthropic's
-redistribution terms require their signature. A cannot notarize with Node's signature anyway.
+Recommendation: **H** (see [Design impact entry 14](#11-distribution-macos)). A cannot notarize with Node's
+signature anyway.
 
 Gatekeeper: `spctl --assess` on a quarantined copy of the self-signed bundle → `rejected`, and
 `syspolicy_check distribution` → "Notary Ticket Missing". This is the expected result without a Developer ID and
@@ -441,9 +539,14 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
    latency and ≈45–80 MiB per run on this machine, and makes runs behave differently per user. `SHELL=/bin/sh`
    fell back to zsh. It appears to accept only bash or zsh: `SHELL=/bin/bash` was honoured and no user profile
    `python` ran; that user had no bash profile, so it is not a complete isolation guarantee.
-   *Change:* add to the "Isolation" list: run the Bash tool with `SHELL=/bin/bash` and a Homerun-controlled `HOME`
-   for the shell, or a clean `BASH_ENV`, **unless the task opts in** to "use my shell environment". Decide the
-   default explicitly.
+   *Recommendation:* the **default** is a clean `/bin/bash` with a Homerun-controlled `HOME`. Add to the
+   "Isolation" list: the runtime sets `SHELL=/bin/bash` for `claude`, points the tool shell's `HOME` at a
+   Homerun-owned directory that holds an empty `.bash_profile`/`.bashrc`, and sets `BASH_ENV` to empty. The user's
+   real `HOME` stays in a separate variable for tools that need to find project files. A **per-task opt-in**, "use
+   my shell environment", runs with the user's `$SHELL` and real `HOME`. The UI labels it, because it also loads the
+   user's aliases, `PATH` and secrets from their profile. The same default is used for measurement: the ≈215 MiB
+   per-run figure is with `/bin/bash`. Real-API runs of item 4 on this machine show why: with the user's zsh profile,
+   the snapshot step alone took more than 3 s (conda activation) before the command started.
 5. **Built-in skills/commands are always listed**, even with `skills: []`. *Change:* note that the explicit
    `tools` list (never including `Skill`) is what keeps them inert.
 6. §5.3 already calls for the explicit tool list and `strictMcpConfig`. Keep both: item 1's negative control
@@ -462,6 +565,10 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
       "completed; do not re-run". Did not → "did not run". Then resume with a short continuation message.
       Fallback: `resumeSessionAt` the entry before the call, plus a message.
    5. Cover the entry format in the SDK-upgrade test suite; it is SDK-internal.
+
+   **Confirmed on the real API** (Haiku and Sonnet 5): the naive resume re-runs the command, while `message`,
+   `inject-did` and `truncate` all do not. After an injected result, resume with an explicit continuation such as
+   "the interrupted command completed; continue the task", not a bare "continue" (Haiku asked what to continue).
 8. **F6 impact on §5.4 step 1:** `tool.call` cannot be written from `PreToolUse` alone, because that hook is
    sometimes skipped on resume. *Change:* write `tool.call` from whichever of `PreToolUse`/`canUseTool` runs first
    (idempotent on `tool_use_id`), and `tool.result` from `PostToolUse`/`PostToolUseFailure`.
@@ -482,6 +589,17 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
     *Change:* when `PreToolUse` must defer and the message has sibling tool calls, **deny** the siblings with
     "not run; re-issue after the pending approval" and defer only one. Alternatively, keep the process alive
     until all are answered. Add a test.
+
+    **Tested end to end on the real API** (Haiku and Sonnet 5, `orchestrate.ts 3m`): the chosen call is the one
+    reported. The denied siblings stay in the transcript with their deny message, and after approval the model
+    re-issues them as new calls, each going through the policy again. There is no supported way to turn off
+    parallel tool use (see [Real-API rerun](#real-api-rerun)), so this mitigation is required.
+
+    Implementation note: the SDK streams each `tool_use` of a batch as its own assistant entry, and its
+    `PreToolUse` fires **before the next sibling has streamed**. So the runtime can't know up front whether siblings
+    will follow. The rule has to be stateful per API message: the first gated call defers, and any later gated
+    call from the same message is denied. Only the deferred call becomes an `input_requests` row. Not tested: an
+    ungated sibling (for example `Read`) that streams after the deferred call.
 11. **F6: `PreToolUse` may not re-fire for the deferred call on resume**, and `canUseTool` may be called twice.
     *Change:* the stored decision is applied, idempotently and keyed by `tool_use_id`, in both `PreToolUse` and
     `canUseTool`. `canUseTool` never blanket-allows. "Supplies the decision" in §5.6 should say this.
@@ -495,16 +613,43 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
     `com.apple.security.cs.disable-library-validation` to load npm native add-ons. `allow-unsigned-executable-memory`
     is not needed by Bun ≥ 1.4.2 or Node 24. *Change §11 bullet 5 and §16.1 item 6* to: "JIT on the runtime,
     `claude` and Node; library-validation off on Node only; nothing on the shell or `uv`."
-14. **Re-sign third-party binaries (F4 option B).** Node's vendor signature carries `get-task-allow`, which blocks
-    notarization. *Add:* all helpers are re-signed inside-out with our Developer ID by a custom script, since
-    Tauri's bundler cannot set per-helper entitlements. Confirm with Anthropic that re-signing `claude` fits the
-    redistribution terms (§3.4).
+14. **Hybrid signing for third-party binaries (F4 variant H).** Re-sign `node` and `uv` with our Developer ID
+    and minimal entitlements, and **keep Anthropic's signature on `claude`** (option A for `claude` only).
+    - `node` must be re-signed: its vendor signature carries `get-task-allow`, which blocks notarization.
+    - `uv` is re-signed so it carries our Team ID and no entitlements.
+    - `claude` is left unmodified, so we never alter Anthropic's binary, and its signature already includes
+      `allow-jit` (entry 13).
+    - Trade-off: `claude` keeps entitlements we didn't choose (`allow-unsigned-executable-memory`,
+      `disable-library-validation`, apple-events, audio-input). The shell's `NSAppleEventsUsageDescription` and
+      microphone strings would be needed only if `claude` used those.
+
+    *Change §11:* signing is inside-out with a custom script (`sign.sh`, `THIRD_PARTY=hybrid`), because Tauri's
+    bundler cannot set per-helper entitlements. The script verifies `claude`'s Anthropic designated requirement
+    before bundling instead of re-signing it.
+
+    Verified ad-hoc as variant H: strict verify, in-bundle selftest, and the pre-notarization check (only
+    "Adhoc Signed App"). `sign.sh` checks that `claude` still satisfies Anthropic's requirement and is hardened.
+    Every real-API run in this report used this same file (`cmp`-identical, Anthropic signature), so real turns under
+    their signature and entitlements are proven, including the SharedArrayBuffer/JIT case. **Still needs the certificate:** whether the notary service accepts nested code signed by
+    another Team's Developer ID. It should, because `claude` is hardened and timestamped. Check at the first real
+    submission; the fallback is option B for `claude` after confirming with Anthropic (§3.4).
 15. **The keychain access group needs a bundled helper and a provisioning profile.** `keychain-access-groups` is
     restricted under Developer ID and requires an embedded provisioning profile, which a bare Mach-O cannot carry.
-    *Change §5.1/§11:* ship the runtime as `Contents/Helpers/Homerun Runtime.app/Contents/MacOS/homerund`, with its
-    own `Info.plist` and `embedded.provisionprofile`, or keep all keychain access in the shell and hand the key to
-    the runtime over the authenticated channel. The second is simpler and keeps the data-protection keychain in the
-    already-bundled shell.
+    *Recommendation: option 2.* All keychain access lives in the shell, and the runtime never calls
+    Security.framework.
+    - The shell is the bundle's main executable. It carries the app's `embedded.provisionprofile` and the
+      `keychain-access-groups` entitlement, so no nested helper app is needed.
+    - At startup, and whenever the key changes, the shell reads the key from the data-protection keychain and sends
+      it to `homerund` as a `secrets.set` message over the already-authenticated local channel (§5.2: token on
+      stdin, 0700 socket dir, peer check). `homerund` holds it only in memory and puts it only in `claude`'s
+      environment.
+    - While the shell is not running (for example, a login-item launch without UI), runs that need the key wait in
+      `waiting_input`, "Open Homerun to unlock". The shell can also start at login without UI.
+    - *Change §5.1/§5.2/§11:* move keychain ownership from the runtime to the shell, add `secrets.set` /
+      `secrets.clear` to the runtime protocol, and never write the key to disk or logs. Entry 16 then applies to the
+      shell: keychain reads are off the main thread and time out.
+    - The spike's `homerund keychain-*` code remains only as test tooling. Item 7 still needs the Team ID to prove
+      the access group, now from the shell.
 16. **Keychain reads must never block the runtime.** The legacy keychain shows a modal dialog and blocks the
     calling thread, ignoring `kSecUseAuthenticationUIFail`. *Add:* read with a timeout off the serving path
     (implemented), surface "keychain access needs your approval" in the UI, and never read on startup before the
@@ -532,8 +677,54 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
 ### §14 Updates / install size
 
 22. **The update payload is 180 MB**, of which `claude` is 208 MB uncompressed and changes with every SDK bump.
-    *Consider:* shipping Node and uv as on-demand components (−58 MB on the download, −167 MB on disk). Also
-    measure a universal build, which roughly doubles the helpers.
+    *Recommendation:* ship **Node (with npm) and uv as on-demand, signed components**, downloaded the first time
+    the user installs a third-party MCP server that needs `npx`/`uvx`. This saves 58 MB on the download and 167 MB
+    on disk for users who never add one. Also measure a universal build, which roughly doubles the helpers.
+    - **What is published.** Per architecture and version: a `.tar.zst` of the same binaries we would have bundled,
+      re-signed inside-out with our Developer ID (entry 14), and notarized as a zip to get a ticket, since
+      stand-alone Mach-Os can't be stapled. Alongside it goes a **component manifest**: name, version, URL,
+      `sha256` of the archive, and the `CDHash` of every Mach-O. The manifest is signed with the same ed25519 key
+      as the Tauri updater (minisign format), and that public key is compiled into the shell.
+    - **Download and verify (in `homerund`).** Fetch the manifest and check its signature. Download the archive
+      with the runtime's own HTTP client. Check its `sha256`, then extract it into a staging directory. For each
+      Mach-O, run `codesign --verify --strict -R '=anchor apple generic and certificate leaf[subject.OU] = "<our
+      TEAMID>" and cdhash H"<manifest cdhash>"'` (or `SecStaticCodeCheckValidity` with that requirement). Only then
+      rename the directory atomically to
+      `~/Library/Application Support/dev.homerun.app/components/<name>/<version>/`. Keep the previous version until
+      the new one has passed a smoke test (`node -e`, `uv --version`).
+    - **Launch.** The component is spawned only by the hardened runtime, by absolute path, via the
+      `HOMERUN_{NODE,UV,NPM}` path hooks the spike already has. It is never on the user's `PATH`. The directory is
+      owned by the user and mode 0700.
+    - **Quarantine.** Files written by our own process are not quarantined, because Homerun does not set
+      `LSFileQuarantineEnabled`. The installer still removes `com.apple.quarantine` explicitly after verification,
+      in case a proxy or MDM tool adds it.
+    - **Tested** (`spikes/packaging/components-e22.sh` → `.spike/results/e22/`): node and uv from the hybrid bundle
+      were installed under `~/Library/Application Support/…/components/` and launched as children of the hardened
+      `homerund`.
+      - **plain** (no xattr): the `npx` server with the native add-on and the `uvx` server both ran.
+      - **quarantined** (xattr as a browser sets it): both servers were **SIGKILLed at exec** by Gatekeeper, since
+        our spike signature is ad-hoc and not notarized. With a notarized Developer ID component, Gatekeeper should
+        allow it after an online check. That needs the certificate, and the plan above doesn't rely on it.
+      - **tampered**: a flipped byte in a `__TEXT` page of `node` and a changed byte in `uv`'s unhashed tail
+        padding **both still launched and served**. Kernel code-signing enforcement checks pages lazily and did not
+        stop either one. Pre-launch verification caught them: `sha256` for both, and `codesign` for `node`.
+        **Pre-launch verification is therefore required, not optional.** Pin both the archive `sha256` and each
+        binary's `CDHash`, and re-verify on every runtime start (cheap: 0.41 s for `sha256` plus `codesign --verify` of both binaries).
+    - *Change §5.5/§14:* the bundle ships `claude` plus the runtime only. Node/uv are components with the lifecycle
+      above, the update manifest lists component versions, and the MCP install UI shows a one-time "downloading
+      tools (≈60 MB)" step.
+
+### Added by the real-API rerun
+
+24. **F10: background Bash defeats ambiguity detection** (§5.4, §5.3). A real model (Haiku) chose
+    `run_in_background: true`. The tool call completed at once, so a crash left no ambiguous call, only an orphaned
+    process doing the work. `claude` can also auto-background long commands (`CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS`).
+    *Change:* set `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` in the `claude` environment (§5.3 isolation list). Tested:
+    with it, item 4 behaves correctly on Haiku. If background tasks are wanted later, they need their own lifecycle in
+    `runs` (the process group is killed on restart per entry 9, and the run is told its job was lost).
+25. **Parallel tool use cannot be disabled** in SDK 0.3.278 / `claude` 2.1.278. `CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY`
+    only serializes execution. *Change §5.6:* rely on the deny-siblings rule (entry 10). Track an SDK feature
+    request for `disable_parallel_tool_use` passthrough.
 
 ### §16.1 itself
 
@@ -547,7 +738,6 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
 | What | Blocked on | How to finish |
 |---|---|---|
 | Item 3 at a 3 h gap | time (scheduled) | runs automatically at 2026-09-28T03:15Z, `orchestrate.ts 3b 3b-3h` |
-| Items 1–5 against the real model | an Anthropic API key | `.env.local` with `ANTHROPIC_API_KEY`, rerun `orchestrate.ts 1 2 3a … 3b … 4 5` |
 | Item 6 notarization + Gatekeeper | Developer ID + notary credentials | `xcrun notarytool store-credentials homerun-notary …`, `IDENTITY="Developer ID Application: …" VERSION=0.0.1 NOTARY_PROFILE=homerun-notary scripts/macos/package.sh`, then `scripts/macos/tart-clean-vm.sh` |
 | Item 7 access group | Team ID + Developer ID provisioning profile with `keychain-access-groups` | `TEAM_ID=… PROVISIONING_PROFILE=… scripts/macos/sign.sh`, then `homerund keychain-selftest --data-protection --group <TEAMID>.dev.homerun.shared`. Needs design entry 15 |
 | Item 8 "no prompt" | Developer ID build | package 0.0.1 and 0.0.2 with the Developer ID, `spikes/packaging/update-flow.sh devid` → expect `prompted:false` |

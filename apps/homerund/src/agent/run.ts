@@ -116,7 +116,7 @@ export function buildOptions(spec: RunSpec, abort: AbortController): Options {
     includePartialMessages: true,
     model: spec.model ?? process.env.HOMERUN_MODEL ?? "claude-haiku-4-5",
     fallbackModel: spec.fallbackModel,
-    maxBudgetUsd: spec.maxBudgetUsd ?? 0.5,
+    maxBudgetUsd: spec.maxBudgetUsd ?? (process.env.HOMERUN_MAX_BUDGET_USD ? Number(process.env.HOMERUN_MAX_BUDGET_USD) : 0.5),
     permissionMode: "default",
     tools: spec.tools ?? ["Bash", "Read", "AskUserQuestion"],
     allowedTools: spec.allowedTools,

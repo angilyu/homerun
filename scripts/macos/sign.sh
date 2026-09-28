@@ -8,7 +8,8 @@
 #   SPIKE_KEYCHAIN  optional keychain file holding IDENTITY; added to the user search list
 #                   only for the duration of this script, then the original list is restored
 #   THIRD_PARTY     resign (default, F4 option B) | keep (F4 option A: leave the vendor's
-#                   Developer ID signature on claude/node/uv untouched)
+#                   Developer ID signature on claude/node/uv untouched) | hybrid (recommended:
+#                   keep Anthropic's signature on claude, re-sign node and uv with ours)
 #   TEAM_ID + PROVISIONING_PROFILE
 #                   (Developer ID only) add keychain-access-groups "<TEAM_ID>.dev.homerun.shared"
 #                   to homerund — see docs/spike-results.md item 7 for why this also needs
@@ -53,8 +54,13 @@ done < <(find "$APP/Contents/Resources" -type f -print0)
 # 2. Third-party helpers (F4).
 for h in claude node uv; do
   [[ -f "$MACOS/$h" ]] || continue
-  if [[ "$THIRD_PARTY" == keep ]]; then
-    echo "keep vendor signature: $h ($(codesign -dvv "$MACOS/$h" 2>&1 | grep -m1 '^Authority=' || echo unsigned))"
+  if [[ "$THIRD_PARTY" == keep || ( "$THIRD_PARTY" == hybrid && "$h" == claude ) ]]; then
+    info="$(codesign -dvvv "$MACOS/$h" 2>&1 || true)"
+    echo "keep vendor signature: $h ($(grep -m1 '^Authority=' <<<"$info" || echo unsigned))"
+    if [[ "$h" == claude ]]; then # must still be Anthropic's hardened, untouched signature
+      codesign --verify --strict -R '=anchor apple generic and certificate leaf[subject.OU] = "Q6L2SF6YDW"' "$MACOS/$h"
+      grep -q 'flags=0x10000(runtime)' <<<"$info" || { echo "claude is not hardened" >&2; exit 1; }
+    fi
   else
     sign "$MACOS/$h" "dev.homerun.helper.$h" "$ENT/$h.plist"
   fi
