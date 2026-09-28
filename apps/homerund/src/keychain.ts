@@ -82,7 +82,7 @@ function dict(pairs: Array<[Ref, Ref]>): Ref {
 export interface KeychainOpts {
   service: string;
   account: string;
-  /** e.g. "<TEAMID>.dev.homerun.shared"; only used with dataProtection. */
+  /** e.g. "<TEAMID>.com.angilyu.homerun.shared"; only used with dataProtection. */
   accessGroup?: string;
   dataProtection: boolean;
 }

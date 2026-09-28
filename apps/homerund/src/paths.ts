@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
-export const APP_ID = "dev.homerun.app";
+export const APP_ID = "com.angilyu.homerun";
 
 /** True when running as a `bun build --compile` executable. */
 export const isCompiled = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN");

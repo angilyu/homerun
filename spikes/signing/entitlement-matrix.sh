@@ -26,7 +26,7 @@ printf "binary\tentitlements\tresult\texit\n" > "$OUT"
 for name in homerund claude node uv; do
   for ent in none jit uem jit-uem dlv jit-dlv jit-uem-dlv; do
     exe="$W/$name-$ent/$name"; mkdir -p "$(dirname "$exe")"; cp "$BIN/$name-aarch64-apple-darwin" "$exe"
-    codesign --force -s - --options runtime --timestamp=none --identifier "dev.homerun.$name" \
+    codesign --force -s - --options runtime --timestamp=none --identifier "com.angilyu.homerun.$name" \
       --entitlements "$CAND/$ent.plist" "$exe" 2>/dev/null
     smoke $name "$exe"; rc=$?
     [[ $rc -eq 0 ]] && r=ok || r=FAIL

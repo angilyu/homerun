@@ -5,6 +5,11 @@ the measurements it asks for, and the design changes the results imply. `design.
 **not** edited here; every proposed change is listed in [Design impact](#design-impact) with the
 section it touches.
 
+> **Identifier renamed.** These results were recorded under the bundle identifier `dev.homerun.app`
+> (keychain group `TEAMID.dev.homerun.shared`, data dir `~/Library/Application Support/dev.homerun.app`).
+> It is now `com.angilyu.homerun` (see the "Changes from milestone 2" note in `design.md`). The old
+> identifier is left as-is below because it is what the evidence was captured with.
+
 Environment: macOS 26.7 on Apple silicon (arm64). Bun 1.4.2 (pinned). `@anthropic-ai/claude-agent-sdk` 0.3.278,
 bundled `claude` 2.1.278. Tauri 2 (CLI 2.11.5). Node 24.21.0, uv 0.12.19.
 
