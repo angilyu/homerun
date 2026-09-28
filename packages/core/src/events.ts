@@ -206,7 +206,11 @@ export const RunResumedEvent = named(
   persisted(
     "run.resumed",
     z.object({
-      reason: z.enum(["runtime_restart", "input_answered", "ambiguity_resolved"]),
+      /**
+       * runtime_restart: homerund restarted mid-run (§5.4). agent_exited: the agent process died
+       * while the runtime kept running, and the run resumed the same way.
+       */
+      reason: z.enum(["runtime_restart", "agent_exited", "input_answered", "ambiguity_resolved"]),
     }),
   ),
 );
