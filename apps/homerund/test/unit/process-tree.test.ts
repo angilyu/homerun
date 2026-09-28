@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { descendants, escapedTools, killRunTree, listProcs, orphanedTools, sessionMembers, sessionOf, type Proc } from "../../src/agent/claude/process-tree";
 import { pidAlive } from "../../src/agent/claude/spawn";
 import { until } from "../helpers";
@@ -74,8 +74,14 @@ describe("a dead claude's session (milestone 4)", () => {
   test("a tool shell that called setsid itself, as claude's Bash tool does, is found by the data dir once claude is gone", async () => {
     const dir = mkdtempSync(join(tmpdir(), "hr-pt-"));
     const configDir = join(dir, "claude-config");
+    const snapshot = join(configDir, "shell-snapshots", "snapshot-bash-1.sh");
+    mkdirSync(dirname(snapshot), { recursive: true });
+    writeFileSync(snapshot, ":\n");
     // A stand-in claude: a session leader that starts its tool shell detached (setsid), then dies.
-    const script = `const c = require("node:child_process").spawn("/bin/bash", ["-c", "source ${configDir}/shell-snapshots/s.sh 2>/dev/null; sleep 39"], { detached: true, stdio: "ignore" }); console.log(c.pid); process.exit(0);`;
+    // The shell command has the Bash tool's shape, ending in a builtin. Bash 5.1+ (Linux) execs the
+    // last command of `bash -c`, so a shell ending in `sleep` would become `sleep` and lose the path.
+    const shellCmd = `source ${snapshot} && eval 'sleep 39' && pwd -P >| /dev/null`;
+    const script = `const c = require("node:child_process").spawn("/bin/bash", ["-c", ${JSON.stringify(shellCmd)}], { detached: true, stdio: "ignore" }); console.log(c.pid); process.exit(0);`;
     const leader = spawn(process.execPath, ["-e", script], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
     const out = await new Promise<string>((res) => {
       let s = "";

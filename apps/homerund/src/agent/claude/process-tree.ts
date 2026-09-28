@@ -54,7 +54,9 @@ export function descendants(procs: readonly Proc[], roots: Iterable<number>): Pr
  * Processes started for tools under this data dir, plus their subtrees. They are recognised by
  * `claudeConfigDir` in the command: the Bash tool's shell sources a snapshot from
  * `CLAUDE_CONFIG_DIR/shell-snapshots`. (Its environment is scrubbed by claude, so it cannot be
- * matched on that.) The result drops `command`, which can hold tool input.
+ * matched on that.) The command stays the shell's while the tool runs: claude ends it with the
+ * builtin `pwd -P >| …`, so bash 5.1+ cannot exec the user's command in the shell's place. The
+ * result drops `command`, which can hold tool input.
  */
 export function escapedTools(procs: readonly Proc[], claudeConfigDir: string): Proc[] {
   const dirs = new Set([claudeConfigDir]);
