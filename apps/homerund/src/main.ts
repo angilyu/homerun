@@ -17,10 +17,11 @@ import { SqliteSessionStore } from "./store/sqlite-session-store";
 import { InputQueue, startRun } from "./agent/run";
 import { keychainGet, keychainSet, SEC_ERRORS, type KeychainOpts } from "./keychain";
 import { mcpProbe, type McpProbeSpec } from "./mcp-probe";
+import { PROTOCOL_VERSION } from "@homerun/core";
 
 declare const HOMERUND_VERSION: string;
 const VERSION = typeof HOMERUND_VERSION !== "undefined" ? HOMERUND_VERSION : "dev";
-const PROTOCOL = 1;
+const PROTOCOL = PROTOCOL_VERSION;
 const HANDSHAKE_TIMEOUT_MS = 2000;
 
 const log = (msg: string, data?: unknown) =>

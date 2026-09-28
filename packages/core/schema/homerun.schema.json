@@ -1,0 +1,5325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homerun.dev/schema/homerun.schema.json",
+  "title": "Homerun core schemas",
+  "description": "Generated from packages/core by scripts/gen.ts. Protocol v1, spec format 1. Do not edit.",
+  "$defs": {
+    "ActSpec": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 20000
+        }
+      },
+      "required": [
+        "model"
+      ]
+    },
+    "AmbiguousCallPrompt": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ambiguous_tool_call"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "tool_call_id": {
+          "$ref": "#/$defs/ToolCallId"
+        },
+        "class": {
+          "$ref": "#/$defs/ToolClass"
+        },
+        "input": {
+          "$ref": "#/$defs/Content"
+        }
+      },
+      "required": [
+        "type",
+        "tool",
+        "tool_call_id",
+        "class",
+        "input"
+      ]
+    },
+    "AmbiguousCallResponse": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ambiguous_tool_call"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "not_run"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "outcome"
+      ]
+    },
+    "AnswerVia": {
+      "type": "string",
+      "enum": [
+        "app",
+        "notification"
+      ]
+    },
+    "ApprovalPrompt": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "approval"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "tool_call_id": {
+          "$ref": "#/$defs/ToolCallId"
+        },
+        "class": {
+          "$ref": "#/$defs/ToolClass"
+        },
+        "input": {
+          "$ref": "#/$defs/Content"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "reason": {
+          "$ref": "#/$defs/ApprovalReason"
+        },
+        "offer_always": {
+          "type": "boolean"
+        },
+        "suggested_grant": {
+          "$ref": "#/$defs/GrantProposal"
+        }
+      },
+      "required": [
+        "type",
+        "tool",
+        "tool_call_id",
+        "class",
+        "input",
+        "reason",
+        "offer_always"
+      ]
+    },
+    "ApprovalReason": {
+      "type": "string",
+      "enum": [
+        "not_allowlisted",
+        "untrusted_tool",
+        "destructive",
+        "tainted_egress",
+        "web_read_only"
+      ]
+    },
+    "ApprovalResponse": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "approval"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny",
+            "allow_always"
+          ]
+        },
+        "grant": {
+          "$ref": "#/$defs/GrantProposal"
+        }
+      },
+      "required": [
+        "type",
+        "decision"
+      ]
+    },
+    "Authority": {
+      "type": "string",
+      "enum": [
+        "full",
+        "web_read_only"
+      ]
+    },
+    "BashCommandPattern": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^[^\\s*;&|`$<>](?:[^;&|`$<>\\n\\r]*[^\\s;&|`$<>])?$"
+    },
+    "BashPattern": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "$ref": "#/$defs/BashCommandPattern"
+        },
+        "class": {
+          "$ref": "#/$defs/ToolClass"
+        }
+      },
+      "required": [
+        "pattern",
+        "class"
+      ]
+    },
+    "BlobRef": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "blob"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hex"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "preview": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "expired": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "sha256",
+        "size",
+        "preview",
+        "expired"
+      ]
+    },
+    "BlobsGetParams": {
+      "type": "object",
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hex"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      },
+      "required": [
+        "sha256",
+        "offset",
+        "length"
+      ]
+    },
+    "BlobsGetResult": {
+      "type": "object",
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hex"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "data": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+        },
+        "eof": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sha256",
+        "size",
+        "offset",
+        "data",
+        "eof"
+      ]
+    },
+    "Budget": {
+      "type": "object",
+      "properties": {
+        "max_run_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10000
+        },
+        "monthly_cap_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100000
+        }
+      },
+      "required": [
+        "max_run_usd"
+      ]
+    },
+    "BuiltinTool": {
+      "type": "string",
+      "enum": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash",
+        "WebFetch",
+        "WebSearch",
+        "AskUserQuestion"
+      ]
+    },
+    "CallerRole": {
+      "type": "string",
+      "enum": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ]
+    },
+    "Capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]{0,63}$"
+    },
+    "CatchupPolicy": {
+      "type": "string",
+      "enum": [
+        "run_once",
+        "run_all",
+        "skip"
+      ]
+    },
+    "CheckResult": {
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "new_state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            }
+          ],
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "changed",
+        "evidence",
+        "new_state"
+      ]
+    },
+    "CheckSpec": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RuleCheck"
+        },
+        {
+          "$ref": "#/$defs/ModelCheck"
+        }
+      ]
+    },
+    "CliAccessDecisionNotification": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "approved": {
+          "type": "boolean"
+        },
+        "token": {
+          "$ref": "#/$defs/CliToken"
+        },
+        "token_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "request_id",
+        "approved"
+      ]
+    },
+    "CliAccessRequestedNotification": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "client": {
+          "$ref": "#/$defs/ClientInfo"
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "requested_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "request_id",
+        "client",
+        "hostname",
+        "requested_at"
+      ]
+    },
+    "CliApproveParams": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "request_id"
+      ]
+    },
+    "CliApproveResult": {
+      "type": "object",
+      "properties": {
+        "token_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "token_id"
+      ]
+    },
+    "CliDenyParams": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "request_id"
+      ]
+    },
+    "CliDenyResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "ClientInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "ClientMsgId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Generated by the sending client; makes messages.send and queued instructions idempotent"
+    },
+    "CliRequestAccessParams": {
+      "type": "object",
+      "properties": {
+        "client": {
+          "$ref": "#/$defs/ClientInfo"
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        }
+      },
+      "required": [
+        "client",
+        "hostname"
+      ]
+    },
+    "CliRequestAccessResult": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "request_id"
+      ]
+    },
+    "CliToken": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "CliTokenInfo": {
+      "type": "object",
+      "properties": {
+        "token_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "client": {
+          "$ref": "#/$defs/ClientInfo"
+        },
+        "created_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "last_used_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "token_id",
+        "client",
+        "created_at",
+        "last_used_at"
+      ]
+    },
+    "CliTokensListParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "CliTokensListResult": {
+      "type": "object",
+      "properties": {
+        "tokens": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CliTokenInfo"
+          }
+        }
+      },
+      "required": [
+        "tokens"
+      ]
+    },
+    "CliTokensRevokeParams": {
+      "type": "object",
+      "properties": {
+        "token_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "token_id"
+      ]
+    },
+    "CliTokensRevokeResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "Comparator": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "changed"
+            }
+          },
+          "required": [
+            "op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "equals"
+            },
+            "value": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "above"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "below"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "new_items"
+            },
+            "id_field": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "op"
+          ]
+        }
+      ]
+    },
+    "ConflictData": {
+      "type": "object",
+      "properties": {
+        "current_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "current_version"
+      ]
+    },
+    "Content": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/InlineContent"
+        },
+        {
+          "$ref": "#/$defs/BlobRef"
+        }
+      ]
+    },
+    "CronExpression": {
+      "type": "string",
+      "pattern": "^(@(hourly|daily|midnight|weekly|monthly|yearly|annually)|\\S+( \\S+){4})$",
+      "description": "5-field cron, validated by parseCron"
+    },
+    "CronSchedule": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "cron"
+        },
+        "cron": {
+          "$ref": "#/$defs/CronExpression"
+        },
+        "timezone": {
+          "$ref": "#/$defs/IanaTimezone"
+        },
+        "catchup": {
+          "$ref": "#/$defs/CatchupPolicy"
+        },
+        "max_catchup": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "kind",
+        "cron",
+        "timezone",
+        "catchup",
+        "max_catchup"
+      ]
+    },
+    "Device": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "account_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "device_id",
+        "platform",
+        "hostname",
+        "account_id",
+        "created_at"
+      ]
+    },
+    "DeviceId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "One install, one OS user (§12)"
+    },
+    "EgressDomain": {
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^(\\*\\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "EgressPolicy": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "allowlist"
+            },
+            "domains": {
+              "maxItems": 500,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/EgressDomain"
+              }
+            }
+          },
+          "required": [
+            "mode",
+            "domains"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "open"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        }
+      ]
+    },
+    "GrantClass": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "network"
+      ]
+    },
+    "GrantId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "GrantProposal": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "class": {
+          "$ref": "#/$defs/GrantClass"
+        }
+      },
+      "required": [
+        "tool",
+        "pattern",
+        "class"
+      ]
+    },
+    "GrantsCreateParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "grant": {
+          "$ref": "#/$defs/GrantProposal"
+        }
+      },
+      "required": [
+        "task_id",
+        "grant"
+      ]
+    },
+    "GrantsCreateResult": {
+      "type": "object",
+      "properties": {
+        "grant": {
+          "$ref": "#/$defs/ToolGrant"
+        }
+      },
+      "required": [
+        "grant"
+      ]
+    },
+    "GrantsListParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "include_revoked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    },
+    "GrantsListResult": {
+      "type": "object",
+      "properties": {
+        "grants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolGrant"
+          }
+        }
+      },
+      "required": [
+        "grants"
+      ]
+    },
+    "GrantsRevokeParams": {
+      "type": "object",
+      "properties": {
+        "grant_id": {
+          "$ref": "#/$defs/GrantId"
+        }
+      },
+      "required": [
+        "grant_id"
+      ]
+    },
+    "GrantsRevokeResult": {
+      "type": "object",
+      "properties": {
+        "revoked_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "revoked_at"
+      ]
+    },
+    "HelloAuth": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "launch_token"
+            },
+            "token": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "kind",
+            "token"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cli_token"
+            },
+            "token": {
+              "$ref": "#/$defs/CliToken"
+            }
+          },
+          "required": [
+            "kind",
+            "token"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "dev_token"
+            },
+            "token": {
+              "$ref": "#/$defs/CliToken"
+            }
+          },
+          "required": [
+            "kind",
+            "token"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "paired_device"
+            },
+            "device_id": {
+              "$ref": "#/$defs/DeviceId"
+            }
+          },
+          "required": [
+            "kind",
+            "device_id"
+          ]
+        }
+      ]
+    },
+    "HelloParams": {
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "$ref": "#/$defs/ProtocolRange"
+        },
+        "role": {
+          "$ref": "#/$defs/CallerRole"
+        },
+        "auth": {
+          "$ref": "#/$defs/HelloAuth"
+        },
+        "client": {
+          "$ref": "#/$defs/ClientInfo"
+        },
+        "capabilities": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          }
+        }
+      },
+      "required": [
+        "protocol",
+        "role",
+        "auth",
+        "client",
+        "capabilities"
+      ]
+    },
+    "HelloResult": {
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "runtime_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "role": {
+          "$ref": "#/$defs/CallerRole"
+        },
+        "capabilities": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          }
+        }
+      },
+      "required": [
+        "protocol",
+        "runtime_version",
+        "device_id",
+        "role",
+        "capabilities"
+      ]
+    },
+    "HomerunToolName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "HttpExtract": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "body"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "json_path"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "css"
+            },
+            "selector": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "regex"
+            },
+            "pattern": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "group": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "kind",
+            "pattern"
+          ]
+        }
+      ]
+    },
+    "IanaTimezone": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(\\/[A-Za-z0-9_+-]+)*$"
+    },
+    "IncompatibleProtocolData": {
+      "type": "object",
+      "properties": {
+        "supported": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ]
+        }
+      },
+      "required": [
+        "supported"
+      ]
+    },
+    "InlineContent": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "inline"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    "InputAnswerParams": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "response": {
+          "$ref": "#/$defs/InputResponse"
+        },
+        "via": {
+          "$ref": "#/$defs/AnswerVia"
+        }
+      },
+      "required": [
+        "request_id",
+        "response",
+        "via"
+      ]
+    },
+    "InputAnswerResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "applied"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "already_resolved"
+            },
+            "state": {
+              "$ref": "#/$defs/InputRequestState"
+            },
+            "answered_by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "state",
+            "answered_by"
+          ]
+        }
+      ]
+    },
+    "InputKind": {
+      "type": "string",
+      "enum": [
+        "approval",
+        "question"
+      ]
+    },
+    "InputListPendingParams": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        }
+      }
+    },
+    "InputListPendingResult": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputRequest"
+          }
+        }
+      },
+      "required": [
+        "requests"
+      ]
+    },
+    "InputPrompt": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ApprovalPrompt"
+        },
+        {
+          "$ref": "#/$defs/QuestionPrompt"
+        },
+        {
+          "$ref": "#/$defs/AmbiguousCallPrompt"
+        }
+      ]
+    },
+    "InputRequest": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "kind": {
+          "$ref": "#/$defs/InputKind"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolCallId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt": {
+          "$ref": "#/$defs/InputPrompt"
+        },
+        "state": {
+          "$ref": "#/$defs/InputRequestState"
+        },
+        "requested_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "answered_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InputResponse"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "answered_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "run_id",
+        "kind",
+        "tool_call_id",
+        "prompt",
+        "state",
+        "requested_at",
+        "expires_at",
+        "answered_at",
+        "response",
+        "answered_by"
+      ]
+    },
+    "InputRequestedEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "input.requested"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "prompt": {
+              "$ref": "#/$defs/InputPrompt"
+            },
+            "required_authority": {
+              "type": "string",
+              "enum": [
+                "any",
+                "full"
+              ]
+            },
+            "expires_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TimestampMs"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "request_id",
+            "prompt",
+            "required_authority",
+            "expires_at"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "InputRequestState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "answered",
+        "expired",
+        "cancelled"
+      ]
+    },
+    "InputResolvedEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "input.resolved"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "answered",
+                "expired",
+                "cancelled"
+              ]
+            },
+            "response": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InputResponse"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "answered_by": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeviceId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "surface": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Surface"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "via": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AnswerVia"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "request_id",
+            "state",
+            "response",
+            "answered_by",
+            "surface",
+            "via"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "InputResponse": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ApprovalResponse"
+        },
+        {
+          "$ref": "#/$defs/QuestionResponse"
+        },
+        {
+          "$ref": "#/$defs/AmbiguousCallResponse"
+        }
+      ]
+    },
+    "InputTimeoutPolicy": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "wait"
+            },
+            "remind_after_ms": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "action",
+            "remind_after_ms"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "deny"
+            },
+            "after_ms": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "action",
+            "after_ms"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "cancel_run"
+            },
+            "after_ms": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "action",
+            "after_ms"
+          ]
+        }
+      ]
+    },
+    "IntervalSchedule": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "interval"
+        },
+        "every_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10080
+        },
+        "catchup": {
+          "$ref": "#/$defs/CatchupPolicy"
+        },
+        "max_catchup": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "kind",
+        "every_minutes",
+        "catchup",
+        "max_catchup"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LivePayload": {
+      "$ref": "#/$defs/RpcMessage"
+    },
+    "LiveThreadEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/MessageDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/RunStatusEvent"
+        }
+      ]
+    },
+    "McpServerName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+    },
+    "McpServerSpec": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/McpServerName"
+            },
+            "transport": {
+              "type": "string",
+              "const": "stdio"
+            },
+            "runner": {
+              "type": "string",
+              "enum": [
+                "npx",
+                "uvx"
+              ]
+            },
+            "package": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 214
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]*$"
+            },
+            "args": {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "env": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "catalog_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "id",
+            "transport",
+            "runner",
+            "package",
+            "version",
+            "args",
+            "env"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/McpServerName"
+            },
+            "transport": {
+              "type": "string",
+              "const": "http"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https:\\/\\/"
+            },
+            "catalog_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "id",
+            "transport",
+            "url"
+          ]
+        }
+      ]
+    },
+    "McpToolName": {
+      "type": "string",
+      "pattern": "^mcp__[a-z0-9][a-z0-9_-]{0,62}__[A-Za-z0-9_.-]{1,128}$"
+    },
+    "MessageDeltaEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "after_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "message.delta"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "message_id": {
+              "$ref": "#/$defs/MessageId"
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 100000
+            }
+          },
+          "required": [
+            "message_id",
+            "index",
+            "text"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "after_seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "MessageFinalEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "message.final"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "message_id": {
+              "$ref": "#/$defs/MessageId"
+            },
+            "role": {
+              "type": "string",
+              "const": "assistant"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1000000
+            },
+            "model": {
+              "$ref": "#/$defs/ModelId"
+            },
+            "parent_tool_call_id": {
+              "$ref": "#/$defs/ToolCallId"
+            }
+          },
+          "required": [
+            "message_id",
+            "role",
+            "text"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "MessageId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Assistant message id from the SDK; ties deltas to their final message"
+    },
+    "MessagesSendParams": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "client_msg_id": {
+          "$ref": "#/$defs/ClientMsgId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "sent_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "thread_id",
+        "client_msg_id",
+        "text"
+      ]
+    },
+    "MessagesSendResult": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "started_run",
+            "steered",
+            "held"
+          ]
+        }
+      },
+      "required": [
+        "seq",
+        "run_id",
+        "disposition"
+      ]
+    },
+    "ModelCheck": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "model"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelId"
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 20000
+        }
+      },
+      "required": [
+        "kind",
+        "model"
+      ],
+      "description": "One cheap query() that returns CheckResult (§8.3)"
+    },
+    "ModelChoice": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/ModelId"
+        },
+        "fallback_model": {
+          "$ref": "#/$defs/ModelId"
+        }
+      },
+      "required": [
+        "model"
+      ]
+    },
+    "ModelId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "A Claude model id or alias. Free-form, because Bedrock, Vertex and Foundry ids differ (§7.2)"
+    },
+    "MonitorSpec": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "monitor"
+        },
+        "format": {
+          "type": "number",
+          "const": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolsSpec"
+        },
+        "policy": {
+          "$ref": "#/$defs/TaskPolicy"
+        },
+        "schedule": {
+          "$ref": "#/$defs/ScheduleSpec"
+        },
+        "check": {
+          "$ref": "#/$defs/CheckSpec"
+        },
+        "act": {
+          "$ref": "#/$defs/ActSpec"
+        }
+      },
+      "required": [
+        "kind",
+        "format",
+        "name",
+        "prompt",
+        "budget",
+        "tools",
+        "policy",
+        "schedule",
+        "check",
+        "act"
+      ]
+    },
+    "MonitorsStateGetParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    },
+    "MonitorsStateGetResult": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MonitorState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "MonitorsStateResetParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "task_id",
+        "expected_version"
+      ]
+    },
+    "MonitorsStateResetResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "MonitorsStateSetParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            }
+          ],
+          "$ref": "#/$defs/JsonValue"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "task_id",
+        "state",
+        "expected_version"
+      ]
+    },
+    "MonitorsStateSetResult": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/MonitorState"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "MonitorState": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            }
+          ],
+          "$ref": "#/$defs/JsonValue"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "last_run_id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "task_id",
+        "state",
+        "version",
+        "last_run_id",
+        "updated_at"
+      ]
+    },
+    "Origin": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "surface": {
+          "$ref": "#/$defs/Surface"
+        }
+      },
+      "required": [
+        "device_id",
+        "surface"
+      ],
+      "description": "The authenticated device that sent something (§9.9), never taken from message content"
+    },
+    "PairingCode": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,64}$",
+      "description": "One-time secret shown only in the QR code. Format is not fixed by the design; see README gaps."
+    },
+    "PairingQrPayload": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "static_public_key": {
+          "$ref": "#/$defs/StaticPublicKey"
+        },
+        "pairing_code": {
+          "$ref": "#/$defs/PairingCode"
+        }
+      },
+      "required": [
+        "v",
+        "device_id",
+        "static_public_key",
+        "pairing_code"
+      ]
+    },
+    "PersistedThreadEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UserMessageEvent"
+        },
+        {
+          "$ref": "#/$defs/MessageFinalEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolCallEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolResultEvent"
+        },
+        {
+          "$ref": "#/$defs/InputRequestedEvent"
+        },
+        {
+          "$ref": "#/$defs/InputResolvedEvent"
+        },
+        {
+          "$ref": "#/$defs/RunStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/RunResumedEvent"
+        },
+        {
+          "$ref": "#/$defs/RunCancelledEvent"
+        },
+        {
+          "$ref": "#/$defs/RunEndEvent"
+        },
+        {
+          "$ref": "#/$defs/ScheduleMissedEvent"
+        }
+      ]
+    },
+    "PingParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "PingResult": {
+      "type": "object",
+      "properties": {
+        "pong": {
+          "type": "boolean",
+          "const": true
+        },
+        "runtime_version": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "pong",
+        "runtime_version",
+        "protocol"
+      ]
+    },
+    "Platform": {
+      "type": "string",
+      "enum": [
+        "macos",
+        "windows",
+        "linux"
+      ]
+    },
+    "PowerDidWakeNotification": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "slept_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "at",
+        "slept_at"
+      ]
+    },
+    "PowerWillSleepNotification": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "at"
+      ]
+    },
+    "ProtocolRange": {
+      "type": "object",
+      "properties": {
+        "min": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ]
+    },
+    "PushCategory": {
+      "type": "string",
+      "enum": [
+        "input_request",
+        "run_finished",
+        "run_failed",
+        "monitor_changed",
+        "schedule_missed"
+      ]
+    },
+    "Question": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "header": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "options": {
+          "minItems": 2,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          }
+        },
+        "multi_select": {
+          "type": "boolean"
+        },
+        "allow_freeform": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "question",
+        "options",
+        "multi_select",
+        "allow_freeform"
+      ]
+    },
+    "QuestionAnswer": {
+      "type": "object",
+      "properties": {
+        "selected": {
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000
+        }
+      },
+      "required": [
+        "selected"
+      ]
+    },
+    "QuestionOption": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "QuestionPrompt": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "question"
+        },
+        "tool_call_id": {
+          "$ref": "#/$defs/ToolCallId"
+        },
+        "questions": {
+          "minItems": 1,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Question"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "questions"
+      ]
+    },
+    "QuestionResponse": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "question"
+        },
+        "answers": {
+          "minItems": 1,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuestionAnswer"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "answers"
+      ]
+    },
+    "RelayEnvelopeHeader": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "live",
+            "sealed"
+          ]
+        },
+        "to_device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "from_device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "v",
+        "mode",
+        "to_device_id",
+        "from_device_id"
+      ]
+    },
+    "RelayPresence": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "presence"
+        },
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "last_seen_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "device_id",
+        "online",
+        "last_seen_at"
+      ]
+    },
+    "RequestId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "An input request (§5.6)"
+    },
+    "RetentionDays": {
+      "anyOf": [
+        {
+          "type": "number",
+          "const": 7
+        },
+        {
+          "type": "number",
+          "const": 30
+        },
+        {
+          "type": "number",
+          "const": 90
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "RootPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(\\/|~\\/|~$|[A-Za-z]:[\\\\/])"
+    },
+    "RpcError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "data": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "RpcFailure": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RpcId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/RpcError"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "RpcId": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      ],
+      "description": "Request id; null is not allowed"
+    },
+    "RpcMessage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RpcRequest"
+        },
+        {
+          "$ref": "#/$defs/RpcNotification"
+        },
+        {
+          "$ref": "#/$defs/RpcSuccess"
+        },
+        {
+          "$ref": "#/$defs/RpcFailure"
+        }
+      ]
+    },
+    "RpcNotification": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "RpcRequest": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "id": {
+          "$ref": "#/$defs/RpcId"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "params": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method"
+      ]
+    },
+    "RpcResponse": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RpcSuccess"
+        },
+        {
+          "$ref": "#/$defs/RpcFailure"
+        }
+      ]
+    },
+    "RpcSuccess": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0"
+        },
+        "id": {
+          "$ref": "#/$defs/RpcId"
+        },
+        "result": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "RuleCheck": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "rule"
+        },
+        "source": {
+          "$ref": "#/$defs/RuleSource"
+        },
+        "normalize": {
+          "type": "object",
+          "properties": {
+            "trim": {
+              "type": "boolean"
+            },
+            "collapse_whitespace": {
+              "type": "boolean"
+            },
+            "lowercase": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "trim",
+            "collapse_whitespace",
+            "lowercase"
+          ]
+        },
+        "comparator": {
+          "$ref": "#/$defs/Comparator"
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "comparator"
+      ],
+      "description": "Evaluated by the runtime with no model call (§8.3)"
+    },
+    "RuleSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "http"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https?:\\/\\/"
+            },
+            "extract": {
+              "$ref": "#/$defs/HttpExtract"
+            }
+          },
+          "required": [
+            "type",
+            "url",
+            "extract"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "feed"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https?:\\/\\/"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "rss",
+                "atom",
+                "auto"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "url",
+            "format"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "file_hash"
+            },
+            "path": {
+              "$ref": "#/$defs/RootPath"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "homerun_tool"
+            },
+            "tool": {
+              "$ref": "#/$defs/HomerunToolName"
+            },
+            "args": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "required": [
+            "type",
+            "tool",
+            "args"
+          ]
+        }
+      ]
+    },
+    "Run": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_version": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sdk_session_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SdkSessionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "trigger": {
+          "$ref": "#/$defs/RunTrigger"
+        },
+        "origin_device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authority": {
+          "$ref": "#/$defs/Authority"
+        },
+        "scheduled_for": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dedupe_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "state": {
+          "$ref": "#/$defs/RunState"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "check_result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "claude_pid": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "run_id",
+        "thread_id",
+        "task_id",
+        "task_version",
+        "sdk_session_id",
+        "device_id",
+        "trigger",
+        "origin_device",
+        "authority",
+        "scheduled_for",
+        "dedupe_key",
+        "attempt",
+        "state",
+        "started_at",
+        "ended_at",
+        "outcome",
+        "error",
+        "check_result",
+        "cost_usd",
+        "claude_pid"
+      ]
+    },
+    "RunCancelledEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "run.cancelled"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Origin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "user",
+                "input_timeout",
+                "budget_cap"
+              ]
+            }
+          },
+          "required": [
+            "by",
+            "reason"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "RunEndEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "run.end"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "$ref": "#/$defs/TerminalRunState"
+            },
+            "outcome": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RunOutcome"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RunError"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "authority": {
+              "$ref": "#/$defs/Authority"
+            },
+            "cost_usd": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "outcome",
+            "error",
+            "authority",
+            "cost_usd"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "RunError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 10000
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "RunId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "RunOutcome": {
+      "type": "string",
+      "enum": [
+        "changed",
+        "no_change"
+      ],
+      "description": "Monitors only (§8.3)"
+    },
+    "RunResumedEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "run.resumed"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "enum": [
+                "runtime_restart",
+                "input_answered",
+                "ambiguity_resolved"
+              ]
+            }
+          },
+          "required": [
+            "reason"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "RunsGetParams": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "run_id"
+      ]
+    },
+    "RunsGetResult": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/Run"
+        }
+      },
+      "required": [
+        "run"
+      ]
+    },
+    "RunsListParams": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "states": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RunState"
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "RunsListResult": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Run"
+          }
+        }
+      },
+      "required": [
+        "runs"
+      ]
+    },
+    "RunsRetryParams": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "run_id"
+      ]
+    },
+    "RunsRetryResult": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "run_id"
+      ]
+    },
+    "RunsStopParams": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "run_id"
+      ]
+    },
+    "RunsStopResult": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/RunState"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "RunStartedEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "run.started"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "trigger": {
+              "$ref": "#/$defs/RunTrigger"
+            },
+            "authority": {
+              "$ref": "#/$defs/Authority"
+            },
+            "origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Origin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "task_version": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scheduled_for": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TimestampMs"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "attempt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "trigger",
+            "authority",
+            "origin",
+            "task_id",
+            "task_version",
+            "scheduled_for",
+            "attempt"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "RunState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "waiting_input",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "abandoned"
+      ],
+      "description": "pending = queued for a slot; abandoned = given up without an agent outcome"
+    },
+    "RunStatusEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "after_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "run.status"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "$ref": "#/$defs/RunState"
+            },
+            "detail": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "retrying_model",
+                "rate_limited",
+                "waiting_input",
+                "stopping"
+              ]
+            },
+            "queue_position": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "retry_at": {
+              "$ref": "#/$defs/TimestampMs"
+            }
+          },
+          "required": [
+            "state",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "after_seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "RunTrigger": {
+      "type": "string",
+      "enum": [
+        "message",
+        "manual",
+        "schedule",
+        "catchup"
+      ]
+    },
+    "ScheduleCoverage": {
+      "type": "object",
+      "properties": {
+        "schedule_id": {
+          "$ref": "#/$defs/ScheduleId"
+        },
+        "day": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "expected": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ran": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "missed_asleep": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "missed_not_running": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "schedule_id",
+        "day",
+        "expected",
+        "ran",
+        "missed_asleep",
+        "missed_not_running"
+      ]
+    },
+    "ScheduleId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "ScheduleMissedEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "schedule.missed"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "schedule_id": {
+              "$ref": "#/$defs/ScheduleId"
+            },
+            "scheduled_for": {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "asleep",
+                "not_running",
+                "skipped_by_policy"
+              ]
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "schedule_id",
+            "scheduled_for",
+            "reason",
+            "count"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "SchedulesCoverageParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "from_day": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "to_day": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        }
+      },
+      "required": [
+        "task_id",
+        "from_day",
+        "to_day"
+      ]
+    },
+    "SchedulesCoverageResult": {
+      "type": "object",
+      "properties": {
+        "days": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScheduleCoverage"
+          }
+        }
+      },
+      "required": [
+        "days"
+      ]
+    },
+    "SchedulesListParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        }
+      }
+    },
+    "SchedulesListResult": {
+      "type": "object",
+      "properties": {
+        "schedules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScheduleState"
+          }
+        }
+      },
+      "required": [
+        "schedules"
+      ]
+    },
+    "ScheduleSpec": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CronSchedule"
+        },
+        {
+          "$ref": "#/$defs/IntervalSchedule"
+        }
+      ]
+    },
+    "SchedulesSetEnabledParams": {
+      "type": "object",
+      "properties": {
+        "schedule_id": {
+          "$ref": "#/$defs/ScheduleId"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schedule_id",
+        "enabled"
+      ]
+    },
+    "SchedulesSetEnabledResult": {
+      "type": "object",
+      "properties": {
+        "schedule": {
+          "$ref": "#/$defs/ScheduleState"
+        }
+      },
+      "required": [
+        "schedule"
+      ]
+    },
+    "ScheduleState": {
+      "type": "object",
+      "properties": {
+        "schedule_id": {
+          "$ref": "#/$defs/ScheduleId"
+        },
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "next_fire_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_fired_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schedule_id",
+        "task_id",
+        "enabled",
+        "next_fire_at",
+        "last_fired_at"
+      ]
+    },
+    "SdkSessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Claude Agent SDK session id; opaque"
+    },
+    "SealedAnswer": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "answer"
+        },
+        "request_id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "response": {
+          "$ref": "#/$defs/InputResponse"
+        },
+        "via": {
+          "type": "string",
+          "const": "notification"
+        }
+      },
+      "required": [
+        "type",
+        "request_id",
+        "response",
+        "via"
+      ]
+    },
+    "SealedBody": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SealedInstruction"
+        },
+        {
+          "$ref": "#/$defs/SealedPush"
+        },
+        {
+          "$ref": "#/$defs/SealedAnswer"
+        }
+      ]
+    },
+    "SealedInner": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "msg_id": {
+          "$ref": "#/$defs/SealedMsgId"
+        },
+        "sender_device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "created_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "body": {
+          "$ref": "#/$defs/SealedBody"
+        }
+      },
+      "required": [
+        "v",
+        "msg_id",
+        "sender_device_id",
+        "created_at",
+        "expires_at",
+        "body"
+      ]
+    },
+    "SealedInstruction": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "instruction"
+        },
+        "thread_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "client_msg_id": {
+          "$ref": "#/$defs/ClientMsgId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        }
+      },
+      "required": [
+        "type",
+        "thread_id",
+        "client_msg_id",
+        "text"
+      ]
+    },
+    "SealedMsgId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "SealedPush": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "push"
+        },
+        "category": {
+          "$ref": "#/$defs/PushCategory"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "request_id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "actions": {
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ]
+          }
+        }
+      },
+      "required": [
+        "type",
+        "category",
+        "title",
+        "body"
+      ]
+    },
+    "SecretName": {
+      "type": "string",
+      "enum": [
+        "anthropic_api_key",
+        "device_static_key",
+        "refresh_token"
+      ],
+      "description": "Keychain items the shell holds for the runtime (§11)"
+    },
+    "SecretsClearParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/SecretName"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "SecretsClearResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "SecretsPersistParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/SecretName"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "SecretsPersistResult": {
+      "type": "object",
+      "properties": {
+        "stored": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "stored"
+      ]
+    },
+    "SecretsSetParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/SecretName"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "SecretsSetResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "Seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "SessionSpec": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "session"
+        },
+        "format": {
+          "type": "number",
+          "const": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolsSpec"
+        },
+        "policy": {
+          "$ref": "#/$defs/TaskPolicy"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        }
+      },
+      "required": [
+        "kind",
+        "format",
+        "name",
+        "prompt",
+        "budget",
+        "tools",
+        "policy",
+        "model"
+      ]
+    },
+    "Sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "StaticPublicKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "Surface": {
+      "type": "string",
+      "enum": [
+        "desktop",
+        "cli",
+        "ios",
+        "web"
+      ],
+      "description": "Where a message or answer was sent from. Only 'web' has reduced authority (§9.9)"
+    },
+    "Task": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/TaskKind"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "spec": {
+          "$ref": "#/$defs/TaskSpec"
+        },
+        "archived_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "task_id",
+        "device_id",
+        "kind",
+        "name",
+        "version",
+        "spec",
+        "archived_at"
+      ]
+    },
+    "TaskId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "TaskKind": {
+      "type": "string",
+      "enum": [
+        "session",
+        "monitor"
+      ]
+    },
+    "TaskPolicy": {
+      "type": "object",
+      "properties": {
+        "roots": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RootPath"
+          }
+        },
+        "egress": {
+          "$ref": "#/$defs/EgressPolicy"
+        },
+        "bash_patterns": {
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BashPattern"
+          }
+        },
+        "use_shell_environment": {
+          "type": "boolean"
+        },
+        "input_timeout": {
+          "$ref": "#/$defs/InputTimeoutPolicy"
+        },
+        "retention_days": {
+          "$ref": "#/$defs/RetentionDays"
+        }
+      },
+      "required": [
+        "roots",
+        "egress",
+        "bash_patterns",
+        "use_shell_environment",
+        "input_timeout",
+        "retention_days"
+      ]
+    },
+    "TasksArchiveParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    },
+    "TasksArchiveResult": {
+      "type": "object",
+      "properties": {
+        "archived_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "archived_at"
+      ]
+    },
+    "TasksCreateParams": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/$defs/TaskSpec"
+        },
+        "from_thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "TasksCreateResult": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "$ref": "#/$defs/Task"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        }
+      },
+      "required": [
+        "task",
+        "thread_id"
+      ]
+    },
+    "TasksGetParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    },
+    "TasksGetResult": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "$ref": "#/$defs/Task"
+        }
+      },
+      "required": [
+        "task"
+      ]
+    },
+    "TasksGetVersionParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "task_id",
+        "version"
+      ]
+    },
+    "TasksGetVersionResult": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/TaskVersion"
+        }
+      },
+      "required": [
+        "version"
+      ]
+    },
+    "TasksListParams": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TaskKind"
+        },
+        "include_archived": {
+          "type": "boolean"
+        }
+      }
+    },
+    "TasksListResult": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Task"
+          }
+        }
+      },
+      "required": [
+        "tasks"
+      ]
+    },
+    "TaskSpec": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SessionSpec"
+        },
+        {
+          "$ref": "#/$defs/MonitorSpec"
+        }
+      ]
+    },
+    "TasksRunNowParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    },
+    "TasksRunNowResult": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        }
+      },
+      "required": [
+        "run_id",
+        "thread_id"
+      ]
+    },
+    "TasksUpdateParams": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "spec": {
+          "$ref": "#/$defs/TaskSpec"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "task_id",
+        "spec",
+        "expected_version"
+      ]
+    },
+    "TasksUpdateResult": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "$ref": "#/$defs/Task"
+        }
+      },
+      "required": [
+        "task"
+      ]
+    },
+    "TaskVersion": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "spec": {
+          "$ref": "#/$defs/TaskSpec"
+        },
+        "created_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "task_id",
+        "version",
+        "spec",
+        "created_at"
+      ],
+      "description": "Immutable history of edits (§6 task_versions)"
+    },
+    "TerminalRunState": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "abandoned"
+      ]
+    },
+    "Thread": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "updated_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "thread_id",
+        "task_id",
+        "title",
+        "last_seq",
+        "updated_at"
+      ]
+    },
+    "ThreadEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UserMessageEvent"
+        },
+        {
+          "$ref": "#/$defs/MessageFinalEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolCallEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolResultEvent"
+        },
+        {
+          "$ref": "#/$defs/InputRequestedEvent"
+        },
+        {
+          "$ref": "#/$defs/InputResolvedEvent"
+        },
+        {
+          "$ref": "#/$defs/RunStartedEvent"
+        },
+        {
+          "$ref": "#/$defs/RunResumedEvent"
+        },
+        {
+          "$ref": "#/$defs/RunCancelledEvent"
+        },
+        {
+          "$ref": "#/$defs/RunEndEvent"
+        },
+        {
+          "$ref": "#/$defs/ScheduleMissedEvent"
+        },
+        {
+          "$ref": "#/$defs/MessageDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/RunStatusEvent"
+        }
+      ]
+    },
+    "ThreadEventNotification": {
+      "type": "object",
+      "properties": {
+        "subscription_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "event": {
+          "$ref": "#/$defs/ThreadEvent"
+        }
+      },
+      "required": [
+        "subscription_id",
+        "event"
+      ]
+    },
+    "ThreadId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "ThreadsChangedNotification": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "$ref": "#/$defs/ThreadSummary"
+        }
+      },
+      "required": [
+        "summary"
+      ]
+    },
+    "ThreadsCreateParams": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "ThreadsCreateResult": {
+      "type": "object",
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "thread"
+      ]
+    },
+    "ThreadsHistoryParams": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "before_seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [
+        "thread_id"
+      ]
+    },
+    "ThreadsHistoryResult": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PersistedThreadEvent"
+          }
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "events",
+        "has_more"
+      ]
+    },
+    "ThreadsListParams": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "updated_before": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        }
+      }
+    },
+    "ThreadsListResult": {
+      "type": "object",
+      "properties": {
+        "threads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ThreadSummary"
+          }
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "threads",
+        "has_more"
+      ]
+    },
+    "ThreadsMarkReadParams": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq"
+      ]
+    },
+    "ThreadsMarkReadResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "ThreadsSubscribeParams": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "after_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "thread_id",
+        "after_seq"
+      ]
+    },
+    "ThreadsSubscribeResult": {
+      "type": "object",
+      "properties": {
+        "subscription_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "last_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "subscription_id",
+        "last_seq"
+      ]
+    },
+    "ThreadSummary": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "updated_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "last_message": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "seq": {
+                  "$ref": "#/$defs/Seq"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "preview": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "ts": {
+                  "$ref": "#/$defs/TimestampMs"
+                }
+              },
+              "required": [
+                "seq",
+                "role",
+                "preview",
+                "ts"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unread_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "input_pending": {
+          "type": "boolean"
+        },
+        "active_run": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "run_id": {
+                  "$ref": "#/$defs/RunId"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "running",
+                    "waiting_input"
+                  ]
+                }
+              },
+              "required": [
+                "run_id",
+                "state"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "task_id",
+        "title",
+        "last_seq",
+        "updated_at",
+        "last_message",
+        "unread_count",
+        "input_pending",
+        "active_run"
+      ]
+    },
+    "ThreadsUnsubscribeParams": {
+      "type": "object",
+      "properties": {
+        "subscription_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "subscription_id"
+      ]
+    },
+    "ThreadsUnsubscribeResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "TimestampMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Milliseconds since the Unix epoch, UTC"
+    },
+    "ToolCallEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "tool.call"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "tool_call_id": {
+              "$ref": "#/$defs/ToolCallId"
+            },
+            "tool": {
+              "$ref": "#/$defs/ToolName"
+            },
+            "class": {
+              "$ref": "#/$defs/ToolClass"
+            },
+            "mcp_server": {
+              "$ref": "#/$defs/McpServerName"
+            },
+            "input": {
+              "$ref": "#/$defs/Content"
+            },
+            "policy": {
+              "type": "string",
+              "enum": [
+                "allowed",
+                "granted",
+                "needs_approval",
+                "denied"
+              ]
+            },
+            "grant_id": {
+              "$ref": "#/$defs/GrantId"
+            },
+            "parent_tool_call_id": {
+              "$ref": "#/$defs/ToolCallId"
+            }
+          },
+          "required": [
+            "tool_call_id",
+            "tool",
+            "class",
+            "input",
+            "policy"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "ToolCallId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "The SDK's tool_use id; opaque"
+    },
+    "ToolClass": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "destructive",
+        "network"
+      ]
+    },
+    "ToolGrant": {
+      "type": "object",
+      "properties": {
+        "grant_id": {
+          "$ref": "#/$defs/GrantId"
+        },
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "class": {
+          "$ref": "#/$defs/GrantClass"
+        },
+        "granted_by": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "granted_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "grant_id",
+        "task_id",
+        "tool",
+        "pattern",
+        "class",
+        "granted_by",
+        "granted_at",
+        "revoked_at"
+      ]
+    },
+    "ToolName": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BuiltinTool"
+        },
+        {
+          "$ref": "#/$defs/McpToolName"
+        }
+      ]
+    },
+    "ToolResultEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "tool.result"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "tool_call_id": {
+              "$ref": "#/$defs/ToolCallId"
+            },
+            "status": {
+              "$ref": "#/$defs/ToolResultStatus"
+            },
+            "output": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Content"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "type": "string",
+              "maxLength": 10000
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "tool_call_id",
+            "status",
+            "output"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "ToolResultStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "error",
+        "denied",
+        "resolved_completed",
+        "resolved_not_run",
+        "interrupted_retryable"
+      ]
+    },
+    "ToolsSpec": {
+      "type": "object",
+      "properties": {
+        "builtin": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuiltinTool"
+          }
+        },
+        "mcp_servers": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/McpServerSpec"
+          }
+        },
+        "homerun": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HomerunToolName"
+          }
+        }
+      },
+      "required": [
+        "builtin",
+        "mcp_servers",
+        "homerun"
+      ]
+    },
+    "UserMessageEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "user.message"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "client_msg_id": {
+              "$ref": "#/$defs/ClientMsgId"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100000
+            },
+            "origin": {
+              "$ref": "#/$defs/Origin"
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "started_run",
+                "steered",
+                "held"
+              ]
+            },
+            "sent_at": {
+              "$ref": "#/$defs/TimestampMs"
+            }
+          },
+          "required": [
+            "client_msg_id",
+            "text",
+            "origin",
+            "disposition"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    }
+  }
+}
