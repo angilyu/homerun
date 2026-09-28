@@ -588,7 +588,8 @@ The same selftest on a debug VM (0.0.3 = 0.0.2 plus exit logging, unquarantined)
 this data dir. Two new problems appeared only on the clean machine:
 - **Lost writes under `…/dev.homerun.app`** ([entry 26](#added-by-the-clean-machine-run)). With the default data dir,
   5 of 10 cold runs lost log lines from both the shell and the runtime after npm dropped `better_sqlite3.node` into it;
-  0 of 10 with `…/Homerun`. So phase 2 uses `HOMERUN_DATA_DIR=~/Library/Application Support/Homerun`.
+  0 of 10 with `…/Homerun`. So phase 2 used `HOMERUN_DATA_DIR=~/Library/Application Support/Homerun`, which is
+  now the default (milestone 2).
 - **The "Install Command Line Developer Tools" dialog** opens during the first `uvx` run ([entry 27](#added-by-the-clean-machine-run)).
   `uvx` still succeeds. The harness reports it as `clt-prompt after run`; it was `none` before launch.
 
@@ -885,8 +886,9 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
     whether a new identifier alone avoids the problem; the decoupled data dir is the tested fix.
     Evidence: `.spike/results/tart-clean-vm/datadir-app-suffix-ab.txt`, `eperm-fs_usage-excerpt.txt`.
     **Adopted in milestone 2:** the data dir is `~/Library/Application Support/Homerun`, decoupled from the
-    bundle identifier, which is now `com.angilyu.homerun` (no `.app` suffix either). This spike branch still
-    uses `…/com.angilyu.homerun` after the rename, which also doesn't end in `.app`.
+    bundle identifier, which is now `com.angilyu.homerun` (no `.app` suffix either). The Developer ID builds
+    (items 6–8) were made before this work was rebased onto milestone 2, so their default data dir was
+    `…/com.angilyu.homerun`, which also doesn't end in `.app`; the clean-VM harness's phase 2 used `…/Homerun`.
 27. **First `uvx` use opens the "Install Command Line Developer Tools" dialog on a clean Mac** (§5.5, entries 21
     and 22). While installing its managed CPython, uv runs `install_name_tool -id …/libpython3.14.dylib`. It looks
     next to itself first (`Contents/MacOS/install_name_tool`: ENOENT), then runs `/usr/bin/install_name_tool`,
@@ -933,4 +935,4 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
 | Item 6 Gatekeeper on the clean VM | a VM with "App Store & Known Developers" (entry 29) | `KEEP_VM=1 scripts/macos/tart-clean-vm.sh dist/macos/devid-0.0.1/Homerun.dmg`, open the kept VM with a window, pick "App Store & Known Developers" in Privacy & Security, reinstall with quarantine and click **Open** on the first-launch prompt. Notarization, stapling and `spctl` on this Mac already pass |
 | Item 9 launch at login | a logout/login | manual steps in item 9 |
 | Item 10 with quarantine kept | same as item 6 on the VM | phase 1 of the same run; phase 2 (quarantine removed) already passes with the Developer ID build |
-| Entries 26, 27 fixes | milestone 1 | move the default data dir; add the `install_name_tool` shim and curated `PATH`; rerun `tart-clean-vm.sh` and expect `clt-prompt after run: none` |
+| Entry 27 fix | milestone 1 (entry 26 was fixed in milestone 2) | add the `install_name_tool` shim and curated `PATH`; rerun `tart-clean-vm.sh` and expect `clt-prompt after run: none` |
