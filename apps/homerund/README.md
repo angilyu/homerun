@@ -62,6 +62,23 @@ bun run src/main.ts serve --no-launch-token --dev-auto-approve   # development
   - 3: another runtime is already serving this data dir;
   - 64: usage, or a development-only switch in a release build.
 
+### Dev shell
+
+Until the desktop app exists, `scripts/dev-shell.ts` stands in for the shell:
+
+```sh
+pnpm --filter @homerun/homerund dev [--no-key] [-- <serve switches>]
+```
+
+- It starts `homerund serve` from source and writes a fresh launch token to its stdin.
+- It then sends the API key with `secrets.set` on the shell's connection. The key
+  comes from `ANTHROPIC_API_KEY` in its own environment (which is removed before
+  homerund is spawned), or from a hidden prompt. It never reads a file.
+- `--no-key` starts without a key, for use with `HOMERUN_ANTHROPIC_BASE_URL` and a
+  replay server.
+- Ctrl-C closes homerund's stdin, and the runtime shuts down gracefully.
+- Drive it with the development CLI ([`apps/cli`](../cli)), e.g. `pnpm homerun status`.
+
 ### Build channel
 
 The build channel fails closed:
