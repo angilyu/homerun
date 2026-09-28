@@ -58,10 +58,15 @@ Params, results and callers are defined in `@homerun/core` (`src/protocol/method
 
 At start, before any run resumes, the runtime:
 1. Kills what a killed runtime or `claude` left running (§5.1). It kills each recorded
-   process group that is still alive, and the tool processes that escaped it: the process
-   tree, plus every process still in the dead `claude`'s session. `claude` is spawned
-   detached, so its pid is its session id. A tool shell keeps that session even after
-   `claude` dies and it is reparented, so an orphan can be found without any marker.
+   process group that is still alive, and the tool processes that escaped it:
+   - the process tree;
+   - every process still in the dead `claude`'s session. `claude` is spawned detached, so
+     its pid is its session id;
+   - the Bash tool's shells, which call `setsid` themselves and so leave that session. They
+     are found by this data dir's `claude-config` path in their command (the snapshot they
+     source), unless a live `claude` still owns them (`orphanedTools`).
+
+   The same happens when `claude` dies on its own while the runtime keeps running.
 2. Recovers each interrupted run from `thread_events`:
    - a `tool.call` with no `tool.result` for a read-class tool gets `interrupted_retryable`;
    - any other such call parks the run in `waiting_input`, with one *"Did this happen?"*
@@ -89,7 +94,13 @@ result is the user's answer, the recorded result (the SDK mirror can lose the la
 explicit continuation message, before any held messages.
 
 A run stopped while it waits gets an "outcome unknown" result for each open call, so the
-thread's next run resumes a well-formed transcript.
+thread's next run resumes a well-formed transcript. Messages held while it waited are never
+delivered, and nothing sends them later: they stay held on the cancelled run, and a later run
+takes only its own inputs. Clients show them as not delivered and offer to resend them. The
+rule is `HeldMessages` in `@homerun/core`: a held message was delivered if a `run.resumed` of
+its run follows it. So `run.resumed` is written only once a resume can start. A resume that
+fails its setup (its folder is gone, say) ends without one, and its held messages show as
+not delivered too.
 
 `HOMERUN_DEV_AMBIGUITY_MODE=truncate` (development only) applies the design's fallback
 instead. The resume starts with `resumeSessionAt` at the entry before the assistant message
@@ -249,7 +260,8 @@ one message; the same in truncate mode), the harness does the following. Each li
 child process (`child.ts`).
 1. It counts the boundaries of a clean run.
 2. For each boundary k, it SIGKILLs homerund at k. A second life recovers, answers "Did this
-   happen?" truthfully from the ledger, and finishes the run.
+   happen?" truthfully from the ledger, and finishes the run. Before answering, the user also
+   sends a message, which is held.
 3. For each k, it kills `claude` alone at k.
 4. For each first crash that left an ambiguous call, it crashes again at every boundary of
    the recovery life. `HOMERUN_CRASH_FULL=1` does this after every first crash.
@@ -258,7 +270,8 @@ After each trial it checks invariants:
 - every side effect happened exactly once;
 - every call has one result;
 - every request was resolved once, and none is pending;
-- no input is left undelivered, and the user's message is in the transcript once;
+- no input is left undelivered, the user's message is in the transcript once, and so is the
+  held message, which no client would show as not delivered;
 - every run is terminal with one `run.end`, and the last one succeeded;
 - the final transcript has no open `tool_use` and no "interrupted" result, and it agrees
   with the ledger about which calls ran.

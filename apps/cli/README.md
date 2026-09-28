@@ -46,7 +46,10 @@ prefix of at least 4 characters. Run `homerun help COMMAND` for all options.
 `answer` (milestone 4) answers only "Did this happen?": after a crash, a
 destructive call that may or may not have run parks its run until the user says
 whether it happened (homerund's README, "Crash resume"). The run then resumes with
-the answer as the call's result. Answering approvals and questions arrives with
+the answer as the call's result. If the run is stopped instead, messages sent while
+it waited were never delivered: `threads show` and `watch` mark each one
+"not delivered" and print a `homerun send` command that resends it. Nothing
+resends them on its own. Answering approvals and questions arrives with
 milestone 6: until then a run that stops for them makes `send` exit 75, and
 `input list` shows where each request can be answered.
 
