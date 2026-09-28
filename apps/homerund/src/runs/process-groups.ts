@@ -40,7 +40,9 @@ export function isOurGroup(pgid: number, recordedBoot: number | null, currentBoo
 
 /**
  * Kill a stale group left by a previous runtime (§5.4 step 1), if it is still ours, with every
- * descendant that moved to its own group (F8).
+ * descendant that moved to its own group (F8). When the group is already gone (claude died, or
+ * was killed with the runtime), tools it started can still be running in its session; on the
+ * same boot they are killed too. Returns whether a live group was killed.
  */
 export async function killStaleGroup(
   pgid: number,
@@ -49,6 +51,12 @@ export async function killStaleGroup(
   markers: readonly string[],
   claudePath: string,
 ): Promise<boolean> {
+  if (recordedBoot !== null && recordedBoot !== currentBoot) return false;
+  if (!groupAlive(pgid)) {
+    const orphans = await killRunTree(pgid, claudePath, 5000);
+    if (orphans.length) log.warn("killed tool processes left in a dead claude's session", { sid: pgid, pids: orphans });
+    return false;
+  }
   if (!isOurGroup(pgid, recordedBoot, currentBoot, markers)) return false;
   log.warn("killing stale process group", { pgid });
   await killRunTree(pgid, claudePath, 5000);

@@ -36,71 +36,24 @@ pnpm homerun chat
 | `stop RUN\|THREAD` | Stop a run, or the active run on a thread |
 | `tasks list [--kind session\|monitor] [--archived]`, `tasks show TASK`, `tasks create --spec FILE\|-` | Tasks. A spec is checked with core's `upgradeSpec` before it is sent, so errors name the field |
 | `input list [--thread T]` | Unanswered input requests, and where each can be answered |
+| `answer REQUEST --completed\|--not-run` | Answer "Did this happen?" for a call a crash interrupted (development builds: `cli_dev`). Exit 0 when applied; 1 when it was already answered, with who answered |
 | `blob SHA256 [-o FILE]` | A stored tool input or output (over 4 KB), to stdout or a 0600 file |
 | `version`, `help [COMMAND]` | |
 
 IDs print as 8-character prefixes. Any id argument takes the full id or a unique
 prefix of at least 4 characters. Run `homerun help COMMAND` for all options.
 
-Not in milestone 3:
-- `answer`: the runtime can't apply answers yet (milestones 4 and 6). A run that
-  stops for input makes `send` exit 75, and `input list` shows where it can be
-  answered.
-- Scheduling, grants and task updates, which the runtime doesn't implement yet.
+`answer` (milestone 4) answers only "Did this happen?": after a crash, a
+destructive call that may or may not have run parks its run until the user says
+whether it happened (homerund's README, "Crash resume"). The run then resumes with
+the answer as the call's result. If the run is stopped instead, messages sent while
+it waited were never delivered: `threads show` and `watch` mark each one
+"not delivered" and print a `homerun send` command that resends it. Nothing
+resends them on its own. Answering approvals and questions arrives with
+milestone 6: until then a run that stops for them makes `send` exit 75, and
+`input list` shows where each request can be answered.
 
-## Output
-
-- **Human** (default):
-  - For `send` and `chat`, the assistant's text alone goes to stdout, so
-    `homerun send … > answer.txt` captures just the answer. Tool calls, results,
-    notes and the final `— done · $cost` line go to stderr.
-  - For `threads show` and `watch`, the transcript goes to stdout, with `you›` and
-    `claude›` labels.
-  - Text streams from `message.delta`. The final message adds only the part not
-    already printed.
-  - A tool result shows at most 3 lines. A large one names its blob:
-    `homerun blob <sha>`.
-  - Colour only on a terminal; `NO_COLOR=1`, `--no-color` or `TERM=dumb` turn it off.
-- **`--json`**:
-  - Request/response commands print the method's result, verbatim, as one JSON
-    document. `status --json` combines `hello`, `ping`, active runs and pending input.
-  - Streaming commands (`send`, `watch`) print NDJSON: each `ThreadEvent` exactly
-    as the runtime sent it, and nothing else. The exit code carries the outcome.
-  - `chat` has no JSON mode.
-
-## Interrupts
-
-- `send`, `watch`: Ctrl-C **detaches** and exits 130. The run keeps going, and the CLI
-  prints how to stop it. `send --stop-on-interrupt` stops the run first.
-- `chat`:
-  - Ctrl-C during a run stops the run. At the prompt, Ctrl-C or Ctrl-D exits.
-  - On a terminal, a line typed during a run steers it.
-  - From a pipe, each line is sent after the previous run ends, and chat exits at
-    end of input. A run that stops for input ends it with 75, as `send` does.
-
-## Exit codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | OK, or the run succeeded |
-| 1 | Error, or the run failed, was cancelled or abandoned; an id that matches nothing |
-| 64 | Usage error, an ambiguous id, or a development switch in a release build |
-| 69 | homerund isn't running (or the connection closed) |
-| 75 | The run is waiting for input, or the message is held until the run resumes |
-| 77 | Not authorized: a bad or unreadable dev token, or a release build |
-| 130 | Interrupted (detached) |
-
-## Finding the runtime
-
-The same resolution as homerund's, from `@homerun/client`:
-- The data dir is `HOMERUN_DATA_DIR`, or `~/Library/Application Support/Homerun`.
-- The socket is `<data dir>/run/homerund.sock`, or the `$TMPDIR/hr-<uid>/` fallback
-  when that path is too long for a unix socket.
-- The token is `dev-token` next to the socket. It is read fresh on every run (it
-  rotates each time homerund starts), and refused unless it is owned by you and
-  not readable by anyone else.
-
-The CLI connects, then sends `hello` as role `cli_dev` with the token.
+Not yet: scheduling, grants and task updates, which the runtime doesn't implement.
 
 ## Builds and access
 
@@ -109,8 +62,9 @@ The build channel fails closed, like homerund's:
 - A compiled binary is **release** unless it was built with exactly
   `--define HOMERUN_CLI_BUILD='"development"'`.
 
-A **development** build connects as `cli_dev`. That role may approve, but only
-development runtimes accept it, and no M3 command approves anything.
+A **development** build connects as `cli_dev`. That role may approve and may
+answer "Did this happen?", but only development runtimes accept it. `answer` is
+its only command that answers anything so far.
 
 Development-only switches:
 
@@ -127,7 +81,8 @@ A **release** build:
 - Exits 77 for every command that needs the runtime, without opening the socket or
   the dev token. A release CLI needs a `cli_token` approved in the Homerun app,
   which arrives with the desktop app (§5.2). Even then it will only answer
-  questions, never approvals (`INPUT_ANSWER_RIGHTS.cli`).
+  questions: never approvals, and never "Did this happen?", which needs full
+  authority (`INPUT_ANSWER_RIGHTS.cli`).
 
 ## Tests
 

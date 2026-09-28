@@ -17,10 +17,11 @@ They are not redefined here.
 | `src/config.ts` | Data dir layout, the bundled `claude`, limits, development-only switches |
 | `src/store/` | SQLite (`db.ts`), forward-only migrations with a `VACUUM INTO` backup (`migrate.ts`, `migrations/`), rows, `thread_events`, blobs over 4 KB, the SDK `SessionStore` mirror |
 | `src/agent/` | `AgentEngine` seam. `claude/` holds the real engine: query options, clean env, process-group spawn, process-tree kill, SDK message → event translation. `fake-engine.ts` is for unit tests. `policy.ts` holds tool classes and permissions |
-| `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run), `recovery` (§5.4), `process-groups` |
+| `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run), `recovery` (§5.4), `ambiguity` (the answer to "Did this happen?"), `resume` (results for open calls before a resume), `process-groups` |
 | `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers. The client, the data dir and socket paths and the build channel rule live in [`@homerun/client`](../../packages/client) |
 | `test/unit/` | Fast tests against the fake engine |
 | `test/replay/` | Record/replay harness (§16.2) and the committed cassettes |
+| `test/crash/` | Crash-at-every-boundary harness (§16.2) with a simulated `claude` |
 | `test/fixtures/mcp-fixture.ts` | A minimal stdio MCP server used by tests |
 
 ## Data dir
@@ -49,8 +50,68 @@ Params, results and callers are defined in `@homerun/core` (`src/protocol/method
   read markers arrive (milestone 7).
 - `messages.send`: starts a run, steers the active one, or is held while the run waits for input.
 - `runs.get`, `runs.list`, `runs.stop`; `tasks.create`, `tasks.get`, `tasks.list`.
-- `input.list_pending`. `input.answer` returns UNAVAILABLE until milestones 4 and 6.
+- `input.list_pending`; `input.answer` for "Did this happen?" (below). Approvals and
+  questions return UNAVAILABLE with `not_implemented` until milestone 6.
 - `blobs.get`: a stored tool input or output over 4 KB, in pages (`offset`, `length`).
+
+## Crash resume (§5.4, milestone 4)
+
+At start, before any run resumes, the runtime:
+1. Kills what a killed runtime or `claude` left running (§5.1). It kills each recorded
+   process group that is still alive, and the tool processes that escaped it:
+   - the process tree;
+   - every process still in the dead `claude`'s session. `claude` is spawned detached, so
+     its pid is its session id;
+   - the Bash tool's shells, which call `setsid` themselves and so leave that session. They
+     are found by this data dir's `claude-config` path in their command (the snapshot they
+     source), unless a live `claude` still owns them (`orphanedTools`).
+
+   The same happens when `claude` dies on its own while the runtime keeps running.
+2. Recovers each interrupted run from `thread_events`:
+   - a `tool.call` with no `tool.result` for a read-class tool gets `interrupted_retryable`;
+   - any other such call parks the run in `waiting_input`, with one *"Did this happen?"*
+     request per call (`required_authority: "full"`);
+   - otherwise the run is requeued with a continuation note. The note names each finished
+     call the model never saw in the transcript.
+
+`claude` dying on its own mid-run goes through the same recovery.
+
+**Answering.** `input.answer` with `{ type: "ambiguous_tool_call", outcome: "completed" | "not_run" }`:
+- Who may answer: the shell, `webview`, `ios` and `cli_dev`, in the app. The web client, the
+  release CLI and a lock-screen action are refused with `AUTHORITY_INSUFFICIENT`
+  (`INPUT_ANSWER_RIGHTS`, full authority).
+- The first answer wins. Later ones get `already_resolved`, with who answered.
+- One transaction records `input.resolved` and the call's `tool.result` (`resolved_completed` or
+  `resolved_not_run`), and adds a sentence to the run's continuation note.
+- After the run's last request is answered, messages held while it waited are released, and the
+  run is requeued (`resume_reason: ambiguity_resolved`).
+
+**Resuming.** Before `claude` resumes a stored session, `prepareResume` gives every `tool_use`
+still open in the transcript a `tool_result`, in the entry shape `claude` writes itself. The
+result is the user's answer, the recorded result (the SDK mirror can lose the last one), or
+"did not start" for a call the gate never allowed. Otherwise `claude` would write
+"interrupted" itself, which the model reads as "run it again". The note always follows as an
+explicit continuation message, before any held messages.
+
+A run stopped while it waits gets an "outcome unknown" result for each open call, so the
+thread's next run resumes a well-formed transcript. Messages held while it waited are never
+delivered, and nothing sends them later: they stay held on the cancelled run, and a later run
+takes only its own inputs. Clients show them as not delivered and offer to resend them. The
+rule is `HeldMessages` in `@homerun/core`: a held message was delivered if a `run.resumed` of
+its run follows it. So `run.resumed` is written only once a resume can start. A resume that
+fails its setup (its folder is gone, say) ends without one, and its held messages show as
+not delivered too.
+
+`HOMERUN_DEV_AMBIGUITY_MODE=truncate` (development only) applies the design's fallback
+instead. The resume starts with `resumeSessionAt` at the entry before the assistant message
+that made the first answered call, and the note says what happened to each call it hides.
+The point is stored in `runs.resume_at` (migration 0002) until `claude` writes the new
+branch, so a crash in between truncates again. Known limit: messages the model had already
+received after that point are not re-sent.
+
+A note not yet delivered when the runtime is killed again is merged into the next one, never
+replaced. The note is delivered with a fresh id each launch, so a crash in the middle of
+delivering it can show the model the same note twice.
 
 ## Running
 
@@ -116,7 +177,8 @@ Development-only switches:
 
 | Switch | Effect |
 |--------|--------|
-| `--dev-auto-approve` / `HOMERUN_DEV_AUTO_APPROVE=1` | Approve `needs_approval` tools. Input requests are milestone 4 |
+| `--dev-auto-approve` / `HOMERUN_DEV_AUTO_APPROVE=1` | Approve `needs_approval` tools. Approval requests are milestone 6 |
+| `HOMERUN_DEV_AMBIGUITY_MODE=inject\|truncate` | How an answer to "Did this happen?" is applied (below). The default is `inject` |
 | `--dev-mcp-overrides <file>` / `HOMERUN_DEV_MCP_OVERRIDES` | JSON `{ name: { command, args?, env? } }` that replaces a spec's MCP server launch |
 | `HOMERUN_ANTHROPIC_BASE_URL` | Point claude at a proxy or at the replay server |
 | `HOMERUN_FORCE_MODEL`, `HOMERUN_CHAT_MODEL`, `HOMERUN_CHAT_MAX_BUDGET_USD` | Model and budget overrides |
@@ -134,6 +196,7 @@ Other settings:
 pnpm --filter @homerun/homerund typecheck
 pnpm --filter @homerun/homerund test:unit     # fake engine, no network
 pnpm --filter @homerun/homerund test:replay   # real claude against recorded API exchanges, no key
+pnpm --filter @homerun/homerund test:crash    # kill at every event boundary, simulated claude (about a minute)
 scripts/check-no-secrets.sh                   # from the repo root
 ```
 
@@ -158,15 +221,60 @@ The scenarios:
 - steering;
 - kill and resume;
 - kill mid-tool: the call is ambiguous and the run is parked in `waiting_input`;
-  no tool process survives;
+  no tool process survives; a lock-screen answer is refused; stopping the run gives the
+  call an "outcome unknown" result;
 - stop during a tool call;
 - isolation.
+
+Four milestone 4 scenarios are written but wait for their cassettes. Replay skips a scenario
+whose cassette is missing:
+- `ambiguity-completed`: the user answers "completed". The run resumes with the injected
+  result and a held message, and the call is not run again.
+- `kill-claude-mid-tool`: `claude` alone is killed, and its orphaned shell with it. The user
+  answers "not run", and the call runs again exactly once.
+- `ambiguity-truncate`: the truncate fallback.
+- `cancel-parked`: a parked run is stopped, and the thread's next turn resumes cleanly.
 
 Every scenario also checks generic invariants:
 - every `tool.call` of a finished run has exactly one `tool.result`;
 - no stored deltas;
 - event sequence order, and nothing after `run.end`;
 - no finished run still holds a process group.
+
+### Crash harness (§16.2)
+
+`test/crash/` kills homerund at every event boundary, systematically. Real `claude` would
+need a cassette per boundary, so this harness uses `sim-claude.ts` instead. It is an engine
+that behaves like `claude` where recovery depends on it:
+- it mirrors transcript entries through the session store, sometimes lagging a step;
+- its hooks write `tool.call` and `tool.result`;
+- it resumes from the stored chain (and `resumeSessionAt`);
+- when it resumes a `tool_use` with no result, it writes its own "interrupted" result and
+  runs the call again, as F7 found real `claude` does.
+
+Its tools append to a ledger file, which is the ground truth for "did this happen?".
+
+A boundary is any commit homerund makes (`Store.commitObserver`), or the point just before or
+just after a tool's side effect. For each scenario (serial calls; parallel destructive calls in
+one message; the same in truncate mode), the harness does the following. Each life is a
+child process (`child.ts`).
+1. It counts the boundaries of a clean run.
+2. For each boundary k, it SIGKILLs homerund at k. A second life recovers, answers "Did this
+   happen?" truthfully from the ledger, and finishes the run. Before answering, the user also
+   sends a message, which is held.
+3. For each k, it kills `claude` alone at k.
+4. For each first crash that left an ambiguous call, it crashes again at every boundary of
+   the recovery life. `HOMERUN_CRASH_FULL=1` does this after every first crash.
+
+After each trial it checks invariants:
+- every side effect happened exactly once;
+- every call has one result;
+- every request was resolved once, and none is pending;
+- no input is left undelivered, the user's message is in the transcript once, and so is the
+  held message, which no client would show as not delivered;
+- every run is terminal with one `run.end`, and the last one succeeded;
+- the final transcript has no open `tool_use` and no "interrupted" result, and it agrees
+  with the ledger about which calls ran.
 
 #### Re-recording
 

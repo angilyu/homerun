@@ -51,6 +51,7 @@ export function buildQueryOptions(
     ...(start.fallbackModel ? { fallbackModel: start.fallbackModel } : {}),
     maxBudgetUsd: start.maxBudgetUsd,
     ...(start.resume ? { resume: start.resume } : {}),
+    ...(start.resume && start.resumeAt ? { resumeSessionAt: start.resumeAt } : {}),
     ...(start.appendSystemPrompt ? { systemPrompt: { type: "preset", preset: "claude_code", append: start.appendSystemPrompt } } : {}),
     stderr: wiring.stderr,
   };

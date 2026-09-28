@@ -63,7 +63,8 @@ export const UserMessageEvent = named(
       origin: Origin,
       /**
        * started_run: this message started `run_id`. steered: pushed into the running `run_id`
-       * (§5.7). held: `run_id` is waiting for input; delivered together with the answer.
+       * (§5.7). held: `run_id` is waiting for input; delivered together with the answer, or
+       * never if the run ends first (`HeldMessages`).
        */
       disposition: z.enum(["started_run", "steered", "held"]),
       /** When the client sent it, if earlier than `ts`: a queued instruction (§9.4). */
@@ -350,4 +351,46 @@ export function parseThreadEventLenient(
   }
   const r = ThreadEvent.safeParse(raw);
   return r.success ? { ok: true, event: r.data } : { ok: false, error: r.error };
+}
+
+// ---------------------------------------------------------------- delivery of held messages (§5.7)
+
+/**
+ * Tracks messages held while a run waited for input (`disposition: "held"`) and reports the ones
+ * that were never delivered. A held message is delivered when its run resumes after the answer:
+ * a `run.resumed` of that run follows it. If the run ends first, typically because it was
+ * stopped while it waited, the message was not delivered. Homerun never sends it later on its
+ * own, so a client shows it as not delivered and can offer to resend it (a new `messages.send`
+ * with a new `client_msg_id`).
+ *
+ * Feed events in `seq` order; live-only and unknown events are ignored.
+ */
+export class HeldMessages {
+  private readonly held = new Map<string, ThreadEventOf<"user.message">[]>();
+
+  /** The held messages this event leaves undelivered. Non-empty only for a `run.end`. */
+  observe(e: ThreadEvent | UnknownThreadEvent): ThreadEventOf<"user.message">[] {
+    if (e.type === "unknown" || e.run_id === null) return [];
+    switch (e.type) {
+      case "user.message":
+        if (e.payload.disposition === "held") this.held.set(e.run_id, [...(this.held.get(e.run_id) ?? []), e]);
+        return [];
+      case "run.resumed":
+        this.held.delete(e.run_id);
+        return [];
+      case "run.end": {
+        const left = this.held.get(e.run_id) ?? [];
+        this.held.delete(e.run_id);
+        return left;
+      }
+      default:
+        return [];
+    }
+  }
+}
+
+/** Held messages in `events` (in `seq` order) whose run ended before they were delivered. */
+export function undeliveredMessages(events: readonly (ThreadEvent | UnknownThreadEvent)[]): ThreadEventOf<"user.message">[] {
+  const t = new HeldMessages();
+  return events.flatMap((e) => t.observe(e));
 }

@@ -56,7 +56,7 @@ async function drainTicks(n = 3) {
 }
 
 export class ClaudeEngine implements AgentEngine {
-  constructor(private rt: { claudePath: string; sessionStore: SessionStore }) {}
+  constructor(private rt: { claudePath: string; claudeConfigDir?: string; sessionStore: SessionStore }) {}
 
   start(o: EngineStart): EngineRun {
     const queue = new InputQueue();
@@ -174,7 +174,7 @@ export class ClaudeEngine implements AgentEngine {
         if (pid !== null) void killRunTree(pid, this.rt.claudePath, 5000);
       },
       reap: async () => {
-        if (pid !== null) await killRunTree(pid, this.rt.claudePath, 5000);
+        if (pid !== null) await killRunTree(pid, this.rt.claudePath, 5000, this.rt.claudeConfigDir);
       },
       get pid() {
         return pid;

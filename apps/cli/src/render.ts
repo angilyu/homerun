@@ -1,5 +1,5 @@
-import { mayAnswer, type CallerRole, type InputPrompt, type ThreadEvent, type UnknownThreadEvent } from "@homerun/core";
-import { bytes, contentText, headLines, inputSummary, shortId, usd } from "./format";
+import { HeldMessages, mayAnswer, type CallerRole, type InputPrompt, type ThreadEvent, type ThreadEventOf, type UnknownThreadEvent } from "@homerun/core";
+import { bytes, contentText, headLines, inputSummary, oneLine, shortId, truncate, usd } from "./format";
 import type { Colors, Output } from "./output";
 
 export interface RenderOptions {
@@ -24,6 +24,8 @@ export class EventRenderer {
   /** The message whose text is on the current stdout line, unfinished. */
   private open: string | null = null;
   private lastStatus = "";
+  /** Messages held while a run waited for input, to report the ones it never delivered. */
+  private held = new HeldMessages();
 
   constructor(
     private readonly o: Output,
@@ -47,6 +49,13 @@ export class EventRenderer {
     this.open = null;
   }
 
+  /** A held message the run ended without delivering (§5.7): never sent on its own, so offer a resend. */
+  private notDelivered(m: ThreadEventOf<"user.message">): void {
+    const c = this.pc;
+    this.progress(c.yellow(`  ✗ not delivered: `) + truncate(oneLine(m.payload.text), 80) + c.dim(" (sent while the run waited; the run ended first)"));
+    this.progress(c.dim(`    resend it: ${resendCommand(m.thread_id, m.payload.text)}`));
+  }
+
   /** Finish any open message line (on exit or detach). */
   finish(): void {
     this.close();
@@ -54,6 +63,7 @@ export class EventRenderer {
 
   render(e: ThreadEvent | UnknownThreadEvent): void {
     const c = this.pc;
+    const undelivered = this.held.observe(e);
     switch (e.type) {
       case "message.delta": {
         const id = e.payload.message_id;
@@ -126,7 +136,7 @@ export class EventRenderer {
       case "input.requested":
         this.progress(c.yellow(c.bold("? Needs your input")) + c.dim(` (request ${shortId(e.payload.request_id)})`));
         for (const l of promptLines(e.payload.prompt)) this.progress(`  ${l}`);
-        this.progress(c.dim(`  ${answerHint(e.payload.prompt, this.opts.role)}`));
+        this.progress(c.dim(`  ${answerHint(e.payload.prompt, this.opts.role, e.payload.request_id)}`));
         return;
       case "input.resolved": {
         const p = e.payload;
@@ -148,6 +158,7 @@ export class EventRenderer {
         if (p.state === "succeeded") this.progress(c.dim(`— done${p.outcome ? ` (${p.outcome.replace("_", " ")})` : ""}`) + cost);
         else if (p.state === "cancelled") this.progress(c.yellow("— cancelled") + cost);
         else this.progress(c.red(`— ${p.state}${p.error ? `: ${p.error.message}` : ""}`) + cost);
+        for (const m of undelivered) this.notDelivered(m);
         this.lastStatus = "";
         return;
       }
@@ -177,6 +188,13 @@ export class EventRenderer {
   }
 }
 
+/** A command that resends `text` to the thread; the text itself when it is short enough to copy. */
+export function resendCommand(threadId: string, text: string): string {
+  const short = !text.includes("\n") && [...text].length <= 200;
+  if (!short) return `homerun send ${shortId(threadId)} TEXT`;
+  return `homerun send ${shortId(threadId)} ${text.startsWith("-") ? "-- " : ""}'${text.replaceAll("'", `'\\''`)}'`;
+}
+
 export function promptLines(p: InputPrompt): string[] {
   switch (p.type) {
     case "approval":
@@ -191,8 +209,14 @@ export function promptLines(p: InputPrompt): string[] {
   }
 }
 
-/** Where a prompt can be answered from (INPUT_ANSWER_RIGHTS). The CLI cannot answer anything yet. */
-export function answerHint(p: InputPrompt, role: CallerRole): string {
+/** Whether this CLI can answer the prompt: "Did this happen?" in a development build (INPUT_ANSWER_RIGHTS). */
+export function cliAnswers(p: InputPrompt, role: CallerRole): boolean {
+  return p.type === "ambiguous_tool_call" && mayAnswer(role, p.type);
+}
+
+/** Where a prompt can be answered from (INPUT_ANSWER_RIGHTS). */
+export function answerHint(p: InputPrompt, role: CallerRole, requestId: string): string {
+  if (cliAnswers(p, role)) return `Answer it in the Homerun app, or here: homerun answer ${shortId(requestId)} --completed | --not-run`;
   if (!mayAnswer(role, p.type)) return "Answer it in the Homerun app; the CLI may not answer this kind of request.";
   return "Answer it in the Homerun app. Answering from the CLI arrives in a later version.";
 }

@@ -203,9 +203,11 @@ describe("send", () => {
     expect(r.stderr).toContain("Did this Bash call happen");
     expect(r.stderr).toContain("Answer it in the Homerun app");
 
-    // Only the app may answer "Did this happen?" (INPUT_ANSWER_RIGHTS).
+    // The app and the development CLI may answer "Did this happen?" (INPUT_ANSWER_RIGHTS).
+    expect(r.stderr).toContain("or here: homerun answer");
     const list = await cli(srt.dir, ["input", "list"]);
-    expect(list.stdout).toMatch(/ app +Did this Bash call happen/);
+    expect(list.stdout).toMatch(/ app, cli +Did this Bash call happen/);
+    expect(list.stderr).toContain("homerun answer REQUEST --completed | --not-run");
     const st = await cli(srt.dir, ["status"]);
     expect(st.stdout).toContain("1 waiting for input");
 
@@ -218,10 +220,59 @@ describe("send", () => {
     const piped = await cli(srt.dir, ["chat", task.thread_id], { stdin: "and now?\nnever sent\n", timeoutMs: 5_000 });
     expect(piped.code).toBe(75);
     expect(piped.stderr).toContain("delivered with the answer");
+
+    // Stopped instead of answered: the held messages were never delivered, and nothing sends
+    // them later; history shows them with a way to resend (§5.7).
+    expect((await cli(srt.dir, ["stop", task.thread_id])).code).toBe(0);
+    const shown = await cli(srt.dir, ["threads", "show", task.thread_id]);
+    expect(shown.stdout).toContain("— cancelled");
+    expect(shown.stdout).toContain("✗ not delivered: still there?");
+    expect(shown.stdout).toContain("✗ not delivered: and now?");
+    expect(shown.stdout).toContain(`resend it: homerun send ${task.thread_id.slice(0, 8)} 'still there?'`);
     const task2 = await (await srt.dev()).call("tasks.create", { spec: sessionSpec() as never });
     const asked = await cli(srt.dir, ["chat", task2.thread_id], { stdin: "go\nnever sent\n", timeoutMs: 5_000 });
     expect(asked.code).toBe(75);
     expect(asked.stderr).toContain("Did this Bash call happen");
+  });
+});
+
+describe("answer", () => {
+  test('"Did this happen?" answered from the development CLI resumes the run with the decision', async () => {
+    srt = await runtime({
+      env: { HOMERUN_DEV_AUTO_APPROVE: "1" },
+      script: async (s) => {
+        if (!s.opts.resume) {
+          await s.nextInput();
+          await s.opts.gate.preTool({ toolCallId: "t1", tool: "Bash", input: { command: "touch /tmp/x" } });
+          return { code: null, signal: "SIGKILL" };
+        }
+        const inputs = [];
+        for (let i = 0; i < s.opts.initialInputs.length; i++) inputs.push((await s.nextInput())!.uuid);
+        s.emit({ type: "message", messageId: "m2", text: "ran it again" });
+        s.result(inputs);
+      },
+    });
+    const task = await (await srt.dev()).call("tasks.create", { spec: sessionSpec() as never });
+    expect((await cli(srt.dir, ["send", task.thread_id, "go"])).code).toBe(75);
+    const { requests } = await (await srt.dev()).call("input.list_pending", {});
+    const id = requests[0]!.request_id;
+
+    for (const flags of [[], ["--completed", "--not-run"]]) {
+      const bad = await cli(srt.dir, ["answer", id.slice(0, 8), ...flags]);
+      expect(bad.code).toBe(64);
+      expect(bad.stderr).toContain("exactly one of --completed or --not-run");
+    }
+    const ok = await cli(srt.dir, ["answer", id.slice(0, 8), "--not-run"]);
+    expect(ok.stderr).toContain("Recorded: the call did not run");
+    expect(ok.code).toBe(0);
+    await until(() => srt.engine.sessions.length === 2 && srt.rt.store.db.query("SELECT 1 FROM runs WHERE state = 'succeeded'").get() !== null, 5000, "resumed run");
+    expect(srt.engine.sessions[1]!.opts.initialInputs[0]!.text).toContain("The user confirmed that it did not run");
+
+    // Answered already: a prefix no longer matches a pending request; the full id says who answered.
+    expect((await cli(srt.dir, ["answer", id.slice(0, 8), "--completed"])).code).toBe(1);
+    const again = await cli(srt.dir, ["answer", id, "--completed", "--json"]);
+    expect(again.code).toBe(1);
+    expect(JSON.parse(again.stdout)).toMatchObject({ status: "already_resolved", state: "answered" });
   });
 });
 

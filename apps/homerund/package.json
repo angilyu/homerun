@@ -10,6 +10,7 @@
     "test": "bun test",
     "test:unit": "bun test test/unit",
     "test:replay": "bun test test/replay",
+    "test:crash": "bun test test/crash",
     "record": "HOMERUN_REPLAY=record bun test test/replay"
   },
   "dependencies": {

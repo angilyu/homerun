@@ -37,6 +37,7 @@ const HANDLERS: Record<string, Handler> = {
   "tasks show": records.tasksShow,
   "tasks create": records.tasksCreate,
   "input list": records.inputList,
+  answer: records.answer,
   blob: records.blob,
 };
 

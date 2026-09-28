@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { InputRequest, requiredAuthority, type AmbiguousCallPrompt } from "@homerun/core";
 import { log } from "../log";
-import { toContent } from "../store/content";
-import { appendEvent, callsWithoutResult, runEvents, type EventOf } from "../store/events";
-import { getRunRow, insertInputRequest, setRunState, type RunRow } from "../store/rows";
-import { transcriptToolState } from "../store/session-store";
+import { contentValue, toContent } from "../store/content";
+import { appendEvent, callsWithoutResult, findToolEvent, runEvents, type EventOf } from "../store/events";
+import { getRunRow, insertInputRequest, setRunState } from "../store/rows";
 import type { Store } from "../store/store";
+import { allToolUseIds, chainTools, sessionView } from "../store/transcript";
 import { finishRun } from "./finish";
+import { UNKNOWN_TEXT } from "./resume";
 
 /**
  * Crash recovery for one run (§5.4 steps 5–7). Used at startup for every run left `running`,
@@ -19,9 +20,12 @@ import { finishRun } from "./finish";
  *    - only read-class calls: each gets `interrupted_retryable`, and the run is requeued with a
  *      note saying they may be retried;
  *    - any other call: the run parks in `waiting_input` with a "Did this happen?" request per
- *      call. Resolving it is milestone 4 (`AmbiguityResolver`).
+ *      call. The answer is applied by `AmbiguityResolver` (ambiguity.ts).
  * 3. A run that keeps crashing is abandoned with `resume_loop` after RESUME_LIMIT resumes
  *    without a completed turn.
+ *
+ * Recovery writes only events and the run row. The transcript is brought in line when the run
+ * resumes (`prepareResume`): each dangling `tool_use` gets the result recorded here.
  */
 
 export const RESUME_LIMIT = 3;
@@ -37,38 +41,12 @@ export type RecoveryOutcome =
   | { kind: "abandoned" }
   | { kind: "cancelled" };
 
-/**
- * Milestone 4 applies the user's "Did this happen?" answer: it injects the decision as the
- * call's `tool_result` in the stored transcript (truncating if the SDK rejects it), writes
- * `resolved_completed` or `resolved_not_run`, and resumes with `run.resumed{ambiguity_resolved}`.
- */
-export interface AmbiguityResolver {
-  apply(request: InputRequest, outcome: "completed" | "not_run"): Promise<void>;
-}
-
-export class NotImplementedError extends Error {
-  constructor(what: string) {
-    super(`${what} arrives in a later version of Homerun`);
-    this.name = "NotImplementedError";
-  }
-}
-
-export const ambiguityResolver: AmbiguityResolver = {
-  apply: async () => {
-    throw new NotImplementedError("Resolving an interrupted tool call");
-  },
-};
-
-interface LostResult {
-  call: EventOf<"tool.call">;
-  status: "ok" | "error";
-}
-
 export function recoverRun(store: Store, runId: string, reason: RecoveryReason, now = Date.now()): RecoveryOutcome {
   return store.tx(() => {
     const row = getRunRow(store, runId);
     if (!row || row.state !== "running") throw new Error(`recoverRun: run ${runId} is not running`);
-    const transcript = row.sdk_session_id ? transcriptToolState(store.db, row.sdk_session_id) : null;
+    const view = row.sdk_session_id ? sessionView(store, row.sdk_session_id, row.resume_at) : null;
+    const transcript = view ? chainTools(view.chain) : null;
 
     // 1. Results the SDK mirrored but we never wrote (the Post hook never reached us).
     for (const call of callsWithoutResult(store, runId)) {
@@ -82,15 +60,14 @@ export function recoverRun(store: Store, runId: string, reason: RecoveryReason, 
       }, now);
     }
 
-    // Results we wrote whose mirrored tool_result was lost with the process: the call finished,
-    // but the model will see claude's synthetic "interrupted" result. It is told the outcome.
-    const lost: LostResult[] = [];
-    if (transcript) {
-      const results = new Map(runEvents(store, runId, "tool.result").map((e) => [e.payload.tool_call_id as string, e.payload.status]));
+    // Calls that finished but whose tool_use the transcript lost with the process: the model
+    // does not know it made them. The note tells it, so it does not make them again.
+    const unseen: EventOf<"tool.call">[] = [];
+    if (row.sdk_session_id) {
+      const ids = allToolUseIds(store, row.sdk_session_id);
+      const results = new Set(runEvents(store, runId, "tool.result").map((e) => e.payload.tool_call_id));
       for (const call of runEvents(store, runId, "tool.call")) {
-        const id = call.payload.tool_call_id as string;
-        const status = results.get(id);
-        if ((status === "ok" || status === "error") && transcript.uses.has(id) && !transcript.results.has(id)) lost.push({ call, status });
+        if (results.has(call.payload.tool_call_id) && !ids.has(call.payload.tool_call_id) && !call.payload.parent_tool_call_id) unseen.push(call);
       }
     }
 
@@ -98,14 +75,12 @@ export function recoverRun(store: Store, runId: string, reason: RecoveryReason, 
 
     if (row.stop_requested_at) {
       // The user had asked to stop: finish the cancellation instead of resuming.
-      for (const c of ambiguous) writeUnknown(store, row, c, "Homerun restarted before this call reported a result.", now);
-      finishRun(store, runId, "cancelled", null, { now });
+      finishRun(store, runId, "cancelled", null, { now, unresolved: UNKNOWN_TEXT });
       return { kind: "cancelled" };
     }
 
     if (row.resume_count >= RESUME_LIMIT) {
-      for (const c of ambiguous) writeUnknown(store, row, c, "Homerun could not tell whether this call finished; the run was abandoned.", now);
-      finishRun(store, runId, "abandoned", { code: "resume_loop", message: `The run was interrupted ${row.resume_count + 1} times without finishing a turn.` }, { now });
+      finishRun(store, runId, "abandoned", { code: "resume_loop", message: `The run was interrupted ${row.resume_count + 1} times without finishing a turn.` }, { now, unresolved: UNKNOWN_TEXT });
       log.warn("run abandoned after repeated resumes", { run_id: runId });
       return { kind: "abandoned" };
     }
@@ -121,7 +96,7 @@ export function recoverRun(store: Store, runId: string, reason: RecoveryReason, 
       }, now);
     }
 
-    const note = continuationNote(reason, reads, lost);
+    const note = mergeNotes(row.resume_note, continuationNote(reason, reads, unseen, store));
     if (others.length === 0) {
       setRunState(store, runId, "pending", {
         claude_pid: null,
@@ -168,19 +143,51 @@ export function recoverRun(store: Store, runId: string, reason: RecoveryReason, 
   });
 }
 
-function continuationNote(reason: RecoveryReason, retryable: EventOf<"tool.call">[], lost: LostResult[]): string {
+function continuationNote(reason: RecoveryReason, retryable: EventOf<"tool.call">[], unseen: EventOf<"tool.call">[], store: Store): string {
   const parts = [reason === "runtime_restart" ? RESTART_NOTE : AGENT_EXITED_NOTE];
   if (retryable.length) parts.push(`These calls were interrupted and only read, so you may run them again: ${retryable.map((c) => `${c.payload.tool} (${c.payload.tool_call_id})`).join(", ")}.`);
-  for (const l of lost) {
-    parts.push(
-      `Your ${l.call.payload.tool} call ${l.call.payload.tool_call_id} did finish (${l.status === "ok" ? "successfully" : "with an error"}) even though it shows as interrupted. Do not run it again.`,
-    );
+  for (const c of unseen) {
+    const r = findToolEvent(store, c.thread_id, "tool.result", c.payload.tool_call_id);
+    if (r) parts.push(outcomeSentence(store, c, r.payload.status));
   }
   return parts.join("\n\n");
 }
 
-function writeUnknown(store: Store, row: RunRow, c: EventOf<"tool.call">, message: string, now: number) {
-  appendEvent(store, row.thread_id, row.run_id, "tool.result", { tool_call_id: c.payload.tool_call_id, status: "error", output: null, error: message }, now);
+/**
+ * What happened to a call, for a continuation note: used when the transcript the model resumes
+ * from does not show the call's result (its `tool_use` was lost, or a truncating resume hides it).
+ */
+export function outcomeSentence(store: Store, c: EventOf<"tool.call">, status: EventOf<"tool.result">["payload"]["status"]): string {
+  const call = `${c.payload.tool} with input ${inputPreview(store, c)}`;
+  switch (status) {
+    case "ok":
+      return `Before the restart you called ${call}, and it finished successfully. Do not run it again.`;
+    case "error":
+      return `Before the restart you called ${call}, and it failed.`;
+    case "denied":
+      return `Before the restart you called ${call}, and it was denied.`;
+    case "interrupted_retryable":
+      return `Before the restart you called ${call}, and it was interrupted. It only reads, so you may run it again.`;
+    case "resolved_completed":
+      return `Just before the restart you called ${call}. The user confirmed that it completed: its effect happened, so do not run it again.`;
+    case "resolved_not_run":
+      return `Just before the restart you called ${call}. The user confirmed that it did not run; run it again if the task still needs it.`;
+  }
+}
+
+/**
+ * A note not yet delivered when the run was interrupted again still holds (a decision, a call
+ * the model never saw), so the new one extends it. Paragraphs already there are not repeated.
+ */
+export function mergeNotes(prev: string | null, next: string): string {
+  if (!prev) return next;
+  const have = prev.split("\n\n");
+  return [...have, ...next.split("\n\n").filter((p) => !have.includes(p))].join("\n\n");
+}
+
+export function inputPreview(store: Store, c: EventOf<"tool.call">): string {
+  const s = JSON.stringify(contentValue(store, c.payload.input)) ?? "null";
+  return s.length > 500 ? `${s.slice(0, 500)}…` : s;
 }
 
 export function errorText(content: unknown): string {

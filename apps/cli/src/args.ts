@@ -99,6 +99,15 @@ export const COMMANDS: CommandSpec[] = [
     runtime: true,
     json: true,
   },
+  {
+    name: "answer",
+    args: "REQUEST (--completed | --not-run)",
+    summary: 'Answer "Did this happen?" for a call a crash interrupted (development builds)',
+    options: { completed: { type: "boolean" }, "not-run": { type: "boolean" } },
+    positionals: [1, 1],
+    runtime: true,
+    json: true,
+  },
   { name: "input list", args: "[--thread THREAD]", summary: "Unanswered input requests, and where they can be answered", options: { thread: { type: "string" } }, positionals: [0, 0], runtime: true, json: true },
   {
     name: "blob",

@@ -30,7 +30,7 @@ export interface RuntimeOptions {
   /** The shell's launch token (64 hex); null when started without a shell (tests, dev). */
   launchToken: string | null;
   /** Defaults to the real `claude` engine. */
-  engine?: (db: Database) => AgentEngine;
+  engine?: (store: Store) => AgentEngine;
   /** Check every RPC result against its core schema (tests). */
   checkResults?: boolean;
   now?: () => number;
@@ -113,7 +113,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     }
 
     const secrets = new SecretStore();
-    const engine = o.engine ? o.engine(db) : new ClaudeEngine({ claudePath: config.claudePath, sessionStore: new SqliteSessionStore(db) });
+    const engine = o.engine ? o.engine(store) : new ClaudeEngine({ claudePath: config.claudePath, claudeConfigDir: config.claudeConfigDir, sessionStore: new SqliteSessionStore(store) });
     const ctx: RunContext = {
       store,
       config,

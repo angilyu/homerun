@@ -10,6 +10,7 @@ import {
   ThreadSummary,
   canTransition,
   type Authority,
+  type InputResponse,
   type RunError,
   type RunState,
   type RunTrigger,
@@ -30,12 +31,10 @@ export function ensureDevice(store: Store, now = Date.now()): Device {
     account_id: null,
     created_at: now,
   });
-  store.db.query("INSERT INTO device (device_id, platform, hostname, account_id, created_at) VALUES (?, ?, ?, ?, ?)").run(
-    d.device_id,
-    d.platform,
-    d.hostname,
-    d.account_id,
-    d.created_at,
+  store.tx(() =>
+    store.db
+      .query("INSERT INTO device (device_id, platform, hostname, account_id, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(d.device_id, d.platform, d.hostname, d.account_id, d.created_at),
   );
   return d;
 }
@@ -66,7 +65,9 @@ export function createThread(store: Store, opts: { taskId?: string | null; title
     last_seq: 0,
     updated_at: opts.now ?? Date.now(),
   });
-  store.db.query("INSERT INTO threads (thread_id, task_id, title, last_seq, updated_at) VALUES (?, ?, ?, 0, ?)").run(t.thread_id, t.task_id, t.title, t.updated_at);
+  store.tx(() =>
+    store.db.query("INSERT INTO threads (thread_id, task_id, title, last_seq, updated_at) VALUES (?, ?, ?, 0, ?)").run(t.thread_id, t.task_id, t.title, t.updated_at),
+  );
   return t;
 }
 
@@ -237,6 +238,7 @@ export interface RunRow {
   resume_count: number;
   resume_reason: string | null;
   resume_note: string | null;
+  resume_at: string | null;
   stop_requested_at: number | null;
   stop_by: string | null;
   sdk_cost_baseline: number | null;
@@ -307,13 +309,15 @@ export interface NewRun {
 export function tryInsertRun(store: Store, n: NewRun): RunRow | null {
   const runId = randomUUID();
   try {
-    store.db
-      .query(
-        `INSERT INTO runs (run_id, thread_id, task_id, task_version, sdk_session_id, device_id, trigger, origin_device, authority,
+    store.tx(() =>
+      store.db
+        .query(
+          `INSERT INTO runs (run_id, thread_id, task_id, task_version, sdk_session_id, device_id, trigger, origin_device, authority,
            scheduled_for, dedupe_key, attempt, state, created_at, pool, origin_surface)
          VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, ?, 0, 'pending', ?, ?, ?)`,
       )
-      .run(runId, n.threadId, n.taskId, n.taskVersion, n.deviceId, n.trigger, n.originDevice, n.authority, runId, n.now, n.pool, n.originSurface);
+        .run(runId, n.threadId, n.taskId, n.taskVersion, n.deviceId, n.trigger, n.originDevice, n.authority, runId, n.now, n.pool, n.originSurface),
+    );
   } catch (e) {
     if (e instanceof Error && /UNIQUE constraint failed: runs\.thread_id/.test(e.message)) return null;
     throw e;
@@ -340,7 +344,7 @@ export function updateRun(store: Store, runId: string, fields: Partial<Pick<RunR
   const keys = Object.keys(fields) as UpdatableRunField[];
   if (!keys.length) return;
   const sql = `UPDATE runs SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE run_id = ?`;
-  store.db.query(sql).run(...keys.map((k) => fields[k] as string | number | null), runId);
+  store.tx(() => store.db.query(sql).run(...keys.map((k) => fields[k] as string | number | null), runId));
 }
 
 export function runErrorJson(e: RunError | null): string | null {
@@ -381,7 +385,7 @@ export interface RunInputRow {
 }
 
 export function addRunInput(store: Store, runId: string, uuid: string, text: string, held: boolean, now = Date.now()): void {
-  store.db.query("INSERT OR IGNORE INTO run_inputs (uuid, run_id, held, text, created_at) VALUES (?, ?, ?, ?, ?)").run(uuid, runId, held ? 1 : 0, text, now);
+  store.tx(() => store.db.query("INSERT OR IGNORE INTO run_inputs (uuid, run_id, held, text, created_at) VALUES (?, ?, ?, ?, ?)").run(uuid, runId, held ? 1 : 0, text, now));
 }
 
 export function pendingInputs(store: Store, runId: string): RunInputRow[] {
@@ -390,9 +394,17 @@ export function pendingInputs(store: Store, runId: string): RunInputRow[] {
     .all(runId);
 }
 
+/** Messages held while the run waited for input join the next turn (§5.7). */
+export function releaseHeldInputs(store: Store, runId: string): void {
+  store.tx(() => store.db.query("UPDATE run_inputs SET held = 0 WHERE run_id = ? AND held = 1 AND consumed_at IS NULL").run(runId));
+}
+
 export function markInputsConsumed(store: Store, uuids: readonly string[], now = Date.now()): void {
+  if (!uuids.length) return;
   const q = store.db.query("UPDATE run_inputs SET consumed_at = ? WHERE uuid = ? AND consumed_at IS NULL");
-  for (const u of uuids) q.run(now, u);
+  store.tx(() => {
+    for (const u of uuids) q.run(now, u);
+  });
 }
 
 // ---------------------------------------------------------------- input requests (§6)
@@ -416,7 +428,7 @@ export function rowToInputRequest(r: InputRequestRow): InputRequest {
 }
 
 export function insertInputRequest(store: Store, req: InputRequest): void {
-  store.db
+  store.tx(() => store.db
     .query(
       `INSERT INTO input_requests (request_id, run_id, kind, tool_call_id, prompt, state, requested_at, expires_at, answered_at, response, answered_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -433,7 +445,7 @@ export function insertInputRequest(store: Store, req: InputRequest): void {
       req.answered_at,
       req.response ? JSON.stringify(req.response) : null,
       req.answered_by,
-    );
+    ));
 }
 
 export function pendingInputRequests(store: Store, f: { threadId?: string; runId?: string } = {}): InputRequest[] {
@@ -452,6 +464,16 @@ export function getInputRequest(store: Store, requestId: string): InputRequest |
   return r ? rowToInputRequest(r) : null;
 }
 
+/** First answer wins: false if the request was no longer pending. */
+export function answerInputRequest(store: Store, requestId: string, response: InputResponse, answeredBy: string, now: number): boolean {
+  return store.tx(
+    () =>
+      store.db
+        .query("UPDATE input_requests SET state = 'answered', response = ?, answered_by = ?, answered_at = ? WHERE request_id = ? AND state = 'pending'")
+        .run(JSON.stringify(response), answeredBy, now, requestId).changes === 1,
+  );
+}
+
 export function setInputRequestState(store: Store, requestId: string, state: "cancelled" | "expired"): void {
-  store.db.query("UPDATE input_requests SET state = ? WHERE request_id = ? AND state = 'pending'").run(state, requestId);
+  store.tx(() => store.db.query("UPDATE input_requests SET state = ? WHERE request_id = ? AND state = 'pending'").run(state, requestId));
 }

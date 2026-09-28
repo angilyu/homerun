@@ -30,6 +30,8 @@ function fresh(): { db: Database; backups: string; store: Store } {
   return { db, backups, store: new Store(db, new Bus()) };
 }
 
+/** The shipped schema version; test migrations come after it. */
+const N = MIGRATIONS.length;
 const extra = (n: number, sql = `CREATE TABLE extra_${n} (x INTEGER)`): Migration => ({ version: n, sql });
 
 describe("migrations (§6.3)", () => {
@@ -46,34 +48,34 @@ describe("migrations (§6.3)", () => {
     const { db, backups } = fresh();
     let t = 1000;
     const now = () => t++;
-    const v2 = [...MIGRATIONS, extra(2)];
+    const v2 = [...MIGRATIONS, extra(N + 1)];
     const r = migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: v2, now });
-    expect(r).toMatchObject({ status: "migrated", from: 1, to: 2 });
+    expect(r).toMatchObject({ status: "migrated", from: N, to: N + 1 });
     const b = (r as { backup: string }).backup;
-    expect(currentVersion(new Database(b, { readonly: true })).version).toBe(1);
-    migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: [...v2, extra(3), extra(4)], now });
-    expect(currentVersion(db).version).toBe(4);
-    migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: [...v2, extra(3), extra(4), extra(5)], now });
-    expect(listBackups(backups).map((p) => p.split("/").at(-1)!.split("-")[1])).toEqual(["v2", "v4"]);
+    expect(currentVersion(new Database(b, { readonly: true })).version).toBe(N);
+    migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: [...v2, extra(N + 2), extra(N + 3)], now });
+    expect(currentVersion(db).version).toBe(N + 3);
+    migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: [...v2, extra(N + 2), extra(N + 3), extra(N + 4)], now });
+    expect(listBackups(backups).map((p) => p.split("/").at(-1)!.split("-")[1])).toEqual([`v${N + 1}`, `v${N + 3}`]);
   });
 
   test("a failed migration rolls every step back and leaves the version unchanged", () => {
     const { db, backups } = fresh();
-    const bad = [...MIGRATIONS, extra(2), extra(3, "CREATE TABLE nope (")];
+    const bad = [...MIGRATIONS, extra(N + 1), extra(N + 2, "CREATE TABLE nope (")];
     expect(() => migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: bad })).toThrow(MigrationFailedError);
-    expect(currentVersion(db).version).toBe(1);
-    expect(db.query("SELECT 1 FROM sqlite_master WHERE name = 'extra_2'").get()).toBeNull();
+    expect(currentVersion(db).version).toBe(N);
+    expect(db.query(`SELECT 1 FROM sqlite_master WHERE name = 'extra_${N + 1}'`).get()).toBeNull();
   });
 
   test("a database newer than the rollback window is refused, naming the backups", () => {
     const { db, backups } = fresh();
-    migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: [...MIGRATIONS, extra(2), extra(3), extra(4)] });
+    migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: [...MIGRATIONS, extra(N + 1), extra(N + 2), extra(N + 3)] });
     expect(() => migrate(db, { backupDir: backups, runtimeVersion: "t" })).toThrow(DatabaseTooNewError);
     // Within the window it opens.
     const db2 = openDb(join(dir, "second.db"));
     const b2 = join(dir, "b2");
-    migrate(db2, { backupDir: b2, runtimeVersion: "t", migrations: [...MIGRATIONS, extra(2)] });
-    expect(migrate(db2, { backupDir: b2, runtimeVersion: "t" })).toEqual({ status: "newer_compatible", version: 2 });
+    migrate(db2, { backupDir: b2, runtimeVersion: "t", migrations: [...MIGRATIONS, extra(N + 1)] });
+    expect(migrate(db2, { backupDir: b2, runtimeVersion: "t" })).toEqual({ status: "newer_compatible", version: N + 1 });
     db2.close();
   });
 });
@@ -170,8 +172,8 @@ describe("content and blobs (§6.1)", () => {
 
 describe("the SDK session store (F1, F2)", () => {
   test("append is idempotent by uuid, keeps order, and separates subagent subpaths", async () => {
-    const { db } = fresh();
-    const s = new SqliteSessionStore(db);
+    const { store } = fresh();
+    const s = new SqliteSessionStore(store);
     const key = { projectKey: "homerun", sessionId: "s1" };
     const e = (uuid: string, n: number) => ({ type: "user", uuid, n }) as never;
     await s.append(key, [e("u1", 1), e("u2", 2)]);

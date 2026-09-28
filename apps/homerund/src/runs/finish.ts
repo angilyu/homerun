@@ -1,21 +1,27 @@
 import type { Origin, RunError, TerminalRunState } from "@homerun/core";
-import { appendEvent } from "../store/events";
+import { appendEvent, callsWithoutResult } from "../store/events";
 import { getRunRow, pendingInputRequests, runErrorJson, setInputRequestState, setRunState, type RunRow } from "../store/rows";
 import type { Store } from "../store/store";
 
 /**
  * Put a run in a terminal state and append its single `run.end` (§5.7). Pending input requests
- * are cancelled with `input.resolved`. Must be called inside a transaction or on its own.
+ * are cancelled with `input.resolved`. With `unresolved`, each `tool.call` still without a result
+ * gets an error result with that text first, so a finished run leaves no call open.
  */
 export function finishRun(
   store: Store,
   runId: string,
   state: TerminalRunState,
   error: RunError | null,
-  opts: { now: number; reapPgid?: number | null },
+  opts: { now: number; reapPgid?: number | null; unresolved?: string },
 ): RunRow {
   return store.tx(() => {
     const cur = getRunRow(store, runId)!;
+    if (opts.unresolved) {
+      for (const c of callsWithoutResult(store, runId)) {
+        appendEvent(store, cur.thread_id, runId, "tool.result", { tool_call_id: c.payload.tool_call_id, status: "error", output: null, error: opts.unresolved }, opts.now);
+      }
+    }
     cancelInputRequests(store, cur, opts.now);
     const row = setRunState(store, runId, state, {
       ended_at: opts.now,

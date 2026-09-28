@@ -36,6 +36,36 @@ that you control from anywhere.*
 > lost writes, against 0 of 10 with `…/Homerun`). The runtime and the shell share it; logs stay
 > in its `logs/` folder.
 
+> **Changes from milestone 4.**
+>
+> §5.1: tool processes a dead `claude` left behind are found in two ways. `claude` is
+> spawned detached, which calls `setsid`, so its pid is also its session id, and anything
+> it forks stays in that session. Its Bash tool, though, starts each shell with `setsid`
+> too, so the shell leaves the session. Such a shell is found by this data dir's config path
+> in its command (the shell snapshot it sources), when no live `claude` owns it. So when
+> `claude` dies, the runtime kills four things: the recorded group, the process tree, the
+> session, and those orphaned shells. It does this at startup and while it keeps running.
+> A background job whose shell already exited still escapes.
+>
+> §5.4, step 4: the runtime writes the injected `tool_result` when the run resumes, not when
+> the user answers. It does this for every `tool_use` left open, not only the ambiguous ones:
+> - a result the SDK mirror lost;
+> - a call the gate never allowed ("did not start");
+> - a call in a run that was stopped while it waited ("outcome unknown").
+>
+> Truncation is a development switch (`HOMERUN_DEV_AMBIGUITY_MODE=truncate`). It resumes
+> from before the whole assistant message that made the call. Its known limit: messages
+> already delivered after that point are not re-sent.
+>
+> §5.7: a message held while the run waits is delivered with the answer. If the run is
+> stopped first, the message is never delivered and never sent later on its own. Clients mark
+> it "not delivered" and offer to resend it. They tell this from existing events: no
+> `run.resumed` of that run follows the message (`HeldMessages` in `@homerun/core`).
+>
+> §16.2: the crash harness runs against a simulated `claude`, not the real one. With real
+> `claude`, a kill at every boundary would need a cassette per boundary. Replay cassettes
+> cover the real `claude` paths.
+
 ---
 
 ## 1. Purpose

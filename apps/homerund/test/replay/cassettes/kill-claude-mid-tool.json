@@ -1,0 +1,609 @@
+{
+ "version": 1,
+ "scenario": "kill-claude-mid-tool",
+ "recorded_with": {
+  "claude_agent_sdk": "0.3.278",
+  "claude": "2.1.278",
+  "model": "claude-haiku-4-5"
+ },
+ "note": "claude is SIGKILLed while a destructive Bash command runs; the user answers 'Did this happen?' with not run.",
+ "entries": [
+  {
+   "summary": "/v1/messages \"Run the bash command `sleep 20 && echo ran >> side.log` exac\" → thinking, tool_use Bash",
+   "request": {
+    "path": "/v1/messages",
+    "model": "claude-haiku-4-5",
+    "tools": [
+     "Bash"
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Run the bash command `sleep 20 && echo ran >> side.log` exactly once, then reply with just the word done."
+       }
+      ]
+     }
+    ]
+   },
+   "response": {
+    "status": 200,
+    "events": [
+     {
+      "event": "message_start",
+      "data": {
+       "type": "message_start",
+       "message": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CfWVd6YsN1pynBuMrCKgM",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "container": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+         "input_tokens": 10,
+         "cache_creation_input_tokens": 9859,
+         "cache_read_input_tokens": 0,
+         "cache_creation": {
+          "ephemeral_5m_input_tokens": 9859,
+          "ephemeral_1h_input_tokens": 0
+         },
+         "output_tokens": 3,
+         "service_tier": "standard",
+         "inference_geo": "not_available"
+        },
+        "diagnostics": null,
+        "context_management": null
+       }
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 0,
+       "content_block": {
+        "type": "thinking",
+        "thinking": "",
+        "signature": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "thinking_delta",
+        "thinking": "The user wants me to run a bash command exactly once: `sleep 20 && echo ran >> side.log`, and then reply with just the word \"done\".\n\nThis is straightforward - I need to:\n1. Run the bash command\n2. Reply with \"done\"\n\nLet me execute this command.",
+        "estimated_tokens": null
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "signature_delta",
+        "signature": "replay-signature"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 0
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 1,
+       "content_block": {
+        "type": "tool_use",
+        "id": "toolu_015Fnax6aTHCyfaEQhsbQB2y",
+        "name": "Bash",
+        "input": {},
+        "caller": {
+         "type": "direct"
+        }
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "input_json_delta",
+        "partial_json": "{\"command\": \"sleep 20 && echo ran >> side.log\"}"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 1
+      }
+     },
+     {
+      "event": "message_delta",
+      "data": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use",
+        "stop_sequence": null,
+        "stop_details": null,
+        "container": null
+       },
+       "usage": {
+        "input_tokens": 10,
+        "cache_creation_input_tokens": 9859,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 137,
+        "output_tokens_details": {
+         "thinking_tokens": 72
+        }
+       },
+       "context_management": {
+        "applied_edits": []
+       }
+      }
+     },
+     {
+      "event": "message_stop",
+      "data": {
+       "type": "message_stop"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "summary": "/v1/messages \"Your process stopped unexpectedly while you were working. Yo\" → thinking, tool_use Bash",
+   "request": {
+    "path": "/v1/messages",
+    "model": "claude-haiku-4-5",
+    "tools": [
+     "Bash"
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Run the bash command `sleep 20 && echo ran >> side.log` exactly once, then reply with just the word done."
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "blocks": [
+       {
+        "t": "thinking"
+       },
+       {
+        "t": "tool_use",
+        "id": "toolu_015Fnax6aTHCyfaEQhsbQB2y",
+        "name": "Bash"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "tool_result",
+        "id": "toolu_015Fnax6aTHCyfaEQhsbQB2y",
+        "is_error": true
+       },
+       {
+        "t": "text",
+        "text": "Continue from where you left off."
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "No response requested."
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Your process stopped unexpectedly while you were working. Your last step may not have finished; continue the task. Just before the restart you called Bash with input {\"command\":\"sleep 20 && echo ran >> side.log\"}. The user confirmed that it did not run; run it again if the task still needs it."
+       }
+      ]
+     }
+    ]
+   },
+   "response": {
+    "status": 200,
+    "events": [
+     {
+      "event": "message_start",
+      "data": {
+       "type": "message_start",
+       "message": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CfWVdF3rF96w8hP7CKncD",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "container": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+         "input_tokens": 10,
+         "cache_creation_input_tokens": 341,
+         "cache_read_input_tokens": 9859,
+         "cache_creation": {
+          "ephemeral_5m_input_tokens": 341,
+          "ephemeral_1h_input_tokens": 0
+         },
+         "output_tokens": 3,
+         "service_tier": "standard",
+         "inference_geo": "not_available"
+        },
+        "diagnostics": null,
+        "context_management": null
+       }
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 0,
+       "content_block": {
+        "type": "thinking",
+        "thinking": "",
+        "signature": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "thinking_delta",
+        "thinking": "The user's original request was to run the bash command `sleep 20 && echo ran >> side.log` exactly once, then reply with just the word \"done\".\n\nThe previous attempt was interrupted before it could complete. Now I need to run it again.",
+        "estimated_tokens": null
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "signature_delta",
+        "signature": "replay-signature"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 0
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 1,
+       "content_block": {
+        "type": "tool_use",
+        "id": "toolu_01NcMRSAdDYmrQV3LshZruTk",
+        "name": "Bash",
+        "input": {},
+        "caller": {
+         "type": "direct"
+        }
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "input_json_delta",
+        "partial_json": "{\"command\": \"sleep 20 && echo ran >> side.log\"}"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 1
+      }
+     },
+     {
+      "event": "message_delta",
+      "data": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use",
+        "stop_sequence": null,
+        "stop_details": null,
+        "container": null
+       },
+       "usage": {
+        "input_tokens": 10,
+        "cache_creation_input_tokens": 341,
+        "cache_read_input_tokens": 9859,
+        "output_tokens": 125,
+        "output_tokens_details": {
+         "thinking_tokens": 60
+        }
+       },
+       "context_management": {
+        "applied_edits": []
+       }
+      }
+     },
+     {
+      "event": "message_stop",
+      "data": {
+       "type": "message_stop"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "summary": "/v1/messages tool_result(ok) → thinking, text",
+   "request": {
+    "path": "/v1/messages",
+    "model": "claude-haiku-4-5",
+    "tools": [
+     "Bash"
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Run the bash command `sleep 20 && echo ran >> side.log` exactly once, then reply with just the word done."
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "blocks": [
+       {
+        "t": "thinking"
+       },
+       {
+        "t": "tool_use",
+        "id": "toolu_015Fnax6aTHCyfaEQhsbQB2y",
+        "name": "Bash"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "tool_result",
+        "id": "toolu_015Fnax6aTHCyfaEQhsbQB2y",
+        "is_error": true
+       },
+       {
+        "t": "text",
+        "text": "Continue from where you left off."
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "No response requested."
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Your process stopped unexpectedly while you were working. Your last step may not have finished; continue the task. Just before the restart you called Bash with input {\"command\":\"sleep 20 && echo ran >> side.log\"}. The user confirmed that it did not run; run it again if the task still needs it."
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "blocks": [
+       {
+        "t": "thinking"
+       },
+       {
+        "t": "tool_use",
+        "id": "toolu_01NcMRSAdDYmrQV3LshZruTk",
+        "name": "Bash"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "tool_result",
+        "id": "toolu_01NcMRSAdDYmrQV3LshZruTk",
+        "is_error": false
+       }
+      ]
+     }
+    ]
+   },
+   "response": {
+    "status": 200,
+    "events": [
+     {
+      "event": "message_start",
+      "data": {
+       "type": "message_start",
+       "message": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CfWVesFDpgpe7SuBFtv2U",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "container": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+         "input_tokens": 8,
+         "cache_creation_input_tokens": 219,
+         "cache_read_input_tokens": 10200,
+         "cache_creation": {
+          "ephemeral_5m_input_tokens": 219,
+          "ephemeral_1h_input_tokens": 0
+         },
+         "output_tokens": 1,
+         "service_tier": "standard",
+         "inference_geo": "not_available"
+        },
+        "diagnostics": null,
+        "context_management": null
+       }
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 0,
+       "content_block": {
+        "type": "thinking",
+        "thinking": "",
+        "signature": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "thinking_delta",
+        "thinking": "Good, the command completed successfully. Now I need to reply with just the word \"done\" as requested.",
+        "estimated_tokens": null
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "signature_delta",
+        "signature": "replay-signature"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 0
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 1,
+       "content_block": {
+        "type": "text",
+        "text": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "text_delta",
+        "text": "done"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 1
+      }
+     },
+     {
+      "event": "message_delta",
+      "data": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "stop_details": null,
+        "container": null
+       },
+       "usage": {
+        "input_tokens": 8,
+        "cache_creation_input_tokens": 219,
+        "cache_read_input_tokens": 10200,
+        "output_tokens": 34,
+        "output_tokens_details": {
+         "thinking_tokens": 27
+        }
+       },
+       "context_management": {
+        "applied_edits": []
+       }
+      }
+     },
+     {
+      "event": "message_stop",
+      "data": {
+       "type": "message_stop"
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

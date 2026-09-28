@@ -4,8 +4,14 @@ import type { Bus } from "../bus";
 /**
  * The database plus the event bus. Persisted events reach subscribers only after their
  * transaction commits, so a client never sees an event that a rollback later removes.
+ *
+ * Every write goes through `tx`, so each durable change is one commit. The crash harness
+ * (§16.2) watches commits through `Store.commitObserver` to kill the process at each one.
  */
 export class Store {
+  /** Test-only: called synchronously after every commit, before any after-commit hook. */
+  static commitObserver: (() => void) | null = null;
+
   private pending: Array<() => void> | null = null;
 
   constructor(
@@ -25,6 +31,7 @@ export class Store {
     } finally {
       this.pending = null;
     }
+    Store.commitObserver?.();
     for (const h of hooks) h();
     return out;
   }
