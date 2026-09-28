@@ -2159,9 +2159,9 @@ item failed, the design above has been revised.
     components directory (§5.5), and **on a clean macOS 26 VM** with the
     self-signed build and quarantine removed, and again with the notarized
     Developer ID build. The same run with quarantine kept waits on the item 6
-    VM step. The
-    clean VM found two issues proposed for review (spike-results entries 26
-    and 27: the data dir name, and a CLT install dialog from `uvx`).
+    VM step. The clean VM found two issues: the data dir name (spike-results
+    entry 26, adopted in milestone 2 as `…/Homerun`) and a CLT install dialog
+    from `uvx` (entry 27, proposed for review).
     [Evidence](spike-results.md#10-mcp-servers-via-bundled-node-and-uv).
 
 **Measure and record:** install size (with Node and `uv`), idle memory, and
