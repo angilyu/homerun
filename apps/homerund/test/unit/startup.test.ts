@@ -71,6 +71,41 @@ describe("startup recovery (§5.4)", () => {
     expect(eventTypes(b, thread_id)).toEqual(["user.message", "run.started", "run.resumed", "message.final", "run.end"]);
   });
 
+  test("a finished call whose mirrored tool_result was lost is reported to the model as finished", async () => {
+    // The Post hook wrote tool.result, but the SDK mirror died before storing claude's tool_result
+    // (it can lag the API request): on resume claude shows the call as interrupted, so the note
+    // tells the model it did finish and must not be run again.
+    const { b, run_id } = await crashAndRestart(
+      async (s) => {
+        await s.nextInput();
+        await s.tool({ toolCallId: "t1", tool: "Bash", input: { command: "echo ran >> side.log" } }, async () => ({ ok: true, output: "" }));
+        await never();
+      },
+      async (s) => {
+        const inputs = [(await s.nextInput())!, (await s.nextInput())!];
+        s.emit({ type: "message", messageId: "m2", text: "done" });
+        s.result(inputs.map((i) => i.uuid));
+      },
+      {
+        until: async (a, id) => until(() => a.rt.store.db.query("SELECT 1 FROM thread_events WHERE run_id = ? AND type = 'tool.result'").get(id) !== null, 2000, "tool.result"),
+        beforeRestart: (dir, runId) => {
+          const db = openDb(join(dir, "homerun.db"));
+          const { sdk_session_id } = db.query<{ sdk_session_id: string }, [string]>("SELECT sdk_session_id FROM runs WHERE run_id = ?").get(runId)!;
+          const entry = { type: "assistant", uuid: crypto.randomUUID(), message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }] } };
+          db.query("INSERT INTO sdk_transcripts (project_key, session_id, subpath, seq, uuid, entry) VALUES ('homerun', ?, '', 1, ?, ?)").run(sdk_session_id, entry.uuid, JSON.stringify(entry));
+          db.close();
+        },
+      },
+    );
+    expect(b.rt.report.recovered).toEqual([{ run_id, outcome: expect.objectContaining({ kind: "requeued" }) }]);
+    await b.shell().then((c) => c.call("secrets.set", { name: "anthropic_api_key", value: KEY }));
+    await b.rt.scheduler.idle();
+    const note = b.engine.sessions[0]!.opts.initialInputs[1]!.text;
+    expect(note).toStartWith(RESTART_NOTE);
+    expect(note).toContain("Your Bash call t1 did finish (successfully) even though it shows as interrupted. Do not run it again.");
+    expect(row(b, run_id).state).toBe("succeeded");
+  });
+
   test("a read-class call in flight gets interrupted_retryable and the run resumes", async () => {
     const { b, thread_id, run_id } = await crashAndRestart(
       async (s) => {

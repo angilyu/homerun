@@ -300,7 +300,14 @@ describe(`replay (${MODE})`, () => {
         await sub.waitFor((e) => e.type === "tool.result", 10_000, "tool.result");
         const [before] = sql<{ claude_pid: number; sdk_session_id: string }>(s.hr, "SELECT claude_pid, sdk_session_id FROM runs WHERE run_id = ?", sent.run_id);
         expect(before!.claude_pid).toBeGreaterThan(0);
-        await until(() => sql(s.hr, "SELECT 1 FROM sdk_transcripts WHERE session_id = ? AND entry LIKE '%tool_result%'", before!.sdk_session_id).length > 0, 10_000, "the tool result in sdk_transcripts");
+        // The mirrored tool_result entry itself (not just any entry naming it: the prompt snapshot
+        // does). Without this wait the crash races the mirror, and the resumed request differs.
+        const mirrored = () =>
+          sql<{ entry: string }>(s.hr, "SELECT entry FROM sdk_transcripts WHERE session_id = ? AND json_extract(entry, '$.type') = 'user'", before!.sdk_session_id).some((r) => {
+            const content = (JSON.parse(r.entry) as { message?: { content?: unknown } }).message?.content;
+            return Array.isArray(content) && content.some((b: { type?: string; is_error?: boolean }) => b.type === "tool_result" && !b.is_error);
+          });
+        await until(mirrored, 10_000, "the tool result in sdk_transcripts");
 
         await s.crashAndRestart();
         expect(groupAlive(before!.claude_pid)).toBe(false);
