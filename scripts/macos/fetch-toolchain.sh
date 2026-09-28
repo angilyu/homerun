@@ -43,8 +43,9 @@ cp "$VENDOR/uv/uv" "$OUT/uv-$TRIPLE"
 CLAUDE_SRC="$(ls -d "$ROOT"/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-darwin-arm64@*/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude | head -1)"
 cp "$CLAUDE_SRC" "$OUT/claude-$TRIPLE"
 
-# homerund
-( cd "$ROOT/apps/homerund" && "$ROOT/node_modules/.bin/bun" build --compile --minify --define "HOMERUND_VERSION=\"$HOMERUND_VERSION\"" ./src/main.ts --outfile "$OUT/homerund-$TRIPLE" >/dev/null )
+# homerund: the desktop shell still speaks the milestone 0 spike protocol (run.start, keychain.*,
+# helpers.check), so the bundle keeps the spike runtime until the shell moves to the real protocol (M7).
+( cd "$ROOT/spikes/homerund-m0" && "$ROOT/node_modules/.bin/bun" build --compile --minify --define "HOMERUND_VERSION=\"$HOMERUND_VERSION\"" ./src/main.ts --outfile "$OUT/homerund-$TRIPLE" >/dev/null )
 
 chmod 755 "$OUT"/*-"$TRIPLE"
 ls -lh "$OUT"

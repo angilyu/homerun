@@ -1,1 +1,1 @@
-{ "extends": "../../tsconfig.base.json", "include": ["src", "../../apps/homerund/src"] }
+{ "extends": "../../tsconfig.base.json", "include": ["src", "../homerund-m0/src"] }
