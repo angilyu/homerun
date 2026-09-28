@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun build --compile --minify --sourcemap ./src/main.ts --outfile ./dist/homerund",
+    "build:dev": "bun build --compile --sourcemap --define 'HOMERUND_BUILD=\"development\"' ./src/main.ts --outfile ./dist/homerund-dev",
     "typecheck": "tsc -p .",
     "test": "bun test",
     "test:unit": "bun test test/unit",
