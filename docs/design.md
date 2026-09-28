@@ -26,9 +26,15 @@ that you control from anywhere.*
 > **Changes from milestone 2.** The bundle identifier is `com.angilyu.homerun`,
 > replacing the milestone 0 placeholder. The iOS app will use
 > `com.angilyu.homerun.ios`, and the shared keychain access group is
-> `<TEAMID>.com.angilyu.homerun.shared` (§11). The data directory follows the identifier:
-> `~/Library/Application Support/com.angilyu.homerun/`. No migration is needed,
+> `<TEAMID>.com.angilyu.homerun.shared` (§11). No migration is needed,
 > since there were no users.
+>
+> The data directory is `~/Library/Application Support/Homerun/`, named separately from the
+> bundle identifier. Under the milestone 0 placeholder the folder ended in `.app`, macOS treated
+> it as an app bundle, and once npm had written a native `.node` add-on into it, XProtect / App
+> Management intermittently denied Homerun's own writes with EPERM (spike entry 26: 5 of 10 runs
+> lost writes, against 0 of 10 with `…/Homerun`). The runtime and the shell share it; logs stay
+> in its `logs/` folder.
 
 ---
 
@@ -644,7 +650,7 @@ shows a one-time *"Downloading tools (about 60 MB)"* step.
   certificate leaf[subject.OU] = "<TEAMID>" and cdhash H"<cdhash>"'`, or
   `SecStaticCodeCheckValidity` with that requirement); remove any
   `com.apple.quarantine` attribute; then rename the directory atomically to
-  `~/Library/Application Support/com.angilyu.homerun/components/<name>/<version>/`,
+  `~/Library/Application Support/Homerun/components/<name>/<version>/`,
   owned by the user with mode `0700`. The previous version is kept until the new
   one passes a smoke test (`node -e`, `uv --version`).
 - **Launched** only by the hardened runtime, by absolute path. Never on the

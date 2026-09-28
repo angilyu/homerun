@@ -3,8 +3,14 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CONCURRENCY, type BuildChannel } from "@homerun/core";
 
-/** macOS bundle identifier; also names the Application Support folder. */
+/** macOS bundle identifier. */
 export const APP_ID = "com.angilyu.homerun";
+/**
+ * The Application Support folder is named separately from the bundle id: a folder whose name
+ * ends like a bundle (the old `dev.homerun.app`) was treated as one by macOS, and writes into it
+ * were intermittently denied (spike entry 26).
+ */
+export const DATA_DIR_NAME = "Homerun";
 
 export const RUNTIME_VERSION: string = typeof HOMERUND_VERSION === "string" ? HOMERUND_VERSION : "0.2.0-dev";
 /** Release builds are compiled with `--define HOMERUND_BUILD='"release"'`. Everything else is development. */
@@ -121,7 +127,7 @@ export function loadConfig(input: ConfigInput = {}): Config {
   const argv = input.argv ?? [];
   const build = BUILD_CHANNEL;
   const dev = build === "development";
-  const dataDir = ensureDir(resolve(env.HOMERUN_DATA_DIR ?? join(homedir(), "Library", "Application Support", APP_ID)));
+  const dataDir = ensureDir(resolve(env.HOMERUN_DATA_DIR ?? join(homedir(), "Library", "Application Support", DATA_DIR_NAME)));
   const { runDir, socketPath } = chooseRunDir(dataDir);
   ensureDir(runDir);
 

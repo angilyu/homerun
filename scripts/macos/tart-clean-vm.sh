@@ -54,7 +54,7 @@ open -a /Applications/Homerun.app --env HOMERUN_SELFTEST_NPX_PKG="/tmp/mcp-nativ
 # The selftest driver exits the app when done; wait for that (or 180 s).
 sleep 5
 for _ in $(seq 180); do pgrep -f /Applications/Homerun.app/Contents/MacOS/homerun >/dev/null || break; sleep 1; done
-echo "## shell.log"; cut -c1-3000 ~/Library/Application\ Support/com.angilyu.homerun/logs/shell.log 2>/dev/null || echo "  (no shell.log: app did not start; see Gatekeeper result above)"
+echo "## shell.log"; cut -c1-3000 ~/Library/Application\ Support/Homerun/logs/shell.log 2>/dev/null || echo "  (no shell.log: app did not start; see Gatekeeper result above)"
 echo "## syspolicyd (last 2 min)"; log show --last 2m --predicate 'process == "syspolicyd"' --style compact 2>/dev/null | grep -i homerun | tail -20
 VMEOF
 echo "report: $OUT/report.txt"

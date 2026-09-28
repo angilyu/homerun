@@ -8,7 +8,7 @@ export const APP_ID = "com.angilyu.homerun";
 export const isCompiled = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN");
 
 export function dataDir(): string {
-  const d = process.env.HOMERUN_DATA_DIR ?? join(homedir(), "Library", "Application Support", APP_ID);
+  const d = process.env.HOMERUN_DATA_DIR ?? join(homedir(), "Library", "Application Support", "Homerun");
   mkdirSync(d, { recursive: true, mode: 0o700 });
   return d;
 }
