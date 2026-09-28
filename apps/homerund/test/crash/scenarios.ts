@@ -2,6 +2,8 @@ import type { Step } from "./sim-claude";
 
 export const TOKEN = "c".repeat(64);
 export const CLIENT_MSG_ID = "00000000-0000-4000-8000-000000000001";
+/** Sent while the run waits for "Did this happen?": held, then delivered with the answer. */
+export const HELD_MSG_ID = "00000000-0000-4000-8000-000000000002";
 
 export interface ChildArgs {
   dir: string;

@@ -3,12 +3,12 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
-import { isTerminal, type RunState } from "@homerun/core";
+import { isTerminal, undeliveredMessages, type RunState, type ThreadEvent } from "@homerun/core";
 import { Bus } from "../../src/bus";
 import { NOT_RUN_TEXT } from "../../src/runs/resume";
 import { Store } from "../../src/store/store";
 import { chainEntries, chainTo, chainTools } from "../../src/store/transcript";
-import { CLIENT_MSG_ID, SCENARIOS, type ChildArgs } from "./scenarios";
+import { CLIENT_MSG_ID, HELD_MSG_ID, SCENARIOS, type ChildArgs } from "./scenarios";
 import { INTERRUPTED } from "./sim-claude";
 
 /**
@@ -16,10 +16,11 @@ import { INTERRUPTED } from "./sim-claude";
  * makes (`Store.commitObserver`) and the points just before and after a tool's side effect. For
  * each boundary k of a scenario, homerund runs in a child process that SIGKILLs itself at k; a
  * second life on the same data dir recovers, answers "Did this happen?" truthfully (from the
- * ledger the fake tools write, as the user would know), and finishes. Then invariants that must
- * hold however the crash fell are checked: every side effect happened exactly once, every call has
- * one result, the transcript the model resumes from never shows a call as merely "interrupted",
- * and the thread ends with a succeeded run.
+ * ledger the fake tools write, as the user would know), and finishes. The user also sends a
+ * message while the run waits, which is held. Then invariants that must hold however the crash
+ * fell are checked: every side effect happened exactly once, every call has one result, the
+ * transcript the model resumes from never shows a call as merely "interrupted", the held message
+ * reaches the model once and is not shown as undelivered, and the thread ends with a succeeded run.
  *
  * The same sweep runs with `claude` dying alone at each boundary (homerund keeps running), and in
  * the truncate fallback mode. A second crash during the recovery life is swept for the first
@@ -108,6 +109,15 @@ function check(dir: string, scenario: string): string[] {
     if (pending) problems.push(`${pending} pending input requests`);
     const unconsumed = count("SELECT COUNT(*) AS n FROM run_inputs WHERE consumed_at IS NULL");
     if (unconsumed) problems.push(`${unconsumed} undelivered inputs`);
+    const events = db
+      .query<{ seq: number; run_id: string | null; ts: number; type: string; payload: string }, [string]>("SELECT seq, run_id, ts, type, payload FROM thread_events WHERE thread_id = ? ORDER BY seq")
+      .all(threadId)
+      .map((e) => ({ ...e, thread_id: threadId, payload: JSON.parse(e.payload) }) as ThreadEvent);
+    const held = events.filter((e) => e.type === "user.message" && e.payload.client_msg_id === HELD_MSG_ID);
+    if (held.length !== (asked.length ? 1 : 0)) problems.push(`the message sent while waiting is in the thread ${held.length} times`);
+    if (held.some((e) => e.type === "user.message" && e.payload.disposition !== "held")) problems.push("the message sent while waiting was not held");
+    const undelivered = undeliveredMessages(events).length;
+    if (undelivered) problems.push(`${undelivered} message(s) shown as not delivered`);
 
     for (const sid of new Set(runs.map((r) => r.sdk_session_id).filter((s): s is string => !!s))) {
       const interrupted = count("SELECT COUNT(*) AS n FROM sdk_transcripts WHERE session_id = ? AND instr(entry, ?) > 0", sid, INTERRUPTED);
@@ -123,6 +133,8 @@ function check(dir: string, scenario: string): string[] {
       }
       const prompts = chain.filter((t) => t.uuid === CLIENT_MSG_ID).length;
       if (prompts !== 1) problems.push(`the user's message is in the transcript ${prompts} times`);
+      const heldIn = chain.filter((t) => t.uuid === HELD_MSG_ID).length;
+      if (heldIn !== held.length) problems.push(`the held message is in the transcript ${heldIn} times`);
     }
   } finally {
     db.close();

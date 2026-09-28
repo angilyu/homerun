@@ -15,7 +15,7 @@ import { startRuntime } from "../../src/runtime";
 import { pendingInputRequests } from "../../src/store/rows";
 import { Store } from "../../src/store/store";
 import { MOCK_KEY } from "../helpers";
-import { SCENARIOS, type ChildArgs, CLIENT_MSG_ID, TOKEN } from "./scenarios";
+import { SCENARIOS, type ChildArgs, CLIENT_MSG_ID, HELD_MSG_ID, TOKEN } from "./scenarios";
 import { SimEngine } from "./sim-claude";
 
 const args = JSON.parse(process.argv[2]!) as ChildArgs;
@@ -72,6 +72,8 @@ const deadline = Date.now() + 15_000;
 for (;;) {
   for (const r of pendingInputRequests(rt.store, { threadId })) {
     if (r.prompt.type !== "ambiguous_tool_call") continue;
+    // The user also writes while the run waits (idempotent across lives).
+    rt.manager.sendMessage({ thread_id: threadId, client_msg_id: HELD_MSG_ID, text: "Status?" }, origin);
     await shell.call("input.answer", {
       request_id: r.request_id,
       response: { type: "ambiguous_tool_call", outcome: happened(r.prompt.tool_call_id) ? "completed" : "not_run" },

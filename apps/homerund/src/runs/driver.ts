@@ -115,8 +115,6 @@ export class RunDriver {
           scheduled_for: row.scheduled_for,
           attempt: row.attempt,
         }, t);
-      } else {
-        appendEvent(this.store, this.threadId, this.runId, "run.resumed", { reason: (row.resume_reason ?? "runtime_restart") as "runtime_restart" }, t);
       }
     });
     this.phase = "running";
@@ -149,6 +147,11 @@ export class RunDriver {
     const cwd = spec.policy.roots[0] ? expandHome(spec.policy.roots[0], cfg.userHome) : join(cfg.workspacesDir, this.threadId);
     if (!spec.policy.roots[0]) mkdirSync(cwd, { recursive: true, mode: 0o700 });
     else if (!existsSync(cwd)) throw new RunSetupError("root_missing", `The folder ${spec.policy.roots[0]} does not exist.`);
+    // Only once the run can start: a resume that fails here never delivered its held messages,
+    // and clients tell that from the missing `run.resumed` (`HeldMessages`).
+    if (row.started_at !== null) {
+      appendEvent(this.store, this.threadId, this.runId, "run.resumed", { reason: (row.resume_reason ?? "runtime_restart") as "runtime_restart" }, now(this.ctx));
+    }
 
     // Resume this run's own session after a restart, or the thread's last session for a follow-up.
     const prev = row.sdk_session_id ? null : lastSessionRun(this.store, this.threadId);

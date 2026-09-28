@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { echoScript, type FakeScript } from "../../src/agent/fake-engine";
 import { groupAlive, pidAlive } from "../../src/agent/claude/spawn";
@@ -10,7 +11,7 @@ import { RESTART_NOTE } from "../../src/runs/recovery";
 import { NOT_RUN_TEXT } from "../../src/runs/resume";
 import { openDb } from "../../src/store/db";
 import { chainEntries, chainTo, chainTools } from "../../src/store/transcript";
-import { RPC_ERROR } from "@homerun/core";
+import { RPC_ERROR, undeliveredMessages } from "@homerun/core";
 import { RpcCallError } from "../../src/rpc/client";
 import { sessionSpec, socketRuntime, until, uuid, type SocketRuntime } from "../helpers";
 
@@ -23,12 +24,12 @@ afterEach(async () => {
 const never = () => new Promise<never>(() => {});
 
 /** A runtime that is "killed" mid-run, then a fresh one on the same data dir. */
-async function crashAndRestart(first: FakeScript, second: FakeScript, o: { builtin?: string[]; env?: Record<string, string>; beforeRestart?: (dir: string, runId: string) => void; until?: (s: SocketRuntime, runId: string) => Promise<void> } = {}) {
+async function crashAndRestart(first: FakeScript, second: FakeScript, o: { builtin?: string[]; roots?: string[]; env?: Record<string, string>; beforeRestart?: (dir: string, runId: string) => void; until?: (s: SocketRuntime, runId: string) => Promise<void> } = {}) {
   const env = { HOMERUN_DEV_AUTO_APPROVE: "1" };
   const a = await socketRuntime({ script: first, env });
   const shell = await a.shell();
   await shell.call("secrets.set", { name: "anthropic_api_key", value: KEY });
-  const { task, thread_id } = await shell.call("tasks.create", { spec: sessionSpec({ builtin: o.builtin ?? ["Bash", "Read"] }) as never });
+  const { task, thread_id } = await shell.call("tasks.create", { spec: sessionSpec({ builtin: o.builtin ?? ["Bash", "Read"], ...(o.roots ? { roots: o.roots } : {}) }) as never });
   const sent = await shell.call("messages.send", { thread_id, client_msg_id: uuid(), text: "go" });
   await (o.until ? o.until(a, sent.run_id) : until(() => a.engine.sessions.length === 1, 2000, "session"));
   // Past the delta coalescing window, so no timer of the dead runtime fires after the crash.
@@ -359,6 +360,75 @@ describe('answering "Did this happen?" (milestone 4)', () => {
     const result = b.rt.store.db.query<{ payload: string }, []>("SELECT payload FROM thread_events WHERE type = 'tool.result'").get()!;
     expect(JSON.parse(result.payload)).toMatchObject({ tool_call_id: "b1", status: "resolved_not_run" });
     expect(row(b, run_id)).toMatchObject({ resume_note: null, resume_at: null });
+    const events = (await shell.call("threads.history", { thread_id: thread_id as never, limit: 500 })).events;
+    expect(undeliveredMessages(events)).toEqual([]);
+  }, 10_000);
+
+  test("a resume that cannot start never delivered its held messages", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hr-root-"));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const { b, thread_id, run_id } = await crashAndRestart(
+      async (s) => {
+        await s.nextInput();
+        await s.tool({ toolCallId: "b1", tool: "Bash", input: { command: "rm -rf build" } }, never);
+      },
+      async () => {
+        throw new Error("must not start");
+      },
+      { until: callsLogged(1), roots: [root], beforeRestart: (dir, id) => void mirrorToolUses(dir, id, ["b1"]) },
+    );
+    const shell = await b.shell();
+    await shell.call("secrets.set", { name: "anthropic_api_key", value: KEY });
+    await shell.call("messages.send", { thread_id: thread_id as never, client_msg_id: uuid(), text: "did it?" });
+    const [req] = (await shell.call("input.list_pending", {})).requests;
+    // The task's folder is gone, so the resumed run fails before claude starts.
+    rmSync(root, { recursive: true, force: true });
+    await shell.call("input.answer", { request_id: req!.request_id, response: { type: "ambiguous_tool_call", outcome: "completed" }, via: "app" });
+    await until(() => row(b, run_id).state === "failed", 3000, "failed resume");
+    expect(b.engine.sessions).toHaveLength(0);
+    const events = (await shell.call("threads.history", { thread_id: thread_id as never, limit: 500 })).events;
+    expect(events.at(-1)).toMatchObject({ type: "run.end", payload: { state: "failed", error: { code: "root_missing" } } });
+    expect(undeliveredMessages(events).map((e) => e.payload.text)).toEqual(["did it?"]);
+  }, 10_000);
+
+  test("stopping a parked run leaves its held messages visibly undelivered; nothing sends them later (Q9)", async () => {
+    const { a, b, thread_id, run_id } = await crashAndRestart(
+      async (s) => {
+        await s.nextInput();
+        await s.tool({ toolCallId: "b1", tool: "Bash", input: { command: "rm -rf build" } }, never);
+      },
+      async (s) => {
+        const inputs: string[] = [];
+        for (let i = 0; i < s.opts.initialInputs.length; i++) inputs.push((await s.nextInput())!.uuid);
+        s.emit({ type: "message", messageId: "m3", text: "unknown" });
+        s.result(inputs);
+      },
+      { until: callsLogged(1), beforeRestart: (dir, id) => void mirrorToolUses(dir, id, ["b1"]) },
+    );
+    const shell = await b.shell();
+    await shell.call("secrets.set", { name: "anthropic_api_key", value: KEY });
+    const held = await shell.call("messages.send", { thread_id: thread_id as never, client_msg_id: uuid(), text: "did it?" });
+    expect(held).toMatchObject({ run_id, disposition: "held" });
+    expect(await shell.call("runs.stop", { run_id: run_id as never })).toEqual({ state: "cancelled" });
+    const history = async () => (await shell.call("threads.history", { thread_id: thread_id as never, limit: 500 })).events;
+    const undelivered = undeliveredMessages(await history());
+    expect(undelivered.map((e) => [e.run_id, e.payload.text])).toEqual([[run_id, "did it?"]]);
+    expect(b.engine.sessions).toHaveLength(0);
+
+    // A follow-up starts a new run with only its own message; the held one is not carried over.
+    const next = await shell.call("messages.send", { thread_id: thread_id as never, client_msg_id: uuid(), text: "next" });
+    expect(next.run_id).not.toBe(run_id);
+    await until(() => row(b, next.run_id).state === "succeeded", 3000, "follow-up run");
+    expect(b.engine.sessions.flatMap((s) => s.opts.initialInputs.map((i) => i.text))).toEqual(["next"]);
+    expect(undeliveredMessages(await history()).map((e) => e.payload.text)).toEqual(["did it?"]);
+
+    // Nor after a restart.
+    b.crash();
+    const c = await socketRuntime({ dir: a.dir, script: async () => { throw new Error("must not start"); } });
+    cleanups.push(() => c.close());
+    await Bun.sleep(50);
+    expect(c.engine.sessions).toHaveLength(0);
+    expect(row(c, run_id).state).toBe("cancelled");
   }, 10_000);
 
   test("parallel calls wait for every answer; truncate mode resumes from before the assistant message", async () => {
