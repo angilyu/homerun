@@ -22,6 +22,7 @@ dirs = "5"
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-service-management = { version = "0.3", features = ["SMAppService"] }
+security-framework = { version = "3.7", features = ["OSX_10_15"] }
 
 [profile.release]
 strip = true

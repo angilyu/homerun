@@ -791,6 +791,9 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
     later affects the keychain items and access group (§11), the login item and the updater. The spike did not test
     whether a new identifier alone avoids the problem; the decoupled data dir is the tested fix.
     Evidence: `.spike/results/tart-clean-vm/datadir-app-suffix-ab.txt`, `eperm-fs_usage-excerpt.txt`.
+    **Adopted in milestone 2:** the data dir is `~/Library/Application Support/Homerun`, decoupled from the
+    bundle identifier, which is now `com.angilyu.homerun` (no `.app` suffix either). This spike branch still
+    uses `…/com.angilyu.homerun` after the rename, which also doesn't end in `.app`.
 27. **First `uvx` use opens the "Install Command Line Developer Tools" dialog on a clean Mac** (§5.5, entries 21
     and 22). While installing its managed CPython, uv runs `install_name_tool -id …/libpython3.14.dylib`. It looks
     next to itself first (`Contents/MacOS/install_name_tool`: ENOENT), then runs `/usr/bin/install_name_tool`,

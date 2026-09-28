@@ -10,6 +10,8 @@
 #      keychain, starts a long Bash run, then updates mid-tool-call; the shell checkpoints
 #      homerund, installs, restarts; v_to's homerund reads the keychain and resumes the run
 #   4. waits for the run to complete and writes evidence to .spike/results/item8-<label>/
+#   With HOMERUN_KEYCHAIN_GROUP set (a TEAM_ID + profile build), the shell also writes the key to the
+#   data-protection keychain before the update and reads it after (design §11: the shell owns it).
 #
 # Model: the scripted mock API (spikes/sdk/src/mock-api.ts) unless REAL_API=1 and
 # ANTHROPIC_API_KEY is set. The key is never written to disk by this script.
@@ -59,6 +61,7 @@ T0=$(date +%s)
 env -i HOME="$HOME" USER="$USER" TMPDIR="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin HOMERUN_DATA_DIR="$D" \
   ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" ${HOMERUN_ANTHROPIC_BASE_URL:+HOMERUN_ANTHROPIC_BASE_URL="$HOMERUN_ANTHROPIC_BASE_URL"} \
   HOMERUN_UPDATE_CWD="$HOMERUN_UPDATE_CWD" HOMERUN_UPDATE_PROMPT="$HOMERUN_UPDATE_PROMPT" \
+  ${HOMERUN_KEYCHAIN_GROUP:+HOMERUN_KEYCHAIN_GROUP="$HOMERUN_KEYCHAIN_GROUP"} \
   "$W/inst/Homerun.app/Contents/MacOS/homerun" --autotest update-flow > "$W/app.stdout" 2>&1 &
 
 q() { sqlite3 -readonly -json "$D/homerun.db" "$1" 2>/dev/null; }
@@ -85,6 +88,9 @@ INST="$W/inst/Homerun.app"
   codesign -d -r- "$INST/Contents/MacOS/homerund" 2>&1 | grep designated
   echo "-- startup keychain reads (one per homerund start):"
   grep -h "startup keychain read" "$D/logs/homerund.log"
+  echo "-- shell data-protection keychain (set before the update, get after; needs HOMERUN_KEYCHAIN_GROUP):"
+  grep -h "shell keychain" "$D/logs/shell.log" | sed 's/^[0-9]* //'
+  echo "-- SecurityAgent prompts during the run: $(log show --start "@$T0" --end "@$T1" --style compact --predicate 'process == "securityd" AND eventMessage CONTAINS "displaying keychain prompt"' 2>/dev/null | grep -c 'displaying keychain prompt')"
   echo "-- progress.log:"; cat "$W/cwd/progress.log" 2>/dev/null
 } > "$OUT/summary.txt"
 cat "$OUT/summary.txt"; cat "$OUT/runs.json"
