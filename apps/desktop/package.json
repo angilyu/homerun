@@ -3,13 +3,13 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "The desktop app (§4, §5.1): the Tauri shell in src-tauri/ and the React DOM views in src/. State and logic live in @homerun/app-state.",
+  "description": "The desktop app (\u00a74, \u00a75.1): the Tauri shell in src-tauri/ and the React DOM views in src/. State and logic live in @homerun/app-state.",
   "scripts": {
     "tauri": "tauri",
     "dev": "bun scripts/dev.ts",
     "dev:tauri": "bun scripts/stage-sidecars.ts && bun scripts/dev.ts",
     "build": "bun scripts/build.ts",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.e2e-server.json",
     "test": "bun test test/components",
     "test:e2e": "bun scripts/build.ts --e2e && playwright test -c test/e2e/playwright.config.ts"
   },
@@ -23,6 +23,7 @@
   "devDependencies": {
     "@happy-dom/global-registrator": "20.14.5",
     "@homerun/client": "workspace:*",
+    "@homerun/homerund": "workspace:*",
     "@playwright/test": "1.63.0",
     "@tauri-apps/cli": "2.11.5",
     "@testing-library/dom": "10.4.2",

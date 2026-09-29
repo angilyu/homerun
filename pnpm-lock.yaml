@@ -58,6 +58,9 @@ importers:
       '@homerun/client':
         specifier: workspace:*
         version: link:../../packages/client
+      '@homerun/homerund':
+        specifier: workspace:*
+        version: link:../homerund
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0
