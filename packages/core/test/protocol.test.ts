@@ -122,6 +122,9 @@ describe("allowlists", () => {
     expect(mayReceive("shell", "cli.access_requested")).toBe(true);
     expect(mayReceive("webview", "cli.access_requested")).toBe(false);
     expect(mayReceive("web", "thread.event")).toBe(true);
+    // Local notifications go to the shell only, never a client that could answer from them (§9.7).
+    for (const n of ["notification.requested", "notification.withdrawn"] as const)
+      expect(CALLER_ROLES.filter((r) => mayReceive(r, n))).toEqual(["shell"]);
     expect(maySend("shell", "power.did_wake")).toBe(true);
     expect(maySend("webview", "power.did_wake")).toBe(false);
     expect(maySend("shell", "thread.event")).toBe(false);

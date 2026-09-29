@@ -300,6 +300,21 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
     valid: [["request", { request_id: F.CLI_REQUEST, client: { name: "homerun-cli", version: "0.1.0" }, hostname: "studio.local", requested_at: F.T0 }]],
     invalid: [["missing hostname", { request_id: F.CLI_REQUEST, client: { name: "homerun-cli", version: "0.1.0" }, requested_at: F.T0 }]],
   },
+  "notification.requested": {
+    valid: [
+      [
+        "approval",
+        { key: `input:${F.REQUEST}`, kind: "approval", target: { screen: "thread", thread_id: F.THREAD }, thread_id: F.THREAD, title: "Deploy site", body: "Approval needed: Bash (destructive)", created_at: F.T0 },
+      ],
+      ["missed checks", { key: "missed:1767225600000", kind: "missed_checks", target: { screen: "health" }, thread_id: null, title: "Monitors missed checks", body: "", created_at: F.T0 }],
+    ],
+    invalid: [
+      ["title too long", { key: "input:x", kind: "question", target: { screen: "health" }, thread_id: null, title: "x".repeat(81), body: "", created_at: F.T0 }],
+      ["unknown kind", { key: "input:x", kind: "chat_done", target: { screen: "health" }, thread_id: null, title: "t", body: "", created_at: F.T0 }],
+      ["key with spaces", { key: "input: x", kind: "question", target: { screen: "health" }, thread_id: null, title: "t", body: "", created_at: F.T0 }],
+    ],
+  },
+  "notification.withdrawn": { valid: [["key", { key: `input:${F.REQUEST}` }]], invalid: [["upper case key", { key: "Input:X" }]] },
   "health.digest_ready": {
     valid: [["digest", { digest: F.healthDigest() }]],
     invalid: [["missing digest", {}]],

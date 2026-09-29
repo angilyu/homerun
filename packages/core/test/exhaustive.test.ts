@@ -130,6 +130,9 @@ function notificationArea(n: NotificationName): string {
       return "cli";
     case "health.digest_ready":
       return "health";
+    case "notification.requested":
+    case "notification.withdrawn":
+      return "notify";
     case "power.will_sleep":
     case "power.did_wake":
       return "power";

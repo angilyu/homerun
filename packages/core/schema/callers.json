@@ -247,7 +247,9 @@
       "health.digest_ready"
     ],
     "runtime_to_shell": [
-      "cli.access_requested"
+      "cli.access_requested",
+      "notification.requested",
+      "notification.withdrawn"
     ],
     "shell_to_runtime": [
       "power.will_sleep",

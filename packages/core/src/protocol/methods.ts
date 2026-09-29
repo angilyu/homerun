@@ -472,6 +472,40 @@ function note<P extends z.ZodType>(name: string, d: NotificationDef<P>): Notific
   return { ...d, params };
 }
 
+/** Local notification limits (§8.2, §9.7): a line each, never tool input or secrets. */
+export const LOCAL_NOTIFICATION_TITLE_MAX = 80;
+export const LOCAL_NOTIFICATION_BODY_MAX = 160;
+
+export const LocalNotificationKind = named(
+  "LocalNotificationKind",
+  z.enum(["approval", "question", "ambiguous_call", "monitor_report", "monitor_failed", "monitor_paused", "missed_checks", "digest"]),
+  "What a local notification is about (§8.2, §9.7)",
+);
+export type LocalNotificationKind = z.infer<typeof LocalNotificationKind>;
+
+/** Where clicking the notification goes: the thread, or the Health screen for device-wide news. */
+export const NotificationTarget = named(
+  "NotificationTarget",
+  z.discriminatedUnion("screen", [z.object({ screen: z.literal("thread"), thread_id: ThreadId }), z.object({ screen: z.literal("health") })]),
+);
+export type NotificationTarget = z.infer<typeof NotificationTarget>;
+
+/** Replaces an earlier notification with the same key, and names it for `notification.withdrawn`. */
+const NotificationKey = z.string().regex(/^[a-z_]+:[0-9a-z_:-]{1,120}$/);
+
+/** Composed by the runtime from fixed templates (§8.2): the shell only displays it. Named by its notification. */
+export const LocalNotification = z.object({
+    key: NotificationKey,
+    kind: LocalNotificationKind,
+    target: NotificationTarget,
+    /** Groups notifications per thread; null for device-wide ones. */
+    thread_id: ThreadId.nullable(),
+    title: z.string().min(1).max(LOCAL_NOTIFICATION_TITLE_MAX),
+    body: z.string().max(LOCAL_NOTIFICATION_BODY_MAX),
+    created_at: TimestampMs,
+});
+export type LocalNotification = z.infer<typeof LocalNotification>;
+
 export const NOTIFICATIONS = {
   "thread.event": note("thread.event", {
     direction: "runtime_to_client",
@@ -499,6 +533,19 @@ export const NOTIFICATIONS = {
     params: z.object({ request_id: Uuid, client: ClientInfo, hostname: z.string().min(1).max(255), requested_at: TimestampMs }),
     recipients: SHELL,
     description: "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`.",
+  }),
+  "notification.requested": note("notification.requested", {
+    direction: "runtime_to_shell",
+    params: LocalNotification,
+    recipients: SHELL,
+    description:
+      "Show a local notification (§8.2, §9.7). The runtime writes the text; clicking opens `target`. Never carries tool input or secrets, and never offers an answer: destructive approvals are answered in the app only.",
+  }),
+  "notification.withdrawn": note("notification.withdrawn", {
+    direction: "runtime_to_shell",
+    params: z.object({ key: NotificationKey }),
+    recipients: SHELL,
+    description: "Remove the notification with this key: the request it announced was answered, expired or cancelled.",
   }),
   "health.digest_ready": note("health.digest_ready", {
     direction: "runtime_to_client",
