@@ -2098,8 +2098,8 @@ UI last: the runtime is the risky part.
 | 2 | [`homerund`](../apps/homerund/README.md) runtime | Prompt → Agent SDK `query()` → streamed deltas, persisted `thread_events`, isolated from `~/.claude`; replay harness (§16.2) in CI | **Done** |
 | 3 | [CLI](../apps/cli/README.md) | Drive the runtime end-to-end with no UI; authenticated socket (§5.2), with a development-mode token until the app exists | **Done** |
 | 4 | **Crash resume** | Kill at every event boundary (§16.2); resume correctly, including ambiguous tool calls | **Done** |
-| 5 | Scheduler + monitors | Cron + timezone + catch-up-on-wake + power assertions; rule-based and model-based checks; state advances only on success; health digest; fake-clock suite including DST and sleep | Next |
-| 6 | Approvals + questions | Destructive tool pauses a run; `AskUserQuestion` pauses for an answer; long waits `defer` and resume; answer from CLI; first answer wins | — |
+| 5 | Scheduler + monitors | Cron + timezone + catch-up-on-wake + power assertions; rule-based and model-based checks; state advances only on success; health digest; fake-clock suite including DST and sleep | **Done** |
+| 6 | Approvals + questions | Destructive tool pauses a run; `AskUserQuestion` pauses for an answer; long waits `defer` and resume; answer from CLI; first answer wins | Next |
 | 7 | Desktop app | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | — |
 | 8 | Packaging | Menu-bar / tray residency, login item, signed updater, quit confirmation | — |
 | 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | — |
@@ -2155,7 +2155,7 @@ upgrades.
 | Harness | What it proves | How |
 |---|---|---|
 | **Replay Claude** | Runs behave deterministically in CI, at no API cost | A local server behind `ANTHROPIC_BASE_URL` that records real API exchanges once and replays them, with the real `claude`. Scenarios: tool loops, approvals, questions, errors, rate limits, and the real-`claude` crash-resume paths |
-| **Crash at every boundary** | Crash resume is correct, not just usually correct | Run a scripted scenario; kill the runtime (and separately the `claude` process) after event *k*, for every *k*; resume; assert on the final state. Invariants: no duplicate side effects from non-idempotent tools, no lost messages, `seq` has no gaps, and ambiguous calls always ask the user. It runs against a simulated `claude` that behaves like the real one where recovery depends on it, because a real `claude` would need a cassette per boundary |
+| **Crash at every boundary** | Crash resume is correct, not just usually correct | Run a scripted scenario; kill the runtime (and separately the `claude` process) after event *k*, for every *k*; resume; assert on the final state. Invariants: no duplicate side effects from non-idempotent tools, no lost messages, `seq` has no gaps, and ambiguous calls always ask the user. It runs against a simulated `claude` that behaves like the real one where recovery depends on it, because a real `claude` would need a cassette per boundary. A nightly build crashes at every *k*; each pull request crashes at a seeded sample that includes every kind of boundary |
 | **Fake clock** | Scheduling is correct across time | An injected clock and injected sleep and wake events. Cases: DST gaps and overlaps, timezone changes, week-long sleep, every catch-up policy, `UNIQUE(dedupe_key)` under a race between catch-up and a normal fire |
 | **Protocol test vectors** | Desktop, iOS, and web interoperate | Shared files of known keys, messages, and expected ciphertext, for Noise live sessions, sealed messages, expiry, and replay rejection. The TypeScript runtime and the React Native client must both pass the same files |
 
