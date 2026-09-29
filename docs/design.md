@@ -812,7 +812,8 @@ A **session is a conversation thread**. Each user message starts a run on that
 thread; the run proceeds until the agent yields back to the user. Monitors write
 to a thread too — but only when something changed, failed, or was missed
 (§8.3) — so a user can reply to a monitor's report ("why did you flag this?")
-and carry on from there.
+and carry on from there. Replies on a monitor's thread arrive with the desktop
+app (§16 row 7); until then the runtime refuses them.
 
 - **One writer.** The runtime owns every thread and assigns a monotonic `seq` to
   each event. Messages sent from desktop, iPhone, and web at the same moment are
@@ -1175,14 +1176,23 @@ Three mechanisms, in order of how much they actually help:
 in flight — `IOPMAssertionCreateWithName` (or `caffeinate -i`) on macOS,
 `SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_CONTINUOUS)` on Windows.
 **Neither requires admin rights.** This protects long sessions from being killed
-mid-flight and is the highest-value, lowest-cost mitigation.
+mid-flight and is the highest-value, lowest-cost mitigation. The runtime holds
+one assertion while any run is running, and none while runs only wait for input
+(§5.6). On macOS it is a `caffeinate -i -w <runtime pid>` child, which exits with
+the runtime, so a crash never leaves the machine unable to sleep.
 
-**2. Catch-up on wake.** Subscribe to `NSWorkspace.didWakeNotification` /
-`PowerRegisterSuspendResumeNotification`. On wake (and on runtime start), compute
-fires missed since `last_fired_at` and apply the schedule's `catchup` policy:
+**2. Catch-up on wake.** The shell subscribes to `NSWorkspace`'s will-sleep and
+did-wake notifications (`PowerRegisterSuspendResumeNotification` on Windows) and
+forwards them to the runtime (`power.will_sleep`, `power.did_wake`). Without the
+shell, the runtime infers sleep from a gap of more than 45 s between its 15 s
+ticks. Time when Homerun was not running is measured from the previous
+runtime's clean stop, or after a crash from its last heartbeat (written every
+minute). On wake (and on runtime
+start), compute the fires missed since the schedule was last evaluated and apply
+the schedule's `catchup` policy:
 
-- `run_once` — collapse all missed fires into a single run *(default; correct for
-  "check if anything changed")*
+- `run_once` — collapse all missed fires into a single run, of the latest missed
+  slot *(default; correct for "check if anything changed")*
 - `run_all` — replay each, bounded by `max_catchup`
 - `skip` — record the miss, run nothing
 
@@ -1220,11 +1230,18 @@ memory, so it can be shown to the user, edited, reset, and tested.
 | Kind | How it works | Model calls | Good for |
 |---|---|---|---|
 | **Rule-based** | The runtime (not the agent) fetches a source, extracts a value, normalizes it, and compares it with the saved state | **None** | "This page changed", "price below $X", "new item in this feed", "CI failed" |
-| **Model-based** | One Haiku `query()` with the task prompt, the saved state, and fresh observations. Returns structured output: `changed`, `evidence`, `new_state` | One cheap call | Judgment: "anything important in these new issues?" |
+| **Model-based** | One `query()` on a cheap model (for example Haiku) with the task prompt, the saved state, and fresh observations. Returns structured output: `changed`, `evidence`, `new_state` | One cheap call | Judgment: "anything important in these new issues?" |
 
 - **Rule-based sources:** HTTP (JSON path, CSS selector, or regex), RSS or Atom,
   a local file's hash, or a read-only Homerun tool. Comparators: changed, equals,
-  above or below, new items.
+  above or below, new items. `equals`, `above` and `below` are edge-triggered:
+  they report the condition becoming true, not every run while it stays true.
+- **Model-based observations:** a model check may name a rule-based source. The
+  runtime fetches it, and the model only judges it, with no tools. Without one,
+  the model gathers observations with the task's tools, under the task's policy.
+  The check and the act step share the run's budget (§7.4).
+- **The first check records a baseline.** With no saved state, the check saves
+  what it observed and reports no change.
 - **Rule-based is the default** whenever a monitor can be expressed that way. At
   every five minutes, a rule-based monitor costs nothing. When the user describes
   a monitor in words, the setup flow proposes a rule-based check if one fits.
@@ -1245,6 +1262,8 @@ fresh `query()` on the act model, with the check's findings and the saved state.
 transaction that marks the run `succeeded`. If a run fails or is abandoned, the
 state does not advance, and the next run sees the same change again. A crash can
 cause a change to be reported twice. It can never cause a change to be missed.
+If the user edits the state while a run is going, the edit wins and the run's new
+state is dropped.
 
 **6. The thread stays quiet.** A no-change run is recorded in `runs` with
 `outcome = 'no_change'` and nothing else. It appears in the monitor's run
@@ -1278,7 +1297,12 @@ happened:
 - missed because the computer was asleep, known from the OS sleep and wake
   events (§8.1);
 - missed because Homerun was not running, known from the gap between runtime
-  shutdown and start.
+  shutdown and start;
+- merged into a later fire, because the monitor's previous run was still going
+  (§5.3).
+
+A catch-up run (§8.1) does not count as ran: its slot stays counted as missed,
+so coverage says how often a check happened on time.
 
 These are rolled up per schedule per day in `schedule_coverage` (below). The
 monitor's page and the daily digest (§8.3) show it plainly: *"Ran 212 of 2,016
@@ -1305,6 +1329,7 @@ CREATE TABLE schedule_coverage (
   ran                INTEGER NOT NULL,
   missed_asleep      INTEGER NOT NULL,
   missed_not_running INTEGER NOT NULL,
+  merged             INTEGER NOT NULL,
   PRIMARY KEY (schedule_id, day)
 );
 ```
@@ -2206,3 +2231,7 @@ One line per major decision: what was chosen, and why.
 | 24 | **Accounts hold identity and a device list only** (§10) | A managed OIDC provider; only a trusted device can vouch for a new key, so the server can't forge trust |
 | 25 | **Data dir `~/Library/Application Support/Homerun`, bundle id `com.angilyu.homerun`** (§6, §11) | macOS treats a folder ending in `.app` as a bundle and denied writes to it, so the data dir is named separately from the identifier |
 | 26 | **Tauri v2 shell and two-tier updates** (§14) | Low memory and a thin shell; web fixes ship in minutes; every over-the-air bundle is signed with a key held offline |
+| 27 | **Our own cron evaluator** (§8) | §8 fixes the DST rules, and cron libraries apply their own. Ours is checked against a minute-by-minute oracle across zones and transitions |
+| 28 | **Each scheduled slot is claimed once, durably** (§8.1, §8.4) | A slot is claimed or recorded as missed in the transaction that advances the schedule, so a crash neither loses nor repeats a fire |
+| 29 | **The runtime keeps the Mac awake; the shell reports sleep** (§8.1) | `caffeinate -w` dies with the runtime, so a crash can't block sleep. Only an app gets sleep and wake notifications; without the shell, missed ticks show the sleep |
+| 30 | **Threshold checks are edge-triggered; the first check is a baseline** (§8.3) | "Price below $X" reports once when it crosses, not every five minutes, and a new monitor doesn't report what was already there |
