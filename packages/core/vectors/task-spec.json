@@ -286,6 +286,69 @@
     },
     {
       "schema": "TaskSpec",
+      "name": "monitor with model check on a fetched source",
+      "valid": true,
+      "value": {
+        "kind": "monitor",
+        "format": 1,
+        "name": "Release watcher",
+        "prompt": "When a new release appears, summarise the changelog.",
+        "budget": {
+          "max_run_usd": 0.5
+        },
+        "tools": {
+          "builtin": [
+            "WebFetch"
+          ],
+          "mcp_servers": [],
+          "homerun": []
+        },
+        "policy": {
+          "roots": [],
+          "egress": {
+            "mode": "allowlist",
+            "domains": [
+              "api.github.com",
+              "*.example.com"
+            ]
+          },
+          "bash_patterns": [],
+          "use_shell_environment": false,
+          "input_timeout": {
+            "action": "wait",
+            "remind_after_ms": 3600000
+          },
+          "retention_days": 30
+        },
+        "schedule": {
+          "kind": "cron",
+          "cron": "0 9 * * 1-5",
+          "timezone": "Europe/London",
+          "catchup": "run_once",
+          "max_catchup": 1
+        },
+        "check": {
+          "kind": "model",
+          "model": "claude-haiku-4-5",
+          "instructions": "Report only incidents that affect the API.",
+          "source": {
+            "type": "http",
+            "url": "https://status.example.com/",
+            "extract": {
+              "kind": "css",
+              "selector": "main"
+            }
+          }
+        },
+        "act": {
+          "model": {
+            "model": "claude-haiku-4-5"
+          }
+        }
+      }
+    },
+    {
+      "schema": "TaskSpec",
       "name": "monitor with http json_path check",
       "valid": true,
       "value": {

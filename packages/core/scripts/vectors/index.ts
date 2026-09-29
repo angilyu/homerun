@@ -1,5 +1,5 @@
 import type { Vector } from "./types";
-import { common, domain, grants, input, schedule, taskSpec } from "./model";
+import { common, domain, grants, health, input, schedule, taskSpec } from "./model";
 import { events } from "./events";
 import { protocol } from "./protocol";
 import { relay } from "./relay";
@@ -8,6 +8,7 @@ import { relay } from "./relay";
 export const VECTOR_GROUPS: Record<string, Vector[]> = {
   common,
   schedule,
+  health,
   "task-spec": taskSpec,
   grants,
   input,

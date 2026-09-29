@@ -1280,9 +1280,19 @@
           {
             "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
             "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+            "schedule": {
+              "kind": "cron",
+              "cron": "0 9 * * 1-5",
+              "timezone": "Europe/London",
+              "catchup": "run_once",
+              "max_catchup": 1
+            },
             "enabled": true,
+            "paused_reason": null,
             "next_fire_at": 1767229200000,
-            "last_fired_at": 1767225600000
+            "last_fired_at": 1767225600000,
+            "consecutive_failures": 0,
+            "missed_since_last_run": 0
           }
         ]
       }
@@ -1314,9 +1324,19 @@
         "schedule": {
           "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
           "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+          "schedule": {
+            "kind": "cron",
+            "cron": "0 9 * * 1-5",
+            "timezone": "Europe/London",
+            "catchup": "run_once",
+            "max_catchup": 1
+          },
           "enabled": false,
+          "paused_reason": "user",
           "next_fire_at": null,
-          "last_fired_at": 1767225600000
+          "last_fired_at": 1767225600000,
+          "consecutive_failures": 0,
+          "missed_since_last_run": 0
         }
       }
     },
@@ -1353,9 +1373,166 @@
             "expected": 12,
             "ran": 12,
             "missed_asleep": 0,
-            "missed_not_running": 0
+            "missed_not_running": 0,
+            "merged": 0
           }
         ]
+      }
+    },
+    {
+      "schema": "HealthDigestParams",
+      "name": "health.digest: a day",
+      "valid": true,
+      "value": {
+        "from": 1767225600000,
+        "to": 1767312000000
+      }
+    },
+    {
+      "schema": "HealthDigestParams",
+      "name": "health.digest: missing to",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "from": 1767225600000
+      }
+    },
+    {
+      "schema": "HealthDigestParams",
+      "name": "health.digest: empty period",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "from": 1767225600000,
+        "to": 1767225600000
+      }
+    },
+    {
+      "schema": "HealthDigestParams",
+      "name": "health.digest: over 31 days",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "from": 1767225600000,
+        "to": 1769990400000
+      }
+    },
+    {
+      "schema": "HealthDigestResult",
+      "name": "health.digest: digest",
+      "valid": true,
+      "value": {
+        "digest": {
+          "from": 1767225600000,
+          "to": 1767312000000,
+          "generated_at": 1767312000000,
+          "timezone": "Europe/London",
+          "monitors": [
+            {
+              "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+              "name": "Release watcher",
+              "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+              "enabled": true,
+              "paused_reason": null,
+              "expected": 96,
+              "succeeded": 40,
+              "changes": 1,
+              "failed": 0,
+              "missed_asleep": 56,
+              "missed_not_running": 0,
+              "skipped": 0,
+              "caught_up": 1,
+              "cost_usd": 0.02,
+              "last_run_at": 1767305600000,
+              "next_fire_at": 1767312900000,
+              "needs_attention": true
+            }
+          ],
+          "downtime": [
+            {
+              "start_at": 1767229200000,
+              "end_at": 1767253200000,
+              "cause": "asleep"
+            }
+          ],
+          "cost_usd": 0.02,
+          "needs_attention": true
+        }
+      }
+    },
+    {
+      "schema": "HealthSettingsGetParams",
+      "name": "health.settings.get: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "HealthSettingsGetParams",
+      "name": "health.settings.get: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "HealthSettingsGetResult",
+      "name": "health.settings.get: on",
+      "valid": true,
+      "value": {
+        "settings": {
+          "enabled": true,
+          "time": "08:00",
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "schema": "HealthSettingsSetParams",
+      "name": "health.settings.set: off",
+      "valid": true,
+      "value": {
+        "settings": {
+          "enabled": false,
+          "time": "08:00",
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "schema": "HealthSettingsSetParams",
+      "name": "health.settings.set: bad time",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "settings": {
+          "enabled": true,
+          "time": "8am",
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "schema": "HealthSettingsSetParams",
+      "name": "health.settings.set: unknown zone",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "settings": {
+          "enabled": true,
+          "time": "08:00",
+          "timezone": "Mars/Olympus_Mons"
+        }
+      }
+    },
+    {
+      "schema": "HealthSettingsSetResult",
+      "name": "health.settings.set: set",
+      "valid": true,
+      "value": {
+        "settings": {
+          "enabled": true,
+          "time": "07:30",
+          "timezone": "Europe/London"
+        }
       }
     },
     {
@@ -2628,6 +2805,56 @@
         },
         "requested_at": 1767225600000
       }
+    },
+    {
+      "schema": "HealthDigestReadyNotification",
+      "name": "health.digest_ready: digest",
+      "valid": true,
+      "value": {
+        "digest": {
+          "from": 1767225600000,
+          "to": 1767312000000,
+          "generated_at": 1767312000000,
+          "timezone": "Europe/London",
+          "monitors": [
+            {
+              "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+              "name": "Release watcher",
+              "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+              "enabled": true,
+              "paused_reason": null,
+              "expected": 96,
+              "succeeded": 40,
+              "changes": 1,
+              "failed": 0,
+              "missed_asleep": 56,
+              "missed_not_running": 0,
+              "skipped": 0,
+              "caught_up": 1,
+              "cost_usd": 0.02,
+              "last_run_at": 1767305600000,
+              "next_fire_at": 1767312900000,
+              "needs_attention": true
+            }
+          ],
+          "downtime": [
+            {
+              "start_at": 1767229200000,
+              "end_at": 1767253200000,
+              "cause": "asleep"
+            }
+          ],
+          "cost_usd": 0.02,
+          "needs_attention": true
+        }
+      }
+    },
+    {
+      "schema": "HealthDigestReadyNotification",
+      "name": "health.digest_ready: missing digest",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {}
     },
     {
       "schema": "PowerWillSleepNotification",

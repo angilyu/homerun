@@ -122,6 +122,11 @@ export const events: Vector[] = [
   badRule(E, "run.end outcome on cancelled", P("run.end", { ...runEnd, state: "cancelled", outcome: "no_change" })),
   badRule(E, "run.end error on success", P("run.end", { ...runEnd, error: { code: "x", message: "y" } })),
   ok(E, "schedule.missed while asleep", P("schedule.missed", { schedule_id: F.SCHEDULE, scheduled_for: F.T0, reason: "asleep", count: 3 }, { run_id: null })),
+  ok(E, "schedule.missed with range and catch-up", P("schedule.missed", { schedule_id: F.SCHEDULE, scheduled_for: F.T0, reason: "asleep", count: 3, last_scheduled_for: F.T0 + 1_800_000, caught_up: 1 }, { run_id: null })),
+  ok(E, "schedule.missed merged", P("schedule.missed", { schedule_id: F.SCHEDULE, scheduled_for: F.T0, reason: "skipped_by_policy", count: 1 }, { run_id: null })),
+  ok(E, "schedule.paused after failures", P("schedule.paused", { schedule_id: F.SCHEDULE, reason: "failures", detail: "Paused after 3 failed checks in a row." }, { run_id: null })),
+  bad(E, "schedule.paused by user", P("schedule.paused", { schedule_id: F.SCHEDULE, reason: "user", detail: "Paused." }, { run_id: null })),
+  bad(E, "schedule.paused empty detail", P("schedule.paused", { schedule_id: F.SCHEDULE, reason: "budget_cap", detail: "" }, { run_id: null })),
   bad(E, "schedule.missed zero count", P("schedule.missed", { schedule_id: F.SCHEDULE, scheduled_for: F.T0, reason: "asleep", count: 0 }, { run_id: null })),
   // run.status (live-only)
   ok(E, "run.status queued", L("run.status", { state: "pending", detail: "queued", queue_position: 2 })),

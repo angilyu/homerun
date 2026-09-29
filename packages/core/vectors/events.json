@@ -920,6 +920,97 @@
     },
     {
       "schema": "ThreadEvent",
+      "name": "schedule.missed with range and catch-up",
+      "valid": true,
+      "value": {
+        "thread_id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f01",
+        "seq": 7,
+        "run_id": null,
+        "ts": 1767225600000,
+        "type": "schedule.missed",
+        "payload": {
+          "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+          "scheduled_for": 1767225600000,
+          "reason": "asleep",
+          "count": 3,
+          "last_scheduled_for": 1767227400000,
+          "caught_up": 1
+        }
+      }
+    },
+    {
+      "schema": "ThreadEvent",
+      "name": "schedule.missed merged",
+      "valid": true,
+      "value": {
+        "thread_id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f01",
+        "seq": 7,
+        "run_id": null,
+        "ts": 1767225600000,
+        "type": "schedule.missed",
+        "payload": {
+          "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+          "scheduled_for": 1767225600000,
+          "reason": "skipped_by_policy",
+          "count": 1
+        }
+      }
+    },
+    {
+      "schema": "ThreadEvent",
+      "name": "schedule.paused after failures",
+      "valid": true,
+      "value": {
+        "thread_id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f01",
+        "seq": 7,
+        "run_id": null,
+        "ts": 1767225600000,
+        "type": "schedule.paused",
+        "payload": {
+          "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+          "reason": "failures",
+          "detail": "Paused after 3 failed checks in a row."
+        }
+      }
+    },
+    {
+      "schema": "ThreadEvent",
+      "name": "schedule.paused by user",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "thread_id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f01",
+        "seq": 7,
+        "run_id": null,
+        "ts": 1767225600000,
+        "type": "schedule.paused",
+        "payload": {
+          "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+          "reason": "user",
+          "detail": "Paused."
+        }
+      }
+    },
+    {
+      "schema": "ThreadEvent",
+      "name": "schedule.paused empty detail",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "thread_id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f01",
+        "seq": 7,
+        "run_id": null,
+        "ts": 1767225600000,
+        "type": "schedule.paused",
+        "payload": {
+          "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+          "reason": "budget_cap",
+          "detail": ""
+        }
+      }
+    },
+    {
+      "schema": "ThreadEvent",
       "name": "schedule.missed zero count",
       "valid": false,
       "layer": "json_schema",

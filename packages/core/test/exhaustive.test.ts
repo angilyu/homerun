@@ -49,6 +49,8 @@ function render(e: ThreadEventT): string {
       return e.payload.state;
     case "schedule.missed":
       return e.payload.reason;
+    case "schedule.paused":
+      return e.payload.reason;
     case "run.status":
       return e.payload.detail;
     default:
@@ -74,6 +76,10 @@ function methodArea(m: MethodName): string {
     case "schedules.set_enabled":
     case "schedules.coverage":
       return "schedules";
+    case "health.digest":
+    case "health.settings.get":
+    case "health.settings.set":
+      return "health";
     case "grants.list":
     case "grants.create":
     case "grants.revoke":
@@ -121,6 +127,8 @@ function notificationArea(n: NotificationName): string {
     case "cli.access_decision":
     case "cli.access_requested":
       return "cli";
+    case "health.digest_ready":
+      return "health";
     case "power.will_sleep":
     case "power.did_wake":
       return "power";

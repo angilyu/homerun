@@ -789,6 +789,29 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "description": "One install, one OS user (§12)"
     },
+    "Downtime": {
+      "type": "object",
+      "properties": {
+        "start_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "end_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "cause": {
+          "type": "string",
+          "enum": [
+            "asleep",
+            "not_running"
+          ]
+        }
+      },
+      "required": [
+        "start_at",
+        "end_at",
+        "cause"
+      ]
+    },
     "EgressDomain": {
       "type": "string",
       "maxLength": 253,
@@ -944,6 +967,145 @@
       },
       "required": [
         "revoked_at"
+      ]
+    },
+    "HealthDigest": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "to": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "generated_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "timezone": {
+          "$ref": "#/$defs/IanaTimezone"
+        },
+        "monitors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MonitorHealth"
+          }
+        },
+        "downtime": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Downtime"
+          }
+        },
+        "cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "needs_attention": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "generated_at",
+        "timezone",
+        "monitors",
+        "downtime",
+        "cost_usd",
+        "needs_attention"
+      ]
+    },
+    "HealthDigestParams": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "to": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "HealthDigestReadyNotification": {
+      "type": "object",
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/HealthDigest"
+        }
+      },
+      "required": [
+        "digest"
+      ]
+    },
+    "HealthDigestResult": {
+      "type": "object",
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/HealthDigest"
+        }
+      },
+      "required": [
+        "digest"
+      ]
+    },
+    "HealthSettings": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "time": {
+          "$ref": "#/$defs/TimeOfDay"
+        },
+        "timezone": {
+          "$ref": "#/$defs/IanaTimezone"
+        }
+      },
+      "required": [
+        "enabled",
+        "time",
+        "timezone"
+      ]
+    },
+    "HealthSettingsGetParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "HealthSettingsGetResult": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/HealthSettings"
+        }
+      },
+      "required": [
+        "settings"
+      ]
+    },
+    "HealthSettingsSetParams": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/HealthSettings"
+        }
+      },
+      "required": [
+        "settings"
+      ]
+    },
+    "HealthSettingsSetResult": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/HealthSettings"
+        }
+      },
+      "required": [
+        "settings"
       ]
     },
     "HelloAuth": {
@@ -2012,6 +2174,9 @@
         "instructions": {
           "type": "string",
           "maxLength": 20000
+        },
+        "source": {
+          "$ref": "#/$defs/RuleSource"
         }
       },
       "required": [
@@ -2039,6 +2204,128 @@
       "minLength": 1,
       "maxLength": 200,
       "description": "A Claude model id or alias. Free-form, because Bedrock, Vertex and Foundry ids differ (§7.2)"
+    },
+    "MonitorHealth": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "schedule_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScheduleId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "paused_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SchedulePausedReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "succeeded": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "changes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "missed_asleep": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "missed_not_running": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "caught_up": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "last_run_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_fire_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "needs_attention": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "task_id",
+        "name",
+        "schedule_id",
+        "enabled",
+        "paused_reason",
+        "expected",
+        "succeeded",
+        "changes",
+        "failed",
+        "missed_asleep",
+        "missed_not_running",
+        "skipped",
+        "caught_up",
+        "cost_usd",
+        "last_run_at",
+        "next_fire_at",
+        "needs_attention"
+      ]
     },
     "MonitorSpec": {
       "type": "object",
@@ -2349,6 +2636,9 @@
         },
         {
           "$ref": "#/$defs/ScheduleMissedEvent"
+        },
+        {
+          "$ref": "#/$defs/SchedulePausedEvent"
         }
       ]
     },
@@ -3693,6 +3983,11 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "merged": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -3701,7 +3996,8 @@
         "expected",
         "ran",
         "missed_asleep",
-        "missed_not_running"
+        "missed_not_running",
+        "merged"
       ]
     },
     "ScheduleId": {
@@ -3755,6 +4051,14 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 9007199254740991
+            },
+            "last_scheduled_for": {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            "caught_up": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
@@ -3773,6 +4077,77 @@
         "type",
         "payload"
       ]
+    },
+    "SchedulePausedEvent": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ts": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "type": {
+          "type": "string",
+          "const": "schedule.paused"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "schedule_id": {
+              "$ref": "#/$defs/ScheduleId"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "failures",
+                "budget_cap"
+              ]
+            },
+            "detail": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "required": [
+            "schedule_id",
+            "reason",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "thread_id",
+        "seq",
+        "run_id",
+        "ts",
+        "type",
+        "payload"
+      ]
+    },
+    "SchedulePausedReason": {
+      "type": "string",
+      "enum": [
+        "user",
+        "failures",
+        "budget_cap",
+        "archived"
+      ],
+      "description": "user: paused by hand; failures: three failed fires in a row (§5.3); budget_cap: the task's monthly cap was reached (§7.4); archived: the task was archived"
     },
     "SchedulesCoverageParams": {
       "type": "object",
@@ -3878,8 +4253,21 @@
         "task_id": {
           "$ref": "#/$defs/TaskId"
         },
+        "schedule": {
+          "$ref": "#/$defs/ScheduleSpec"
+        },
         "enabled": {
           "type": "boolean"
+        },
+        "paused_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SchedulePausedReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "next_fire_at": {
           "anyOf": [
@@ -3900,14 +4288,28 @@
               "type": "null"
             }
           ]
+        },
+        "consecutive_failures": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "missed_since_last_run": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
         "schedule_id",
         "task_id",
+        "schedule",
         "enabled",
+        "paused_reason",
         "next_fire_at",
-        "last_fired_at"
+        "last_fired_at",
+        "consecutive_failures",
+        "missed_since_last_run"
       ]
     },
     "SdkSessionId": {
@@ -4645,6 +5047,9 @@
           "$ref": "#/$defs/ScheduleMissedEvent"
         },
         {
+          "$ref": "#/$defs/SchedulePausedEvent"
+        },
+        {
           "$ref": "#/$defs/MessageDeltaEvent"
         },
         {
@@ -4977,6 +5382,10 @@
       "required": [
         "ok"
       ]
+    },
+    "TimeOfDay": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
     },
     "TimestampMs": {
       "type": "integer",

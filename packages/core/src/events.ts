@@ -247,17 +247,41 @@ export const RunEndEvent = named(
   ),
 );
 
-/** A monitor fire that did not run (§8.2, §8.4). Not tied to a run. */
+/**
+ * Fires that did not run on time (§8.2, §8.4). Not tied to a run. `asleep` and `not_running` say
+ * why the computer could not run them; `skipped_by_policy` covers fires Homerun dropped itself:
+ * merged into a later fire because the monitor's previous run was still going (§5.3), or beyond
+ * `max_catchup`.
+ */
 export const ScheduleMissedEvent = named(
   "ScheduleMissedEvent",
   persisted(
     "schedule.missed",
     z.object({
       schedule_id: ScheduleId,
+      /** The first missed fire of the group. */
       scheduled_for: TimestampMs,
       reason: z.enum(["asleep", "not_running", "skipped_by_policy"]),
       /** Contiguous missed fires reported together. */
       count: z.int().min(1),
+      /** The last missed fire of the group; absent when count is 1. */
+      last_scheduled_for: TimestampMs.optional(),
+      /** How many of these fires the catch-up policy runs late (§8.1): 0 for `skip`. */
+      caught_up: z.int().nonnegative().optional(),
+    }),
+  ),
+);
+
+/** The runtime paused a schedule (§5.3, §7.4). A pause by hand is not an event. */
+export const SchedulePausedEvent = named(
+  "SchedulePausedEvent",
+  persisted(
+    "schedule.paused",
+    z.object({
+      schedule_id: ScheduleId,
+      reason: z.enum(["failures", "budget_cap"]),
+      /** A sentence for the thread, e.g. "Paused after 3 failed checks in a row". */
+      detail: z.string().min(1).max(1000),
     }),
   ),
 );
@@ -290,6 +314,7 @@ export const PERSISTED_EVENT_SCHEMAS = [
   RunCancelledEvent,
   RunEndEvent,
   ScheduleMissedEvent,
+  SchedulePausedEvent,
 ] as const;
 
 export const LIVE_EVENT_SCHEMAS = [MessageDeltaEvent, RunStatusEvent] as const;
