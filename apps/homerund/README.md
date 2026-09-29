@@ -93,6 +93,14 @@ result is the user's answer, the recorded result (the SDK mirror can lose the la
 "interrupted" itself, which the model reads as "run it again". The note always follows as an
 explicit continuation message, before any held messages.
 
+`claude` mirrors its transcript a little after the fact: a tool can start, and even finish its
+side effect, before anything of the conversation is stored. A session with no stored
+conversation cannot be resumed (`claude` exits with "No conversation found"). So a run resumes
+its own session only if the store holds a conversation for it (`hasConversation`). Otherwise it
+continues from the thread's previous session with one, or a new session, and gets its messages
+again: those it had before it parked, then the note, then the held ones. A follow-up run skips
+such a session in the same way.
+
 A run stopped while it waits gets an "outcome unknown" result for each open call, so the
 thread's next run resumes a well-formed transcript. Messages held while it waited are never
 delivered, and nothing sends them later: they stay held on the cancelled run, and a later run
@@ -245,9 +253,11 @@ Every scenario also checks generic invariants:
 `test/crash/` kills homerund at every event boundary, systematically. Real `claude` would
 need a cassette per boundary, so this harness uses `sim-claude.ts` instead. It is an engine
 that behaves like `claude` where recovery depends on it:
-- it mirrors transcript entries through the session store, sometimes lagging a step;
+- it mirrors transcript entries through the session store, sometimes lagging a step, or (the
+  `lagging` scenario) storing nothing until after the first side effect;
 - its hooks write `tool.call` and `tool.result`;
-- it resumes from the stored chain (and `resumeSessionAt`);
+- it resumes from the stored chain (and `resumeSessionAt`), and fails as `claude` does when
+  the session has nothing stored;
 - when it resumes a `tool_use` with no result, it writes its own "interrupted" result and
   runs the call again, as real `claude` does.
 
@@ -255,7 +265,7 @@ Its tools append to a ledger file, which is the ground truth for "did this happe
 
 A boundary is any commit homerund makes (`Store.commitObserver`), or the point just before or
 just after a tool's side effect. For each scenario (serial calls; parallel destructive calls in
-one message; the same in truncate mode), the harness does the following. Each life is a
+one message; the same in truncate mode; a lagging mirror), the harness does the following. Each life is a
 child process (`child.ts`).
 1. It counts the boundaries of a clean run.
 2. For each boundary k, it SIGKILLs homerund at k. A second life recovers, answers "Did this
