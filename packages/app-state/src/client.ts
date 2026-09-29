@@ -111,8 +111,9 @@ export class AppClient {
   }
 
   /** Start a chat: a one-off, or a new chat on a session task (§2.1). */
-  async createThread(task_id?: string): Promise<string> {
-    const r = await this.rpc.call("threads.create", task_id ? { task_id } : {});
+  /** A thread, titled by the caller (a new chat uses `chatTitle` of its first message). */
+  async createThread(task_id?: string, title?: string): Promise<string> {
+    const r = await this.rpc.call("threads.create", { ...(task_id ? { task_id } : {}), ...(title ? { title } : {}) });
     return r.thread.thread_id;
   }
 

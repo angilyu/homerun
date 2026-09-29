@@ -18,6 +18,15 @@ export function truncate(s: string, max: number): string {
   return chars.length <= max ? s : chars.slice(0, Math.max(0, max - 1)).join("") + "…";
 }
 
+/** A new chat's title: its first message's first line, cut at a word (§5.7). */
+export function chatTitle(text: string, max = 60): string {
+  const line = oneLine(text.split("\n").find((l) => l.trim()) ?? "");
+  if ([...line].length <= max) return line;
+  const cut = [...line].slice(0, max - 1).join("");
+  const space = cut.lastIndexOf(" ");
+  return (space > max / 2 ? cut.slice(0, space) : cut).trimEnd() + "…";
+}
+
 export function bytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;

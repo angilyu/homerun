@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseMarkdown, plainText, safeHref } from "../src/markdown";
-import { ago, bytes, cronText, inTime, scheduleText, toolName, toolSummary, truncate, usd } from "../src/format";
+import { ago, bytes, chatTitle, cronText, inTime, scheduleText, toolName, toolSummary, truncate, usd } from "../src/format";
 import { coverageRange, coverageSentence, monitorHealthText, summarizeCoverage } from "../src/monitors";
 import { checkSpec, getAt, issuesAt, newMonitorSpec, newSessionSpec, setAt } from "../src/tasks";
 import { activeGrants, grantText } from "../src/grants";
@@ -38,6 +38,9 @@ describe("format", () => {
   const now = 1_767_225_600_000;
   test("numbers and times", () => {
     expect(truncate("abcdef", 4)).toBe("abc…");
+    expect(chatTitle("\n  Fix the  build\nthen more")).toBe("Fix the build");
+    expect(chatTitle("one two three four five", 12)).toBe("one two…");
+    expect(chatTitle("abcdefghijklmnop", 8)).toBe("abcdefg…");
     expect(bytes(1536)).toBe("1.5 KB");
     expect(usd(0.004)).toBe("<$0.01");
     expect(ago(now - 90_000, now)).toMatch(/1 min/);
