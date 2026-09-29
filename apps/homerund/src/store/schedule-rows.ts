@@ -280,16 +280,18 @@ export function downtimeBetween(store: Store, from: number, to: number): Downtim
 }
 
 /**
- * Start a runtime life. Returns when the previous one was last seen (or stopped), so the gap can
- * be recorded as "Homerun was not running".
+ * Start a runtime life and record the time since the previous one was last seen (or stopped) as
+ * "Homerun was not running", in one transaction: a crash between the two would otherwise make the
+ * next start measure from this life and lose the gap.
  */
-export function beginLife(store: Store, now: number): number | null {
-  return store.tx(() => {
+export function beginLife(store: Store, now: number): void {
+  store.tx(() => {
     const prev = store.db
       .query<{ last_seen_at: number; stopped_at: number | null }, []>("SELECT last_seen_at, stopped_at FROM runtime_lives ORDER BY started_at DESC LIMIT 1")
       .get();
     store.db.query("INSERT OR REPLACE INTO runtime_lives (started_at, last_seen_at, stopped_at) VALUES (?, ?, NULL)").run(now, now);
-    return prev ? (prev.stopped_at ?? prev.last_seen_at) : null;
+    const since = prev ? (prev.stopped_at ?? prev.last_seen_at) : null;
+    if (since !== null) addDowntime(store, { start_at: since, end_at: now, cause: "not_running", source: "restart" });
   });
 }
 

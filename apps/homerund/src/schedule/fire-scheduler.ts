@@ -81,11 +81,10 @@ export class FireScheduler {
   /** Start a runtime life: the time since the last one is "Homerun was not running" (§8.4). */
   start(): void {
     const now = this.clock.now();
-    const prev = beginLife(this.store, now);
+    beginLife(this.store, now);
     this.lifeStart = now;
     this.lastSeen = now;
     this.lastHeartbeat = now;
-    if (prev !== null && now > prev) addDowntime(this.store, { start_at: prev, end_at: now, cause: "not_running", source: "restart" });
     this.run(now);
     this.scheduleTick();
   }
