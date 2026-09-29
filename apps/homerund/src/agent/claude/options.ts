@@ -52,7 +52,13 @@ export function buildQueryOptions(
     maxBudgetUsd: start.maxBudgetUsd,
     ...(start.resume ? { resume: start.resume } : {}),
     ...(start.resume && start.resumeAt ? { resumeSessionAt: start.resumeAt } : {}),
-    ...(start.appendSystemPrompt ? { systemPrompt: { type: "preset", preset: "claude_code", append: start.appendSystemPrompt } } : {}),
+    ...(start.systemPrompt !== undefined
+      ? { systemPrompt: start.systemPrompt }
+      : start.appendSystemPrompt
+        ? { systemPrompt: { type: "preset", preset: "claude_code", append: start.appendSystemPrompt } }
+        : {}),
+    ...(start.outputSchema ? { outputFormat: { type: "json_schema", schema: start.outputSchema } } : {}),
+    ...(start.maxTurns !== undefined ? { maxTurns: start.maxTurns } : {}),
     stderr: wiring.stderr,
   };
 }

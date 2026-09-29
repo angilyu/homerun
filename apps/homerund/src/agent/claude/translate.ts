@@ -131,6 +131,8 @@ export class Translator {
           consumed,
           queuedTurnCount: typeof m.queued_turn_count === "number" ? m.queued_turn_count : null,
           errors: m.subtype === "success" ? (m.is_error ? [m.result] : []) : (m.errors ?? []),
+          ...(m.subtype === "success" && m.structured_output !== undefined ? { structuredOutput: m.structured_output } : {}),
+          ...(m.subtype === "success" && typeof m.result === "string" ? { text: m.result } : {}),
         });
         return out;
       }

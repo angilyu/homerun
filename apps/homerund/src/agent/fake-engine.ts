@@ -15,7 +15,7 @@ export interface FakeSession {
   /** Ask the gate, then (if allowed) report the outcome, like PreToolUse → tool → PostToolUse. */
   tool(call: ToolCallRequest, run?: () => Promise<Omit<ToolOutcome, "toolCallId">>): Promise<GateDecision>;
   /** The standard end of a turn: a result consuming these inputs. */
-  result(consumed: string[] | null, opts?: { ok?: boolean; subtype?: string; cost?: number; queued?: number }): void;
+  result(consumed: string[] | null, opts?: { ok?: boolean; subtype?: string; cost?: number; queued?: number; structured?: unknown; text?: string }): void;
   readonly interrupted: boolean;
   readonly killed: Promise<void>;
 }
@@ -100,6 +100,8 @@ export class FakeEngine implements AgentEngine {
           consumed,
           queuedTurnCount: r.queued ?? 0,
           errors: [],
+          ...(r.structured !== undefined ? { structuredOutput: r.structured } : {}),
+          ...(r.text !== undefined ? { text: r.text } : {}),
         });
       },
       get interrupted() {
