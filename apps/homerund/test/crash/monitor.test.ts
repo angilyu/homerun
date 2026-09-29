@@ -106,11 +106,11 @@ function check(dir: string): string[] {
 }
 
 /** Run lives until one ends on its own; the first is killed at `killAt`. */
-async function trial(template: string, killAt?: number): Promise<{ dir: string; lives: Result[] }> {
+async function trial(template: string, lagging: boolean, killAt?: number): Promise<{ dir: string; lives: Result[] }> {
   const dir = copyDir(template);
   const lives: Result[] = [];
   for (let n = 1; n <= 4; n++) {
-    const r = await life({ dir, life: n, ...(n === 1 && killAt ? { killAt } : {}) });
+    const r = await life({ dir, life: n, lagging, ...(n === 1 && killAt ? { killAt } : {}) });
     lives.push(r);
     if (r.signal === "SIGKILL") continue;
     break;
@@ -118,37 +118,36 @@ async function trial(template: string, killAt?: number): Promise<{ dir: string; 
   return { dir, lives };
 }
 
-describe("the scheduler survives a crash at every boundary", () => {
-  test(
-    "claiming missed and on-time fires, running the checks, acting and saving monitor state",
-    async () => {
-      const template = fresh();
-      const setup = await life({ dir: template, setup: true });
-      expect(setup.stderr).toBe("");
-      expect(setup.code).toBe(0);
+async function sweep(lagging: boolean): Promise<void> {
+  const template = fresh();
+  const setup = await life({ dir: template, setup: true });
+  expect(setup.stderr).toBe("");
+  expect(setup.code).toBe(0);
 
-      const clean = await trial(template);
-      expect(clean.lives.map((l) => l.code)).toEqual([0]);
-      expect(check(clean.dir)).toEqual([]);
-      const total = clean.lives[0]!.points!;
-      expect(total).toBeGreaterThan(20);
-      rmSync(clean.dir, { recursive: true, force: true });
+  const clean = await trial(template, lagging);
+  expect(clean.lives.map((l) => l.code)).toEqual([0]);
+  expect(check(clean.dir)).toEqual([]);
+  const total = clean.lives[0]!.points!;
+  expect(total).toBeGreaterThan(20);
+  rmSync(clean.dir, { recursive: true, force: true });
 
-      const failures: string[] = [];
-      await pool(
-        Array.from({ length: total }, (_, i) => i + 1),
-        async (k) => {
-          const t = await trial(template, k);
-          const last = t.lives.at(-1)!;
-          if (t.lives[0]!.signal !== "SIGKILL") failures.push(`k=${k}: the first life was not killed (${t.lives[0]!.code})`);
-          else if (last.code !== 0) failures.push(`k=${k}: the last life exited ${last.code ?? last.signal}: ${last.stderr.slice(0, 600)}`);
-          else for (const p of check(t.dir)) failures.push(`k=${k}: ${p}`);
-          rmSync(t.dir, { recursive: true, force: true });
-        },
-      );
-      rmSync(template, { recursive: true, force: true });
-      expect(failures).toEqual([]);
+  const failures: string[] = [];
+  await pool(
+    Array.from({ length: total }, (_, i) => i + 1),
+    async (k) => {
+      const t = await trial(template, lagging, k);
+      const last = t.lives.at(-1)!;
+      if (t.lives[0]!.signal !== "SIGKILL") failures.push(`k=${k}: the first life was not killed (${t.lives[0]!.code})`);
+      else if (last.code !== 0) failures.push(`k=${k}: the last life exited ${last.code ?? last.signal}: ${last.stderr.slice(0, 600)}`);
+      else for (const p of check(t.dir)) failures.push(`k=${k}: ${p}`);
+      rmSync(t.dir, { recursive: true, force: true });
     },
-    TIMEOUT,
   );
+  rmSync(template, { recursive: true, force: true });
+  expect(failures).toEqual([]);
+}
+
+describe("the scheduler survives a crash at every boundary", () => {
+  test("claiming missed and on-time fires, running the checks, acting and saving monitor state", () => sweep(false), TIMEOUT);
+  test("the act step with a lagging mirror: nothing of its conversation is stored before its Write", () => sweep(true), TIMEOUT);
 });

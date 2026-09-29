@@ -9,6 +9,9 @@
  *   Homerun was not running; run_all catches up the last three, and 11:05 is on time. The first
  *   late check sees the change and acts once (a Write the ledger records).
  *
+ * With `lagging`, the act's session stores nothing until its Write happened, so a crash before
+ * that leaves a session `claude` cannot resume and the act step starts a new one.
+ *
  * Answers "Did this happen?" from the ledger. Prints `{"points": n}` when it ends on its own.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -32,6 +35,8 @@ export interface MonitorChildArgs {
   /** 1 for the life under test, 2… for recovery lives. */
   life?: number;
   killAt?: number;
+  /** The act's session stores nothing of its conversation until its Write happened. */
+  lagging?: boolean;
 }
 
 export const M_T0 = Date.UTC(2026, 0, 5, 10, 0, 30);
@@ -62,7 +67,7 @@ const rt = await startRuntime({
         if (args.killAt === points) process.kill(process.pid, "SIGKILL");
       },
       dead: () => false,
-    }),
+    }, args.lagging ? "report" : undefined),
   setTmpdir: false,
   power: new NoopAssertions(),
   clock,

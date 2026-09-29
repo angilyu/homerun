@@ -415,7 +415,10 @@ The life under test claims the missed slots (`run_all`, max 3) and the on-time o
 check, acts once on the change and saves the monitor state. It is killed at every commit and
 around the act's side effect; later lives on the same data dir (`monitor-child.ts`) recover.
 However the crash fell, each slot is claimed and run once, the missed slots are reported once,
-the act's side effect happens once, and the state ends at the new file's hash.
+the act's side effect happens once, and the state ends at the new file's hash. The sweep runs
+twice: once as above, and once with the act's mirror storing nothing until its Write happened,
+so a crash can leave an act session with no stored conversation; the act step then starts a new
+session, never the thread's previous one.
 
 #### Re-recording
 
