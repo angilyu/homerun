@@ -13,6 +13,8 @@ export interface ChildArgs {
   /** Kill `claude` alone at this boundary; homerund keeps running (agent_exited). */
   dieAt?: number;
   mode?: "inject" | "truncate";
+  /** Name each boundary's kind and print them with the count (`boundaries.ts`). */
+  label?: boolean;
 }
 
 export interface Scenario {

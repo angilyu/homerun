@@ -12,7 +12,8 @@
  * With `lagging`, the act's session stores nothing until its Write happened, so a crash before
  * that leaves a session `claude` cannot resume and the act step starts a new one.
  *
- * Answers "Did this happen?" from the ledger. Prints `{"points": n}` when it ends on its own.
+ * Answers "Did this happen?" from the ledger. Prints `{"points": n}` when it ends on its own, with
+ * each boundary's kind when `label` is set.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,6 +28,7 @@ import { pendingInputRequests } from "../../src/store/rows";
 import { Store } from "../../src/store/store";
 import { MOCK_KEY, monitorSpec } from "../helpers";
 import { TOKEN } from "./scenarios";
+import { BoundaryKinds } from "./boundaries";
 import { SimEngine, type Step } from "./sim-claude";
 
 export interface MonitorChildArgs {
@@ -37,6 +39,8 @@ export interface MonitorChildArgs {
   killAt?: number;
   /** The act's session stores nothing of its conversation until its Write happened. */
   lagging?: boolean;
+  /** Name each boundary's kind and print them with the count (`boundaries.ts`). */
+  label?: boolean;
 }
 
 export const M_T0 = Date.UTC(2026, 0, 5, 10, 0, 30);
@@ -47,7 +51,9 @@ const args = JSON.parse(process.argv[2]!) as MonitorChildArgs;
 const ledger = join(args.dir, "ledger");
 
 let points = 0;
+const kinds = args.label ? new BoundaryKinds(args.dir) : null;
 Store.commitObserver = () => {
+  kinds?.commit();
   points++;
   if (args.killAt === points) process.kill(process.pid, "SIGKILL");
 };
@@ -62,7 +68,8 @@ const rt = await startRuntime({
   launchToken: TOKEN,
   engine: (store) =>
     new SimEngine(store, ACT_PLAN, ledger, {
-      point: () => {
+      point: (where) => {
+        kinds?.tool(where);
         points++;
         if (args.killAt === points) process.kill(process.pid, "SIGKILL");
       },
@@ -119,5 +126,5 @@ for (;;) {
 shell.close();
 await rt.shutdown();
 if (args.setup) writeFileSync(join(args.dir, "work", "watched.txt"), "v2");
-console.log(JSON.stringify({ points }));
+console.log(JSON.stringify({ points, ...(kinds ? { kinds: kinds.kinds } : {}) }));
 process.exit(0);

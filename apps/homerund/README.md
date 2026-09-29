@@ -297,11 +297,14 @@ Other settings:
 pnpm --filter @homerun/homerund typecheck
 pnpm --filter @homerun/homerund test:unit     # fake engine, no network
 pnpm --filter @homerun/homerund test:replay   # real claude against recorded API exchanges, no key
-pnpm --filter @homerun/homerund test:crash    # kill at every event boundary, simulated claude (about a minute and a half)
+pnpm --filter @homerun/homerund test:crash    # kill at every event boundary, simulated claude (two to three minutes)
 scripts/check-no-secrets.sh                   # from the repo root
 ```
 
-CI runs all of these on Linux (`ubuntu-latest`; `.github/workflows/ci.yml`, job `homerund`). The code is POSIX-only (process groups, `ps`, unix sockets) and is tested on macOS and Linux; liveness checks ignore zombies, which `kill(pid, 0)` still reports as alive.
+CI runs all of these on Linux (`ubuntu-latest`; `.github/workflows/ci.yml`): job `homerund`
+runs the secret scan, typecheck, unit and replay tests, and job `homerund-crash` runs the crash
+tests on a sample of boundaries in parallel. `.github/workflows/nightly.yml` runs the full
+crash sweep on main every day at 09:00 UTC, and on demand. The code is POSIX-only (process groups, `ps`, unix sockets) and is tested on macOS and Linux; liveness checks ignore zombies, which `kill(pid, 0)` still reports as alive.
 
 ### Fake-clock suite (§16 row 5)
 
@@ -391,13 +394,13 @@ A boundary is any commit homerund makes (`Store.commitObserver`), or the point j
 just after a tool's side effect. For each scenario (serial calls; parallel destructive calls in
 one message; the same in truncate mode; a lagging mirror), the harness does the following. Each life is a
 child process (`child.ts`).
-1. It counts the boundaries of a clean run.
+1. It counts the boundaries of a clean run and names each one's kind (`boundaries.ts`).
 2. For each boundary k, it SIGKILLs homerund at k. A second life recovers, answers "Did this
    happen?" truthfully from the ledger, and finishes the run. Before answering, the user also
    sends a message, which is held.
 3. For each k, it kills `claude` alone at k.
 4. For each first crash that left an ambiguous call, it crashes again at every boundary of
-   the recovery life. `HOMERUN_CRASH_FULL=1` does this after every first crash.
+   the recovery life.
 
 After each trial it checks invariants:
 - every side effect happened exactly once;
@@ -419,6 +422,32 @@ the act's side effect happens once, and the state ends at the new file's hash. T
 twice: once as above, and once with the act's mirror storing nothing until its Write happened,
 so a crash can leave an act session with no stored conversation; the act step then starts a new
 session, never the thread's previous one.
+
+#### Full and sampled sweeps
+
+`HOMERUN_CRASH_SWEEP` chooses which boundaries a sweep kills at (`test/crash/sampler.ts`):
+
+| Mode | Boundaries | Where |
+|---|---|---|
+| `full` (the default) | every boundary, as described above | locally, and nightly on main |
+| `sample` | per phase of each sweep: the first and the last boundary, one boundary of every kind, then random others up to a budget. The second crash follows one of the ambiguous first crashes | CI on every pull request and push |
+| `exhaustive` | `full`, and the second crash after every first crash, not only the ambiguous ones | by hand |
+
+A boundary's kind is what happened there: a commit is named by the event types it appended and
+the other tables it changed (for example `commit:tool.call+threads` or
+`commit:runs+schedule_fires`), and the points around a tool's side effect are
+`tool:before_effect` and `tool:after_effect`. The budgets (`BUDGET` in `crash.test.ts` and
+`monitor.test.ts`) keep the sampled crash tests near a minute on CI.
+
+The random part is seeded by `HOMERUN_CRASH_SEED`, else `GITHUB_SHA`, else the time, so each
+commit tries a different subset and, over many commits and the nightly run, all of them. The
+log prints the seed and every boundary chosen. To reproduce a failure from CI:
+
+```sh
+HOMERUN_CRASH_SWEEP=sample HOMERUN_CRASH_SEED=<seed from the log> pnpm --filter @homerun/homerund test:crash
+```
+
+The same seed draws the same boundaries as long as the scenarios' boundaries are unchanged.
 
 #### Re-recording
 

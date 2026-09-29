@@ -8,6 +8,7 @@ import { Bus } from "../../src/bus";
 import { NOT_RUN_TEXT } from "../../src/runs/resume";
 import { Store } from "../../src/store/store";
 import { chainEntries, chainTo, chainTools } from "../../src/store/transcript";
+import { crashSeed, sampleBoundaries, sampleItems, sweepMode } from "./sampler";
 import { CLIENT_MSG_ID, HELD_MSG_ID, SCENARIOS, type ChildArgs } from "./scenarios";
 import { INTERRUPTED } from "./sim-claude";
 
@@ -24,11 +25,18 @@ import { INTERRUPTED } from "./sim-claude";
  *
  * The same sweep runs with `claude` dying alone at each boundary (homerund keeps running), and in
  * the truncate fallback mode. A second crash during the recovery life is swept for the first
- * crashes that leave an ambiguous call; `HOMERUN_CRASH_FULL=1` sweeps it for every first crash.
+ * crashes that leave an ambiguous call.
+ *
+ * `HOMERUN_CRASH_SWEEP` picks the boundaries (`sampler.ts`): every one (`full`, the default), a
+ * seeded sample that still covers every kind of boundary (`sample`, CI on each pull request), or
+ * `exhaustive`, which also crashes again after every first crash.
  */
 
 const CHILD = resolve(import.meta.dir, "child.ts");
-const FULL = !!process.env.HOMERUN_CRASH_FULL;
+const MODE = sweepMode();
+const SEED = crashSeed();
+/** In `sample` mode: boundaries per phase of a sweep, and how many ambiguous first crashes get a second. */
+const BUDGET = { kill: 20, die: 18, secondAfter: 1, second: 20 };
 const POOL = Math.max(2, Math.min(8, availableParallelism()));
 const TIMEOUT = 600_000;
 
@@ -36,6 +44,7 @@ interface ChildResult {
   code: number | null;
   signal: string | null;
   points: number | null;
+  kinds: string[] | null;
   stderr: string;
 }
 
@@ -43,8 +52,18 @@ async function life(a: ChildArgs): Promise<ChildResult> {
   const p = Bun.spawn([process.execPath, CHILD, JSON.stringify(a)], { stdout: "pipe", stderr: "pipe", cwd: resolve(import.meta.dir, "..", "..") });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   await p.exited;
-  const m = /\{"points":(\d+)\}/.exec(out);
-  return { code: p.exitCode, signal: p.signalCode, points: m ? Number(m[1]) : null, stderr: err };
+  const m = /^\{"points":.*\}$/m.exec(out);
+  const r = m ? (JSON.parse(m[0]) as { points: number; kinds?: string[] }) : null;
+  return { code: p.exitCode, signal: p.signalCode, points: r?.points ?? null, kinds: r?.kinds ?? null, stderr: err };
+}
+
+/** The kind of each boundary of a life on `dir`, which is used up. */
+async function boundaryKinds(a: ChildArgs): Promise<string[]> {
+  const r = await life({ ...a, label: true });
+  rmSync(a.dir, { recursive: true, force: true });
+  expect(r.code).toBe(0);
+  expect(r.kinds?.length).toBe(r.points!);
+  return r.kinds!;
 }
 
 async function pool<T>(items: readonly T[], fn: (t: T) => Promise<void>): Promise<void> {
@@ -64,7 +83,6 @@ function copyDir(from: string): string {
   for (const f of ["homerun.db", "homerun.db-wal", "homerun.db-shm", "ledger"]) if (existsSync(join(from, f))) cpSync(join(from, f), join(to, f));
   return to;
 }
-const range = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
 
 /** The problems with a settled data dir; [] when every invariant holds. */
 function check(dir: string, scenario: string): string[] {
@@ -166,50 +184,64 @@ function ambiguousAfterCrash(dir: string): boolean {
   }
 }
 
+const show = (ks: readonly number[], n: number) => (MODE === "sample" ? `[${ks.join(",")}] of ${n}` : `${n}`);
+
+if (MODE !== "full") console.error(`crash sweep: ${MODE}${MODE === "sample" ? `, seed ${SEED} (HOMERUN_CRASH_SEED=${SEED} draws the same boundaries)` : ""}`);
+
 async function sweep(base: Omit<ChildArgs, "dir">): Promise<void> {
+  const name = `${base.scenario}${base.mode ? `/${base.mode}` : ""}`;
+  const draw = (kinds: string[], stream: string, budget: number) => sampleBoundaries(kinds, { mode: MODE, seed: SEED, stream: `${name}/${stream}`, budget });
   const baseline = await trial(base as ChildArgs, {});
   expect(baseline.problems).toEqual([]);
   rmSync(baseline.dir, { recursive: true, force: true });
-  const counted = fresh();
-  const n = (await life({ ...base, dir: counted })).points!;
-  rmSync(counted, { recursive: true, force: true });
-  expect(n).toBeGreaterThan(10);
+  const kinds = await boundaryKinds({ ...base, dir: fresh() });
+  expect(kinds.length).toBeGreaterThan(10);
+  const kills = draw(kinds, "kill", BUDGET.kill);
+  const deaths = draw(kinds, "die", BUDGET.die);
 
   const failures: string[] = [];
-  const secondCandidates: string[] = [];
-  await pool(range(n), async (k) => {
+  const ambiguous: Array<{ k: number; dir: string }> = [];
+  await pool(kills, async (k) => {
     const dir = fresh();
     const a = await life({ ...base, dir, killAt: k });
-    if (a.signal === "SIGKILL" && (FULL || ambiguousAfterCrash(dir))) {
-      secondCandidates.push(copyDir(dir));
+    if (a.signal === "SIGKILL" && (MODE === "exhaustive" || ambiguousAfterCrash(dir))) {
+      ambiguous.push({ k, dir: copyDir(dir) });
     }
     const t = await trial(base as ChildArgs, { killAt: 0 }, dir);
     if (t.problems.length) failures.push(`kill at ${k}: ${t.problems.join("; ")}`);
     else rmSync(dir, { recursive: true, force: true });
   });
 
-  await pool(range(n), async (k) => {
+  await pool(deaths, async (k) => {
     const t = await trial(base as ChildArgs, { dieAt: k });
     if (t.problems.length) failures.push(`claude dies at ${k}: ${t.problems.join("; ")}`);
     else rmSync(t.dir, { recursive: true, force: true });
   });
 
   // A second crash during recovery, at every boundary of the recovery life.
-  const pairs: Array<{ crashed: string; j: number }> = [];
-  await pool(secondCandidates, async (crashed) => {
-    const probe = copyDir(crashed);
-    const m = (await life({ ...base, dir: probe })).points ?? 0;
-    rmSync(probe, { recursive: true, force: true });
-    for (const j of range(m)) pairs.push({ crashed, j });
+  ambiguous.sort((a, b) => a.k - b.k);
+  expect(ambiguous.length).toBeGreaterThan(0);
+  const firsts = sampleItems(ambiguous, BUDGET.secondAfter, { mode: MODE, seed: SEED, stream: `${name}/second` });
+  const pairs: Array<{ crashed: string; k: number; j: number }> = [];
+  const seconds: string[] = [];
+  await pool(firsts, async ({ k, dir: crashed }) => {
+    const recovery = await boundaryKinds({ ...base, dir: copyDir(crashed) });
+    const js = draw(recovery, `second/${k}`, BUDGET.second);
+    for (const j of js) pairs.push({ crashed, k, j });
+    seconds.push(`after ${k}: ${show(js, recovery.length)}`);
   });
-  await pool(pairs, async ({ crashed, j }) => {
+  await pool(pairs, async ({ crashed, k, j }) => {
     const t = await trial(base as ChildArgs, { killAt: j }, copyDir(crashed));
-    if (t.problems.length) failures.push(`second kill at ${j} after ${crashed}: ${t.problems.join("; ")}`);
+    if (t.problems.length) failures.push(`second kill at ${j} after a kill at ${k} (${crashed}): ${t.problems.join("; ")}`);
     else rmSync(t.dir, { recursive: true, force: true });
   });
-  if (!failures.length) for (const d of secondCandidates) rmSync(d, { recursive: true, force: true });
+  for (const a of ambiguous) if (!failures.length || !firsts.includes(a)) rmSync(a.dir, { recursive: true, force: true });
 
-  console.error(`${base.scenario}${base.mode ? ` (${base.mode})` : ""}: ${n} boundaries, ${n} agent deaths, ${pairs.length} second crashes over ${secondCandidates.length} ambiguous first crashes`);
+  console.error(
+    MODE === "sample"
+      ? `${name}: kills ${show(kills, kinds.length)}, agent deaths ${show(deaths, kinds.length)}, second crashes ${seconds.sort().join("; ")} (${firsts.length} of ${ambiguous.length} ambiguous first crashes)`
+      : `${name}: ${kills.length} boundaries, ${deaths.length} agent deaths, ${pairs.length} second crashes over ${firsts.length} ambiguous first crashes`,
+  );
   expect(failures).toEqual([]);
 }
 

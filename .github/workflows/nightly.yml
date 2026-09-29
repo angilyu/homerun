@@ -1,0 +1,30 @@
+name: Nightly
+
+# The full crash sweep: homerund killed at every event boundary (§16.2). Pull requests run a
+# sample of it (ci.yml).
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  homerund-crash:
+    name: apps/homerund crash tests (full)
+    runs-on: ubuntu-latest
+    # The full sweep took about 7 minutes on ubuntu-latest in September 2026.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..."
+      - name: Crash tests (every boundary)
+        run: pnpm --filter @homerun/homerund test:crash
+        env:
+          HOMERUN_CRASH_SWEEP: full
