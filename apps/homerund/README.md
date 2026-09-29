@@ -164,6 +164,18 @@ leaves the Mac unable to sleep. It is best-effort: if caffeinate is missing, can
 exits while held, homerund logs one warning and stops trying until it restarts; runs are never
 failed or delayed by it. Elsewhere this is a no-op for now.
 
+**Checking sleep and wake by hand.** The shell's observer (`apps/desktop/src-tauri/src/power.rs`)
+has unit tests only; to see it work on a real Mac:
+1. Build and start the desktop app (it spawns homerund), with a monitor on a `*/5` schedule.
+2. Run `pmset sleepnow`, wait past a fire time, then wake the Mac.
+3. In `~/Library/Application Support/Homerun/logs/homerund.log`, expect a `power.will_sleep`
+   line before the sleep and a `power.did_wake` line after it, and no
+   `asleep, from a gap between ticks` line for the same span. `shell.log` has a
+   `... not delivered` line if forwarding failed.
+4. `sqlite3 ~/Library/Application\ Support/Homerun/homerun.db "SELECT * FROM downtime ORDER BY start_at DESC LIMIT 3"`
+   shows a row with `cause = asleep, source = os` covering the sleep, and
+   `homerun schedules coverage TASK` counts the fire as missed while asleep.
+
 **Monitor runs** (§8.3). A monitor run is a check, then an act step only if the check found a
 change:
 - A *rule check* is evaluated by the runtime with no model call. Sources: `http` (a JSON path, a

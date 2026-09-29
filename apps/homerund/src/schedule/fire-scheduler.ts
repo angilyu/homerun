@@ -111,6 +111,7 @@ export class FireScheduler {
 
   willSleep(at: number): void {
     this.sleepingSince = at;
+    log.info("power.will_sleep", { at: new Date(at).toISOString() });
   }
 
   didWake(at: number, sleptAt: number | null): void {
@@ -118,6 +119,7 @@ export class FireScheduler {
     this.sleepingSince = null;
     const now = this.clock.now();
     addDowntime(this.store, { start_at: start, end_at: Math.min(at, now), cause: "asleep", source: "os" });
+    log.info("power.did_wake", { asleep_from: new Date(start).toISOString(), asleep_to: new Date(Math.min(at, now)).toISOString() });
     // The OS told us; the gap detector must not record the same sleep again.
     this.lastSeen = now;
     this.run(now);
@@ -150,7 +152,10 @@ export class FireScheduler {
 
   /** Gap detection and the life heartbeat. */
   private observe(now: number): void {
-    if (now - this.lastSeen > GAP_MS) addDowntime(this.store, { start_at: this.lastSeen, end_at: now, cause: "asleep", source: "gap" });
+    if (now - this.lastSeen > GAP_MS) {
+      addDowntime(this.store, { start_at: this.lastSeen, end_at: now, cause: "asleep", source: "gap" });
+      log.info("asleep, from a gap between ticks", { asleep_from: new Date(this.lastSeen).toISOString(), asleep_to: new Date(now).toISOString() });
+    }
     this.lastSeen = now; // also when the clock was set back: measure from here
     if (Math.abs(now - this.lastHeartbeat) >= HEARTBEAT_MS) {
       this.lastHeartbeat = now;
