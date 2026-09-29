@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   MODEL_ALIASES,
   checkSpec,
@@ -169,18 +169,26 @@ function arr(d: Draft, p: string): string[] {
   return Array.isArray(v) ? (v as string[]) : [];
 }
 
+// Issues sit outside the <label> so they don't become part of the control's name; they're linked by aria-describedby instead.
 function Field({ label, path, check, show, children }: { label: string; path: string; check: SpecCheck; show: boolean; children: ReactNode }) {
   const errs = show ? issuesAt(check, path) : [];
+  const id = useId();
+  const control =
+    errs.length && isValidElement<{ "aria-describedby"?: string; "aria-invalid"?: boolean }>(children)
+      ? cloneElement(children, { "aria-describedby": `${id}-err`, "aria-invalid": true })
+      : children;
   return (
-    <label className="field" data-invalid={errs.length ? "" : undefined}>
-      <span>{label}</span>
-      {children}
-      {errs.map((m) => (
-        <span key={m} className="error">
-          {m}
+    <div className="field" data-invalid={errs.length ? "" : undefined}>
+      <label className="field-label">
+        <span className="field-name">{label}</span>
+        {control}
+      </label>
+      {errs.length > 0 && (
+        <span id={`${id}-err`} className="error">
+          {errs.join(" ")}
         </span>
-      ))}
-    </label>
+      )}
+    </div>
   );
 }
 
@@ -229,7 +237,7 @@ function ModelField({ label, path, draft, set }: { label: string; path: string; 
   const [custom, setCustom] = useState(!known && v !== "");
   return (
     <label className="field">
-      <span>{label}</span>
+      <span className="field-name">{label}</span>
       <div className="row">
         <select
           value={custom ? "custom" : v}

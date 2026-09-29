@@ -82,7 +82,7 @@ function DigestSection() {
         Send a daily summary of how monitors did
       </label>
       <label className="field inline">
-        <span>At</span>
+        <span className="field-name">At</span>
         <input type="time" value={draft.time} disabled={!draft.enabled} onChange={(e) => e.target.value && void save({ ...draft, time: e.target.value })} />
         <span className="muted">{draft.timezone}</span>
       </label>

@@ -1,0 +1,133 @@
+import { expect } from "bun:test";
+import { render, screen, waitFor } from "@testing-library/react";
+import { AppClient } from "@homerun/app-state";
+import { AppRoot, createApp } from "../../src/app";
+import type { Route } from "../../src/hooks";
+import type { AppInfo, KeyStatus, SetKeyOutcome, ShellApi } from "../../src/platform/types";
+import { DEVICE, FakeTransport, T0, uuid } from "../../../../packages/app-state/test/helpers";
+
+export * from "../../../../packages/app-state/test/helpers";
+
+/** The shell's services, faked (the real ones are Rust; plan §9). */
+export class FakeShell implements ShellApi {
+  key: KeyStatus = { present: true, hint: "abcd", store: "memory" };
+  setKeyResult: SetKeyOutcome | Error = { outcome: "saved" };
+  calls: string[] = [];
+  opened: string[] = [];
+  keyStatus = async () => (this.calls.push("keyStatus"), { ...this.key });
+  setKey = async (v: string) => {
+    this.calls.push(`setKey:${v}`);
+    if (this.setKeyResult instanceof Error) throw this.setKeyResult;
+    if (this.setKeyResult.outcome !== "rejected") this.key = { present: true, hint: v.slice(-4), store: "memory" };
+    return this.setKeyResult;
+  };
+  clearKey = async () => {
+    this.calls.push("clearKey");
+    this.key = { present: false, hint: null, store: "memory" };
+  };
+  restartRuntime = async () => void this.calls.push("restartRuntime");
+  openExternal = async (url: string) => void this.opened.push(url);
+  revealLogs = async () => void this.calls.push("revealLogs");
+  appInfo = async (): Promise<AppInfo> => ({ version: "0.2.0", build: "debug", platform: "macos", data_dir: "/tmp/h", log_path: "/tmp/h/logs/x.log", key_store: "memory" });
+}
+
+export const TASK = "4f5a6b7c-8d9e-4f0a-8b1c-2d3e4f5a6b01";
+export const SCHEDULE = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c01";
+export const GRANT = "6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d01";
+
+export function summary(thread_id: string, over: Record<string, unknown> = {}) {
+  return {
+    thread_id,
+    task_id: null,
+    title: null,
+    last_seq: 1,
+    updated_at: T0,
+    last_message: { seq: 1, role: "user", preview: "Hello there", ts: T0 },
+    unread_count: 0,
+    input_pending: false,
+    active_run: null,
+    ...over,
+  };
+}
+
+export function sessionTask(over: Record<string, unknown> = {}) {
+  const spec = {
+    format: 1,
+    kind: "session",
+    name: "Tidy repo",
+    prompt: "Keep the repo tidy.",
+    model: { model: "sonnet" },
+    budget: { max_run_usd: 2 },
+    tools: { builtin: ["Read", "Bash"], mcp_servers: [], homerun: [] },
+    policy: { roots: ["~/code"], egress: { mode: "allowlist", domains: [] }, bash_patterns: [], use_shell_environment: false, input_timeout: { action: "wait", remind_after_ms: null }, retention_days: 30 },
+  };
+  return { task_id: TASK, device_id: DEVICE, kind: "session", name: spec.name, version: 1, spec, archived_at: null, ...over };
+}
+
+export function monitorTask(over: Record<string, unknown> = {}) {
+  const spec = {
+    format: 1,
+    kind: "monitor",
+    name: "Price watch",
+    prompt: "Tell me when the price drops.",
+    budget: { max_run_usd: 0.5 },
+    tools: { builtin: ["WebFetch"], mcp_servers: [], homerun: [] },
+    policy: { roots: [], egress: { mode: "allowlist", domains: ["example.com"] }, bash_patterns: [], use_shell_environment: false, input_timeout: { action: "wait", remind_after_ms: null }, retention_days: 30 },
+    schedule: { kind: "interval", every_minutes: 30, catchup: "run_once", max_catchup: 1 },
+    check: { kind: "rule", source: { type: "http", url: "https://example.com/p", extract: { kind: "body" } }, comparator: { op: "changed" } },
+    act: { model: { model: "haiku" } },
+  };
+  return { task_id: TASK, device_id: DEVICE, kind: "monitor", name: spec.name, version: 3, spec, archived_at: null, ...over };
+}
+
+export function scheduleState(over: Record<string, unknown> = {}) {
+  return {
+    schedule_id: SCHEDULE,
+    task_id: TASK,
+    schedule: { kind: "interval", every_minutes: 30, catchup: "run_once", max_catchup: 1 },
+    enabled: true,
+    paused_reason: null,
+    next_fire_at: Date.now() + 12 * 60_000,
+    last_fired_at: null,
+    consecutive_failures: 0,
+    missed_since_last_run: 0,
+    ...over,
+  };
+}
+
+/** A transport that answers the calls every screen makes, with nothing in it. */
+export function baseTransport(): FakeTransport {
+  const t = new FakeTransport();
+  t.handlers = {
+    "threads.list": () => ({ threads: [], has_more: false }),
+    "input.list_pending": () => ({ requests: [] }),
+    "tasks.list": () => ({ tasks: [] }),
+    "schedules.list": () => ({ schedules: [] }),
+    "threads.history": () => ({ events: [], has_more: false }),
+    "threads.subscribe": () => ({ subscription_id: uuid() }),
+    "threads.unsubscribe": () => ({ ok: true }),
+    "threads.mark_read": () => ({ ok: true }),
+  };
+  return t;
+}
+
+export interface Harness {
+  t: FakeTransport;
+  shell: FakeShell;
+  client: AppClient;
+  go(r: Route): void;
+}
+
+/** Render the whole app over a fake transport and shell, connected. */
+export async function renderApp(opts: { t?: FakeTransport; shell?: FakeShell; route?: Route; connect?: boolean } = {}): Promise<Harness> {
+  const t = opts.t ?? baseTransport();
+  const shell = opts.shell ?? new FakeShell();
+  const client = new AppClient(t, { keepThreadMs: 0 });
+  const app = createApp({ transport: t, shell }, client);
+  if (opts.route) app.route.set(opts.route);
+  client.start();
+  if (opts.connect !== false) t.ready();
+  render(<AppRoot app={app} />);
+  if (shell.key.present) await waitFor(() => expect(screen.getByRole("navigation")).toBeTruthy());
+  return { t, shell, client, go: app.go };
+}
