@@ -16,6 +16,8 @@ export interface CommandSpec {
   runtime: boolean;
   /** Accepts --json. */
   json: boolean;
+  /** What the bare group word runs, when the group has no `list`. */
+  groupDefault?: boolean;
 }
 
 export const GLOBAL_OPTIONS: Record<string, Opt> = {
@@ -100,6 +102,68 @@ export const COMMANDS: CommandSpec[] = [
     json: true,
   },
   {
+    name: "tasks update",
+    args: "TASK --spec FILE|- [--expected-version N]",
+    summary: "Replace a task's spec (checked before sending); fails if it changed since version N (default: the current one)",
+    options: { spec: { type: "string" }, "expected-version": { type: "string" } },
+    positionals: [1, 1],
+    runtime: true,
+    json: true,
+  },
+  { name: "tasks archive", args: "TASK", summary: "Archive a task; its schedule stops firing", options: {}, positionals: [1, 1], runtime: true, json: true },
+  { name: "tasks run-now", args: "TASK", summary: "Run a monitor now and print the run's id (or its active run's)", options: {}, positionals: [1, 1], runtime: true, json: true },
+  { name: "schedules list", args: "[--task TASK]", summary: "Schedules: state, next fire, and fires missed since the last run", options: { task: { type: "string" } }, positionals: [0, 0], runtime: true, json: true },
+  { name: "schedules enable", args: "SCHEDULE | TASK", summary: "Resume a paused schedule", options: {}, positionals: [1, 1], runtime: true, json: true },
+  { name: "schedules disable", args: "SCHEDULE | TASK", summary: "Pause a schedule", options: {}, positionals: [1, 1], runtime: true, json: true },
+  {
+    name: "schedules coverage",
+    args: "TASK [--days N]",
+    summary: "Per day: fires due, run on time, missed asleep or while Homerun was not running, merged (default 7 days)",
+    options: { days: { type: "string" } },
+    positionals: [1, 1],
+    runtime: true,
+    json: true,
+  },
+  { name: "monitors list", args: "", summary: "Monitors, their schedules and last runs", options: {}, positionals: [0, 0], runtime: true, json: true },
+  { name: "monitors state", args: "TASK", summary: "A monitor's stored state and its version", options: {}, positionals: [1, 1], runtime: true, json: true },
+  {
+    name: "monitors set-state",
+    args: "TASK --state FILE|- [--expected-version N]",
+    summary: "Replace a monitor's state by hand (JSON); fails if it changed since version N (default: the current one)",
+    options: { state: { type: "string" }, "expected-version": { type: "string" } },
+    positionals: [1, 1],
+    runtime: true,
+    json: true,
+  },
+  {
+    name: "monitors reset-state",
+    args: "TASK [--expected-version N]",
+    summary: "Clear a monitor's state: the next check records a new baseline",
+    options: { "expected-version": { type: "string" } },
+    positionals: [1, 1],
+    runtime: true,
+    json: true,
+  },
+  {
+    name: "health digest",
+    args: "[--days N]",
+    summary: "Monitor health over the last N days (default 1): runs, changes, failures, misses by cause, cost",
+    options: { days: { type: "string" } },
+    positionals: [0, 0],
+    runtime: true,
+    json: true,
+    groupDefault: true,
+  },
+  {
+    name: "health settings",
+    args: "[--on | --off] [--time HH:MM] [--timezone ZONE]",
+    summary: "Show or change when the daily health digest is made",
+    options: { on: { type: "boolean" }, off: { type: "boolean" }, time: { type: "string" }, timezone: { type: "string" } },
+    positionals: [0, 0],
+    runtime: true,
+    json: true,
+  },
+  {
     name: "answer",
     args: "REQUEST (--completed | --not-run)",
     summary: 'Answer "Did this happen?" for a call a crash interrupted (development builds)',
@@ -139,8 +203,8 @@ export function findCommand(words: string[]): { command: CommandSpec; used: numb
   if (GROUPS.has(a)) {
     const sub = b !== undefined ? COMMANDS.find((c) => c.name === `${a} ${b}`) : undefined;
     if (sub) return { command: sub, used: 2 };
-    // A bare group lists.
-    const list = COMMANDS.find((c) => c.name === `${a} list`)!;
+    // A bare group lists, or runs the group's default.
+    const list = COMMANDS.find((c) => c.name === `${a} list`) ?? COMMANDS.find((c) => c.groupDefault && c.name.startsWith(`${a} `))!;
     if (b === undefined) return { command: list, used: 1 };
     throw usageError(`unknown command: ${a} ${b}`, `try: homerun help ${a}`);
   }

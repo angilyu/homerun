@@ -25,6 +25,14 @@ export function ago(ts: number, now = Date.now()): string {
   return `${Math.floor(s / 86_400)}d ago`;
 }
 
+export function until(ts: number, now = Date.now()): string {
+  const s = Math.max(0, Math.round((ts - now) / 1000));
+  if (s < 60) return `in ${s}s`;
+  if (s < 3600) return `in ${Math.floor(s / 60)}m`;
+  if (s < 86_400) return `in ${Math.floor(s / 3600)}h`;
+  return `in ${Math.floor(s / 86_400)}d`;
+}
+
 export function usd(n: number | null): string {
   return n === null ? "" : `$${n.toFixed(4)}`;
 }
