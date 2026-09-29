@@ -186,6 +186,27 @@ export function createTask(store: Store, deviceId: string, spec: TaskSpec, now =
   });
 }
 
+/** A new version of a task's spec (§6 `task_versions`). The caller checked `expected_version`. */
+export function updateTaskSpec(store: Store, taskId: string, spec: TaskSpec, now: number): Task {
+  return store.tx(() => {
+    const cur = getTask(store, taskId);
+    if (!cur) throw new Error(`no task ${taskId}`);
+    const version = cur.version + 1;
+    const task = Task.parse({ ...cur, name: spec.name, version, spec });
+    const json = JSON.stringify(task.spec);
+    store.db.query("UPDATE tasks SET name = ?, version = ?, spec = ? WHERE task_id = ?").run(task.name, version, json, taskId);
+    store.db.query("INSERT INTO task_versions (task_id, version, spec, created_at) VALUES (?, ?, ?, ?)").run(taskId, version, json, now);
+    return task;
+  });
+}
+
+export function archiveTaskRow(store: Store, taskId: string, now: number): number {
+  return store.tx(() => {
+    store.db.query("UPDATE tasks SET archived_at = ? WHERE task_id = ? AND archived_at IS NULL").run(now, taskId);
+    return getTask(store, taskId)!.archived_at!;
+  });
+}
+
 export function getTask(store: Store, taskId: string): Task | null {
   const r = store.db.query<TaskRow, [string]>("SELECT task_id, device_id, kind, name, version, spec, archived_at FROM tasks WHERE task_id = ?").get(taskId);
   return r ? rowToTask(r) : null;
@@ -243,7 +264,13 @@ export interface RunRow {
   stop_by: string | null;
   sdk_cost_baseline: number | null;
   sdk_cost_total: number | null;
+  monitor_phase: MonitorPhase | null;
+  check_session_id: string | null;
+  state_version: number | null;
 }
+
+/** Which step of the monitor pipeline a monitor run is in (§8.3); null for other runs. */
+export type MonitorPhase = "rule_check" | "model_check" | "act";
 
 export function rowToRun(r: RunRow): Run {
   return Run.parse({
@@ -303,6 +330,11 @@ export interface NewRun {
   authority: Authority;
   pool: Pool;
   now: number;
+  /** Scheduled fires (§8): the slot, its dedupe key and retry attempt. */
+  scheduledFor?: number | null;
+  dedupeKey?: string;
+  attempt?: number;
+  monitorPhase?: MonitorPhase | null;
 }
 
 /**
@@ -316,10 +348,26 @@ export function tryInsertRun(store: Store, n: NewRun): RunRow | null {
       store.db
         .query(
           `INSERT INTO runs (run_id, thread_id, task_id, task_version, sdk_session_id, device_id, trigger, origin_device, authority,
-           scheduled_for, dedupe_key, attempt, state, created_at, pool, origin_surface)
-         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, ?, 0, 'pending', ?, ?, ?)`,
+           scheduled_for, dedupe_key, attempt, state, created_at, pool, origin_surface, monitor_phase)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
       )
-        .run(runId, n.threadId, n.taskId, n.taskVersion, n.deviceId, n.trigger, n.originDevice, n.authority, runId, n.now, n.pool, n.originSurface),
+        .run(
+          runId,
+          n.threadId,
+          n.taskId,
+          n.taskVersion,
+          n.deviceId,
+          n.trigger,
+          n.originDevice,
+          n.authority,
+          n.scheduledFor ?? null,
+          n.dedupeKey ?? runId,
+          n.attempt ?? 0,
+          n.now,
+          n.pool,
+          n.originSurface,
+          n.monitorPhase ?? null,
+        ),
     );
   } catch (e) {
     if (e instanceof Error && /UNIQUE constraint failed: runs\.thread_id/.test(e.message)) return null;
