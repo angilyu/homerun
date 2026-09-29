@@ -18,7 +18,7 @@ They are not redefined here.
 | `src/config.ts` | Data dir layout, the bundled `claude`, limits, development-only switches |
 | `src/store/` | SQLite (`db.ts`), forward-only migrations with a `VACUUM INTO` backup (`migrate.ts`, `migrations/`), rows, `thread_events`, blobs over 4 KB, the SDK `SessionStore` mirror |
 | `src/agent/` | `AgentEngine` seam. `claude/` holds the real engine: query options, clean env, process-group spawn, process-tree kill, SDK message → event translation. `fake-engine.ts` is for unit tests. `policy.ts` holds tool classes and permissions |
-| `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run), `recovery` (§5.4), `ambiguity` (the answer to "Did this happen?"), `resume` (results for open calls before a resume), `process-groups` |
+| `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run, and the tool gate), `gate` (approval and question prompts), `answers` (applying answers, with or without a process), `input-timeouts` (§5.6), `recovery` (§5.4), `ambiguity` (the answer to "Did this happen?"), `resume` (results for open calls before a resume), `process-groups` |
 | `src/schedule/` | The scheduler (§8): `clock` (wall time and timers; `FakeClock` for tests), `cron-next` and `zone` (next fire in a timezone, with the DST rules), `fire-scheduler` (claims fires, catch-up, downtime, retries, pauses) |
 | `src/monitors/` | Monitor runs (§8.3): `sources` and `feed` (what a rule check observes), `rules` (comparators), `check-runner` (the check step), `model-check`, `complete` (the check result, monitor state, act), `digest` (the health digest) |
 | `src/power/` | Keeping the computer awake while a run is in progress (§8.1) |
@@ -62,8 +62,8 @@ Params, results and callers are defined in `@homerun/core` (`src/protocol/method
   but not change a task, a schedule, monitor state or the digest settings (§9.9).
 - Notifications: `health.digest_ready` to every client; `power.will_sleep` and `power.did_wake`
   from the shell.
-- `input.list_pending`; `input.answer` for "Did this happen?" (below). Approvals and
-  questions return UNAVAILABLE with `not_implemented` until milestone 6.
+- `input.list_pending`; `input.answer` for approvals, questions and "Did this happen?"
+  (below). `grants.list`, `grants.create`, `grants.revoke` (§5.6).
 - `blobs.get`: a stored tool input or output over 4 KB, in pages (`offset`, `length`).
 
 ## Crash resume (§5.4, milestone 4)
@@ -132,6 +132,44 @@ received after that point are not re-sent.
 A note not yet delivered when the runtime is killed again is merged into the next one, never
 replaced. The note is delivered with a fresh id each launch, so a crash in the middle of
 delivering it can show the model the same note twice.
+
+## Approvals and questions (§5.5, §5.6, milestone 6)
+
+Every tool call passes the gate in `runs/driver.ts` (the `PreToolUse` hook, with `canUseTool`
+as a second path to the same stored decision, keyed by `tool_use_id`). `agent/policy.ts`
+decides: allowed, granted, needs approval, or denied. The inputs are the task's tools, roots,
+`Bash` patterns and egress allowlist; the task's grants (`tool_grants`, migration 0004); the
+run's taint (`runs.tainted_at`, written before the call that brings untrusted content in, and
+inherited by a run that resumes the session); and the run's authority. In a `web_read_only`
+run (§9.9) only `read` calls run without asking. The pattern rules themselves are shared code
+in `@homerun/core` (`patterns.ts`).
+
+A call that needs the user, and every `AskUserQuestion`, gets an `input_requests` row, a
+`tool.call`, an `input.requested` event and `waiting_input` in one transaction. Then:
+- **Short wait.** The hook waits (`HOMERUN_INPUT_GRACE_MS`, default two minutes). An answer
+  applies at once (`applied_at`), writes `run.resumed`, and releases held messages.
+- **Long wait.** After the grace period the hook returns `defer`; `claude` exits and the row
+  gets `deferred_at`. The run stays `waiting_input` with no process, power assertion or
+  concurrency slot, overnight if need be. The answer requeues the run; the resumed `claude`
+  asks the gate again for the deferred call, which gets the stored answer.
+- **One open request per run.** While a call waits, any other gated call is denied with "Not
+  run; re-issue after the pending approval", and the model re-issues it after the answer.
+- **First answer wins.** `input.answer` resolves with `WHERE state = 'pending'`; a late answer
+  gets `already_resolved`, with the request's state and who answered. Answers are checked against the caller's
+  authority (`INPUT_ANSWER_RIGHTS` in `@homerun/core`): the release CLI answers questions only,
+  the web answers questions and `read` approvals, and "Did this happen?" needs full authority.
+- **"Always allow"** (`allow_always` with a grant) and `grants.create` ("Trust this tool") add
+  a `tool_grants` row for the task; `grants.revoke` ends it. A grant affects later decisions
+  only.
+- **Timeouts.** `runs/input-timeouts.ts` applies a task's `input_timeout`: `deny` expires the
+  request and the call gets "Nobody answered in time"; `cancel_run` cancels the run; `wait`
+  never expires. It keeps one timer for the earliest deadline and also runs at startup.
+- **Crashes.** Recovery keeps a pending request waiting without a process. An answered request
+  that never reached `claude` is settled by `runs/answers.ts`: a deferred call needs nothing
+  (it is asked again); otherwise a question's answer or a denial becomes the call's result,
+  and an approved call gets "did not run; run it again" plus a one-shot approval for the
+  identical re-issued call. Startup keeps `claude_pid` for a run that was in a short wait until
+  recovery has seen it.
 
 ## Scheduler and monitors (§8, milestone 5)
 
@@ -278,7 +316,8 @@ Development-only switches:
 
 | Switch | Effect |
 |--------|--------|
-| `--dev-auto-approve` / `HOMERUN_DEV_AUTO_APPROVE=1` | Approve `needs_approval` tools. Approval requests are milestone 6 |
+| `--dev-auto-approve` / `HOMERUN_DEV_AUTO_APPROVE=1` | Allow `needs_approval` calls without asking (logged once per run). `AskUserQuestion` still asks |
+| `HOMERUN_INPUT_GRACE_MS` | The short wait before an unanswered call is deferred (§5.6). The default is two minutes |
 | `HOMERUN_DEV_AMBIGUITY_MODE=inject\|truncate` | How an answer to "Did this happen?" is applied (below). The default is `inject` |
 | `--dev-mcp-overrides <file>` / `HOMERUN_DEV_MCP_OVERRIDES` | JSON `{ name: { command, args?, env? } }` that replaces a spec's MCP server launch |
 | `HOMERUN_ANTHROPIC_BASE_URL` | Point claude at a proxy or at the replay server |
@@ -297,7 +336,7 @@ Other settings:
 pnpm --filter @homerun/homerund typecheck
 pnpm --filter @homerun/homerund test:unit     # fake engine, no network
 pnpm --filter @homerun/homerund test:replay   # real claude against recorded API exchanges, no key
-pnpm --filter @homerun/homerund test:crash    # kill at every event boundary, simulated claude (two to three minutes)
+pnpm --filter @homerun/homerund test:crash    # kill at every event boundary, simulated claude (several minutes; `HOMERUN_CRASH_SWEEP=sample` about one)
 scripts/check-no-secrets.sh                   # from the repo root
 ```
 
@@ -365,7 +404,13 @@ The scenarios:
   `status.example.com`) records a baseline, then sees no change. Each check is one request
   offering only `claude`'s `StructuredOutput` tool, and the thread stays empty;
 - `monitor-model-changed-act`: the page changes, the check reports it, the act step writes
-  the report, and the monitor state advances with the run.
+  the report, and the monitor state advances with the run;
+- `approval-defer`: a destructive `Bash` call needs approval and is deferred at once (grace
+  0), so `claude` exits and the run waits with no process; a held message waits too. The
+  approval resumes the session, the call runs once under its own id, and a second answer gets
+  `already_resolved`;
+- `ask-user-question`: `AskUserQuestion` waits for the answer in a short wait, and the model
+  replies with the chosen option.
 
 Replay skips a scenario whose cassette is missing.
 
@@ -402,6 +447,14 @@ child process (`child.ts`).
 4. For each first crash that left an ambiguous call, it crashes again at every boundary of
    the recovery life.
 
+`test/crash/approval.test.ts` runs the same sweep with approvals on (no auto-approve): the
+`approve` scenario (a question, then a `Bash` approval) in a short wait (`wait`) and deferred
+(`defer`, grace 0, so `sim-claude` defers and asks again on resume), and `approve-parallel`
+deferred: two gated calls in one message, where one waits and the other is denied or never
+asked, then re-issued. The user answers in the second life, from the ledger
+for "Did this happen?" and with allow for approvals. Its boundaries include the request, the
+answer, the deferral and the answer's application, each a distinct kind for the sampler.
+
 After each trial it checks invariants:
 - every side effect happened exactly once;
 - every call has one result;
@@ -436,8 +489,8 @@ session, never the thread's previous one.
 A boundary's kind is what happened there: a commit is named by the event types it appended and
 the other tables it changed (for example `commit:tool.call+threads` or
 `commit:runs+schedule_fires`), and the points around a tool's side effect are
-`tool:before_effect` and `tool:after_effect`. The budgets (`BUDGET` in `crash.test.ts` and
-`monitor.test.ts`) keep the sampled crash tests near a minute on CI.
+`tool:before_effect` and `tool:after_effect`. The budgets (`BUDGET` in `crash.test.ts`,
+`approval.test.ts` and `monitor.test.ts`) keep the sampled crash tests near a minute on CI.
 
 The random part is seeded by `HOMERUN_CRASH_SEED`, else `GITHUB_SHA`, else the time, so each
 commit tries a different subset and, over many commits and the nightly run, all of them. The
