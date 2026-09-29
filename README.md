@@ -27,7 +27,7 @@ and your data stays on your machine. Users bring their own Anthropic API key.
 | 7 | The desktop app ([`apps/desktop`](apps/desktop/README.md)) | Done |
 | 8 | Packaging: menu bar, login item, signed updater | **Next** |
 
-Later milestones (relay, iOS and web, distribution) are listed in
+Later milestones (Windows, relay, iOS and web, distribution) are listed in
 [design §16](docs/design.md#16-build-plan).
 
 ## Repository layout

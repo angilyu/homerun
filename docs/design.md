@@ -2204,6 +2204,7 @@ UI last: the runtime is the risky part.
 | 6 | Approvals + questions | Destructive tool pauses a run; `AskUserQuestion` pauses for an answer; long waits `defer` and resume; answer from CLI; first answer wins | **Done** |
 | 7 | [Desktop app](../apps/desktop/README.md) | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | **Done** |
 | 8 | Packaging | Menu-bar / tray residency, login item, signed updater, quit confirmation | Next |
+| 8b | Windows | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | — |
 | 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | — |
 | 10 | iOS + web | Sign-in and device linking; history sync, live chat, steering, questions, approvals, rich push; web client with reduced authority | — |
 | 11 | Distribution | Signed and notarized builds, installers, crash reporting, version gate | — |
@@ -2296,7 +2297,7 @@ upgrade can change agent behaviour without any change to our code.
 ## 17. Open questions
 
 1. **Windows parity timing** — *decided in milestone 7* (§18 row 40): macOS
-   first; Windows is its own milestone after milestone 8.
+   first; Windows is its own milestone, 8b, right after milestone 8 (§16).
 2. **Browser tooling** — bundle Playwright (heavy, reliable, own browser) or
    drive the user's existing Chrome via CDP (light, reuses logged-in sessions,
    more fragile)? This materially affects what monitors can do.
@@ -2357,5 +2358,5 @@ One line per major decision: what was chosen, and why.
 | 37 | **A crash loop stops fast restarts but keeps a slow retry** (§5.1) | Restarting every few seconds won't help, but a runtime that never comes back silently stops every monitor (§8.2). The window shows the loop, and the shell tries again every ten minutes |
 | 38 | **Replies on a monitor's thread run apart from the monitor** (§5.7, §8.3) | The monitor's own sessions stay fresh and small. A reply gets the monitor's tool policy and its recent reports, and never moves its state or coverage |
 | 39 | **Onboarding checks the API key before storing it** (§7.2) | A mistyped key is caught at once, not on the first run. `GET /v1/models` costs nothing, and the runtime neither keeps nor uses the candidate |
-| 40 | **macOS first; Windows after milestone 8** (§17) | The runtime's sockets, process groups and `ps` are POSIX, so a Windows shell would have nothing to supervise. The shell's core (`shell-core`) is platform-neutral, so a port adds a named pipe, job objects and Credential Manager |
+| 40 | **macOS first; Windows as milestone 8b** (§16, §17) | The runtime's sockets, process groups and `ps` are POSIX, so a Windows shell would have nothing to supervise. The shell's core (`shell-core`) is platform-neutral, so a port adds a named pipe, job objects and Credential Manager |
 | 41 | **The UI's end-to-end test runs in a browser against a stand-in shell** (§16.2) | A Tauri build with WebKitGTK on every pull request doesn't fit CI's time budget. The stand-in applies the same `webview` allowlist from `callers.json`, and the Rust shell has its own tests |
