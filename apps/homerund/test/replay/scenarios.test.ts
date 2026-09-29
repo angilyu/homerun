@@ -60,6 +60,17 @@ async function until(pred: () => boolean, ms: number, what: string): Promise<voi
   }
 }
 
+/**
+ * Wait until the call is in the stored transcript. claude mirrors its transcript a little after the
+ * fact (on a slow machine, after the command's effect); a scene that resumes the session after a
+ * crash is about a call the store shows, so it must not crash before then.
+ */
+async function callStored(s: Scene, runId: string, toolCallId: string): Promise<void> {
+  const stored = () =>
+    sql<{ n: number }>(s.hr, "SELECT count(*) AS n FROM sdk_transcripts t JOIN runs r ON t.session_id = r.sdk_session_id WHERE r.run_id = ? AND t.entry LIKE ?", runId, `%"id":"${toolCallId}"%`)[0]!.n > 0;
+  await until(stored, 10_000, "the call in the stored transcript");
+}
+
 const lastHasToolResult = (fp: Fingerprint) => fp.messages.at(-1)?.blocks.some((b) => b.t === "tool_result") ?? false;
 
 const scenes: Array<{ root: string; hr: Homerund }> = [];
@@ -399,6 +410,7 @@ describe(`replay (${MODE})`, () => {
           const call = (await sub.waitFor((e) => e.type === "tool.call", TIMEOUT, "tool.call")) as Of<"tool.call">;
           const log = join(s.work, "side.log");
           await until(() => existsSync(log) && readFileSync(log, "utf8") === "ran\n", 10_000, "the command's effect");
+          await callStored(s, sent.run_id, call.payload.tool_call_id);
           const [before] = sql<{ claude_pid: number }>(s.hr, "SELECT claude_pid FROM runs WHERE run_id = ?", sent.run_id);
           const requestsBefore = s.server.messageRequests;
 
@@ -450,6 +462,7 @@ describe(`replay (${MODE})`, () => {
         const sent = await send(s, threadId, "Run the bash command `sleep 20 && echo ran >> side.log` exactly once, then reply with just the word done.");
         const call = (await sub.waitFor((e) => e.type === "tool.call", TIMEOUT, "tool.call")) as Of<"tool.call">;
         await until(() => liveCommands(s.root, "sleep 20").length > 0, 10_000, "the tool's shell");
+        await callStored(s, sent.run_id, call.payload.tool_call_id);
         const [before] = sql<{ claude_pid: number }>(s.hr, "SELECT claude_pid FROM runs WHERE run_id = ?", sent.run_id);
         process.kill(before!.claude_pid, "SIGKILL");
 
@@ -488,6 +501,7 @@ describe(`replay (${MODE})`, () => {
           const call = (await sub.waitFor((e) => e.type === "tool.call", TIMEOUT, "tool.call")) as Of<"tool.call">;
           const log = join(s.work, "side.log");
           await until(() => existsSync(log) && readFileSync(log, "utf8") === "ran\n", 10_000, "the command's effect");
+          await callStored(s, sent.run_id, call.payload.tool_call_id);
 
           await s.crashAndRestart();
           const sub2 = await s.subscribe(threadId);
@@ -515,7 +529,8 @@ describe(`replay (${MODE})`, () => {
         const sub = await s.subscribe(threadId);
         const sent = await send(s, threadId, "Run the bash command `sleep 20 && echo ran >> side.log` exactly once, then reply with just the word done.");
         const call = (await sub.waitFor((e) => e.type === "tool.call", TIMEOUT, "tool.call")) as Of<"tool.call">;
-        await Bun.sleep(750);
+        // The follow-up resumes this session, so it must hold the call.
+        await callStored(s, sent.run_id, call.payload.tool_call_id);
 
         await s.crashAndRestart();
         const sub2 = await s.subscribe(threadId);
