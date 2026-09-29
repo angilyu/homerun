@@ -766,4 +766,96 @@ describe(`replay (${MODE})`, () => {
     },
     TIMEOUT,
   );
+
+  test.skipIf(!recorded("approval-defer"))(
+    "a destructive call waits for approval with no process (defer), and the answer resumes it (§5.6)",
+    () =>
+      scene(
+        "approval-defer",
+        {
+          note: "A Bash command needs approval; the call is deferred at once and claude exits; a message is held; the approval resumes the session, the command runs, then the held message.",
+          env: () => ({ HOMERUN_DEV_AUTO_APPROVE: "0", HOMERUN_INPUT_GRACE_MS: "0" }),
+        },
+        async (s) => {
+          const threadId = await task(s, { builtin: ["Bash"] });
+          const sub = await s.subscribe(threadId);
+          const sent = await send(s, threadId, "Run the bash command `echo approved >> side.log` exactly once, then reply with just the word done.");
+          const asked = (await sub.waitFor((e) => e.type === "input.requested", TIMEOUT, "input.requested")) as Of<"input.requested">;
+          const [call] = ofType(sub, "tool.call");
+          expect(call!.payload).toMatchObject({ tool: "Bash", class: "destructive", policy: "needs_approval" });
+          expect(asked.payload.prompt).toMatchObject({ type: "approval", tool: "Bash", tool_call_id: call!.payload.tool_call_id, reason: "destructive", offer_always: false });
+          // A redirect is a shell metacharacter: approved one call at a time, never always (§5.5).
+          expect(asked.payload.required_authority).toBe("full");
+
+          // Deferred: claude has exited and the run holds no process while it waits (spike 3).
+          const row = () => sql<{ state: string; claude_pid: number | null; reap_pgid: number | null }>(s.hr, "SELECT state, claude_pid, reap_pgid FROM runs WHERE run_id = ?", sent.run_id)[0]!;
+          await until(() => row().claude_pid === null && row().reap_pgid === null, 15_000, "claude to exit");
+          expect(row().state).toBe("waiting_input");
+          expect(sql(s.hr, "SELECT 1 FROM input_requests WHERE request_id = ? AND deferred_at IS NOT NULL", asked.payload.request_id)).toHaveLength(1);
+          const log = join(s.work, "side.log");
+          expect(existsSync(log)).toBe(false);
+          expect((await send(s, threadId, "After that, also reply with the word held.")).disposition).toBe("held");
+
+          const answer = (decision: "allow" | "deny") =>
+            s.shell.call("input.answer", { request_id: asked.payload.request_id, response: { type: "approval", decision }, via: "app" });
+          expect(await answer("allow")).toEqual({ status: "applied" });
+          expect(await answer("deny")).toMatchObject({ status: "already_resolved", state: "answered" });
+
+          const end = await runEnd(sub, sent.run_id);
+          expect(end.payload.state).toBe("succeeded");
+          expect(readFileSync(log, "utf8")).toBe("approved\n");
+          expect(ofType(sub, "run.resumed").map((e) => e.payload.reason)).toEqual(["input_answered"]);
+          // The deferred call ran once, under its own id, on resume (F6).
+          expect(ofType(sub, "tool.call").map((e) => e.payload.tool_call_id)).toEqual([call!.payload.tool_call_id]);
+          expect(ofType(sub, "tool.result").map((e) => [e.payload.tool_call_id, e.payload.status])).toEqual([[call!.payload.tool_call_id, "ok"]]);
+          expect(sql(s.hr, "SELECT 1 FROM input_requests WHERE request_id = ? AND applied_at IS NOT NULL", asked.payload.request_id)).toHaveLength(1);
+          // The held message followed the call's result.
+          expect(undeliveredMessages(sub.persisted())).toEqual([]);
+          expect(sql<{ n: number }>(s.hr, "SELECT COUNT(*) AS n FROM sdk_transcripts WHERE instr(entry, 'also reply with the word held') > 0")[0]!.n).toBeGreaterThan(0);
+        },
+      ),
+    TIMEOUT,
+  );
+
+  test.skipIf(!recorded("ask-user-question"))(
+    "AskUserQuestion pauses for the user's answer, which reaches the model (§5.6)",
+    () =>
+      scene(
+        "ask-user-question",
+        {
+          note: "A session task asks the user a multiple-choice question; the answer is given while claude waits, and the model uses it.",
+          env: () => ({ HOMERUN_DEV_AUTO_APPROVE: "0", HOMERUN_INPUT_GRACE_MS: "600000" }),
+        },
+        async (s) => {
+          const threadId = await task(s, { builtin: ["AskUserQuestion"] });
+          const sub = await s.subscribe(threadId);
+          const sent = await send(
+            s,
+            threadId,
+            "Use the AskUserQuestion tool once to ask me which colour I prefer, with exactly two options: Blue and Green. Then reply with only the colour I chose.",
+          );
+          const asked = (await sub.waitFor((e) => e.type === "input.requested", TIMEOUT, "input.requested")) as Of<"input.requested">;
+          const prompt = asked.payload.prompt;
+          expect(prompt.type).toBe("question");
+          if (prompt.type !== "question") return;
+          expect(prompt.questions).toHaveLength(1);
+          const green = prompt.questions[0]!.options.find((o) => /green/i.test(o.label));
+          expect(green).toBeDefined();
+          expect(asked.payload.required_authority).toBe("any");
+          // A short wait: the process is still there.
+          expect(sql<{ claude_pid: number | null }>(s.hr, "SELECT claude_pid FROM runs WHERE run_id = ?", sent.run_id)[0]!.claude_pid).not.toBeNull();
+
+          const r = await s.shell.call("input.answer", { request_id: asked.payload.request_id, response: { type: "question", answers: [{ selected: [green!.label] }] }, via: "app" });
+          expect(r).toEqual({ status: "applied" });
+          const end = await runEnd(sub, sent.run_id);
+          expect(end.payload.state).toBe("succeeded");
+          const [result] = ofType(sub, "tool.result");
+          expect(result!.payload).toMatchObject({ tool_call_id: prompt.tool_call_id, status: "ok" });
+          expect(outputText(s.hr, result!)).toContain(green!.label);
+          expect(ofType(sub, "message.final").at(-1)!.payload.text).toMatch(/green/i);
+          expect(ofType(sub, "run.resumed").map((e) => e.payload.reason)).toEqual(["input_answered"]);
+        },
+      ),
+    TIMEOUT,
+  );
 });

@@ -2,7 +2,7 @@
  * One life of homerund for the crash harness (crash.test.ts): start the runtime on a data dir
  * with the simulated `claude`, make sure the scenario's message was sent (as a client retrying
  * after a crash would), answer "Did this happen?" truthfully from the ledger, and wait for the
- * thread to settle. `killAt` SIGKILLs this process at that boundary; `dieAt` kills `claude` alone.
+ * thread to settle. With `approvals`, it also approves each call and answers each question. `killAt` SIGKILLs this process at that boundary; `dieAt` kills `claude` alone.
  * Prints `{"points": n}` when it ends on its own, with each boundary's kind when `label` is set.
  */
 import { existsSync, readFileSync } from "node:fs";
@@ -43,7 +43,7 @@ const config = loadConfig({
     HOMERUN_DATA_DIR: args.dir,
     HOMERUN_CLAUDE_PATH: "/usr/bin/false",
     HOME: args.dir,
-    HOMERUN_DEV_AUTO_APPROVE: "1",
+    ...(args.approvals ? { HOMERUN_INPUT_GRACE_MS: args.approvals === "defer" ? "0" : "600000" } : { HOMERUN_DEV_AUTO_APPROVE: "1" }),
     ...(args.mode ? { HOMERUN_DEV_AMBIGUITY_MODE: args.mode } : {}),
   },
 });
@@ -81,9 +81,19 @@ const happened = (toolCallId: string) => existsSync(ledger) && readFileSync(ledg
 const deadline = Date.now() + 15_000;
 for (;;) {
   for (const r of pendingInputRequests(rt.store, { threadId })) {
-    if (r.prompt.type !== "ambiguous_tool_call") continue;
+    // In `defer`, the user answers once the run has let its process go (§5.6).
+    if (r.prompt.type !== "ambiguous_tool_call" && args.approvals === "defer" && rt.scheduler.driverFor(r.run_id)) continue;
     // The user also writes while the run waits (idempotent across lives).
     rt.manager.sendMessage({ thread_id: threadId, client_msg_id: HELD_MSG_ID, text: "Status?" }, origin);
+    if (r.prompt.type === "approval") {
+      await shell.call("input.answer", { request_id: r.request_id, response: { type: "approval", decision: "allow" }, via: "app" });
+      continue;
+    }
+    if (r.prompt.type === "question") {
+      const answers = r.prompt.questions.map((q) => ({ selected: [q.options[0]!.label] }));
+      await shell.call("input.answer", { request_id: r.request_id, response: { type: "question", answers }, via: "app" });
+      continue;
+    }
     await shell.call("input.answer", {
       request_id: r.request_id,
       response: { type: "ambiguous_tool_call", outcome: happened(r.prompt.tool_call_id) ? "completed" : "not_run" },

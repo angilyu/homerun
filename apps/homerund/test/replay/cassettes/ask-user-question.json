@@ -1,0 +1,356 @@
+{
+ "version": 1,
+ "scenario": "ask-user-question",
+ "recorded_with": {
+  "claude_agent_sdk": "0.3.278",
+  "claude": "2.1.278",
+  "model": "claude-haiku-4-5"
+ },
+ "note": "A session task asks the user a multiple-choice question; the answer is given while claude waits, and the model uses it.",
+ "entries": [
+  {
+   "summary": "/v1/messages \"Use the AskUserQuestion tool once to ask me which colour I p\" → thinking, tool_use AskUserQuestion",
+   "request": {
+    "path": "/v1/messages",
+    "model": "claude-haiku-4-5",
+    "tools": [
+     "AskUserQuestion"
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Use the AskUserQuestion tool once to ask me which colour I prefer, with exactly two options: Blue and Green. Then reply with only the colour I chose."
+       }
+      ]
+     }
+    ]
+   },
+   "response": {
+    "status": 200,
+    "events": [
+     {
+      "event": "message_start",
+      "data": {
+       "type": "message_start",
+       "message": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CfXLgfeUYJs3jbXYra1ud",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "container": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+         "input_tokens": 10,
+         "cache_creation_input_tokens": 7974,
+         "cache_read_input_tokens": 0,
+         "cache_creation": {
+          "ephemeral_5m_input_tokens": 7974,
+          "ephemeral_1h_input_tokens": 0
+         },
+         "output_tokens": 3,
+         "service_tier": "standard",
+         "inference_geo": "not_available"
+        },
+        "diagnostics": null,
+        "context_management": null
+       }
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 0,
+       "content_block": {
+        "type": "thinking",
+        "thinking": "",
+        "signature": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "thinking_delta",
+        "thinking": "The user wants me to:\n1. Use the AskUserQuestion tool to ask about color preference\n2. Offer exactly two options: Blue and Green\n3. Reply with only the color they chose\n\nLet me set up the AskUserQuestion tool call with the exact specifications they mentioned.",
+        "estimated_tokens": null
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "signature_delta",
+        "signature": "replay-signature"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 0
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 1,
+       "content_block": {
+        "type": "tool_use",
+        "id": "toolu_01JhD95b7v7kpfrVWMrsebWe",
+        "name": "AskUserQuestion",
+        "input": {},
+        "caller": {
+         "type": "direct"
+        }
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "input_json_delta",
+        "partial_json": "{\"questions\": [{\"question\":\"Which colour do you prefer?\",\"header\":\"Colour\",\"options\":[{\"label\":\"Blue\",\"description\":\"The colour blue\"},{\"label\":\"Green\",\"description\":\"The colour green\"}],\"multiSelect\":false}]}"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 1
+      }
+     },
+     {
+      "event": "message_delta",
+      "data": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use",
+        "stop_sequence": null,
+        "stop_details": null,
+        "container": null
+       },
+       "usage": {
+        "input_tokens": 10,
+        "cache_creation_input_tokens": 7974,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 183,
+        "output_tokens_details": {
+         "thinking_tokens": 67
+        }
+       },
+       "context_management": {
+        "applied_edits": []
+       }
+      }
+     },
+     {
+      "event": "message_stop",
+      "data": {
+       "type": "message_stop"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "summary": "/v1/messages tool_result(ok) → thinking, text",
+   "request": {
+    "path": "/v1/messages",
+    "model": "claude-haiku-4-5",
+    "tools": [
+     "AskUserQuestion"
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "text",
+        "text": "Use the AskUserQuestion tool once to ask me which colour I prefer, with exactly two options: Blue and Green. Then reply with only the colour I chose."
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "blocks": [
+       {
+        "t": "thinking"
+       },
+       {
+        "t": "tool_use",
+        "id": "toolu_01JhD95b7v7kpfrVWMrsebWe",
+        "name": "AskUserQuestion"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "blocks": [
+       {
+        "t": "tool_result",
+        "id": "toolu_01JhD95b7v7kpfrVWMrsebWe",
+        "is_error": false
+       }
+      ]
+     }
+    ]
+   },
+   "response": {
+    "status": 200,
+    "events": [
+     {
+      "event": "message_start",
+      "data": {
+       "type": "message_start",
+       "message": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CfXLgpUnttty2N83CpjAb",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "container": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+         "input_tokens": 8,
+         "cache_creation_input_tokens": 296,
+         "cache_read_input_tokens": 7974,
+         "cache_creation": {
+          "ephemeral_5m_input_tokens": 296,
+          "ephemeral_1h_input_tokens": 0
+         },
+         "output_tokens": 1,
+         "service_tier": "standard",
+         "inference_geo": "not_available"
+        },
+        "diagnostics": null,
+        "context_management": null
+       }
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 0,
+       "content_block": {
+        "type": "thinking",
+        "thinking": "",
+        "signature": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "thinking_delta",
+        "thinking": "The user chose Green. Now I need to reply with only the colour they chose, which is Green.",
+        "estimated_tokens": null
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "signature_delta",
+        "signature": "replay-signature"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 0
+      }
+     },
+     {
+      "event": "content_block_start",
+      "data": {
+       "type": "content_block_start",
+       "index": 1,
+       "content_block": {
+        "type": "text",
+        "text": ""
+       }
+      }
+     },
+     {
+      "event": "content_block_delta",
+      "data": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "text_delta",
+        "text": "Green"
+       }
+      }
+     },
+     {
+      "event": "content_block_stop",
+      "data": {
+       "type": "content_block_stop",
+       "index": 1
+      }
+     },
+     {
+      "event": "message_delta",
+      "data": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "stop_details": null,
+        "container": null
+       },
+       "usage": {
+        "input_tokens": 8,
+        "cache_creation_input_tokens": 296,
+        "cache_read_input_tokens": 7974,
+        "output_tokens": 33,
+        "output_tokens_details": {
+         "thinking_tokens": 26
+        }
+       },
+       "context_management": {
+        "applied_edits": []
+       }
+      }
+     },
+     {
+      "event": "message_stop",
+      "data": {
+       "type": "message_stop"
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -4,7 +4,6 @@ import { buildQueryOptions } from "../../src/agent/claude/options";
 import { claudeEnv, CHILD_PATH } from "../../src/agent/claude/env";
 import { Translator } from "../../src/agent/claude/translate";
 import type { EngineStart } from "../../src/agent/engine";
-import { bashPatternMatches, classify, decide, type PolicySpec } from "../../src/agent/policy";
 
 const m = (x: unknown) => x as SDKMessage;
 const stream = (event: unknown, parent: string | null = null) => m({ type: "stream_event", event, parent_tool_use_id: parent, session_id: "s", uuid: crypto.randomUUID() });
@@ -60,28 +59,6 @@ describe("SDK messages → engine events (translate)", () => {
   });
 });
 
-describe("tool policy (§5.5)", () => {
-  const spec: PolicySpec = { builtin: ["Bash", "Read"], mcpServers: ["fixture"], bashPatterns: [{ pattern: "git status*", class: "read" }] };
-
-  test("classes: built-ins from core, Bash by pattern unless it has shell metacharacters, MCP destructive", () => {
-    expect(classify(spec, "Read", {})).toBe("read");
-    expect(classify(spec, "Bash", { command: "git status --short" })).toBe("read");
-    expect(classify(spec, "Bash", { command: "git status; rm -rf x" })).toBe("destructive");
-    expect(classify(spec, "Bash", { command: "ls" })).toBe("destructive");
-    expect(classify(spec, "mcp__fixture__lookup_word", {})).toBe("destructive");
-    expect(bashPatternMatches("npm test*", "  npm test -- --watch ")).toBe(true);
-    expect(bashPatternMatches("npm test", "npm test && evil")).toBe(false);
-  });
-
-  test("decisions: out-of-spec tools are denied; destructive calls need approval, allowed only by dev auto-approve", () => {
-    expect(decide(spec, "Read", {}, { devAutoApprove: false })).toMatchObject({ policy: "allowed", allow: true });
-    expect(decide(spec, "Write", {}, { devAutoApprove: true })).toMatchObject({ policy: "denied", allow: false });
-    expect(decide(spec, "mcp__other__x", {}, { devAutoApprove: true })).toMatchObject({ policy: "denied", allow: false });
-    expect(decide(spec, "Bash", { command: "ls" }, { devAutoApprove: false })).toMatchObject({ policy: "needs_approval", allow: false });
-    expect(decide(spec, "mcp__fixture__lookup_word", {}, { devAutoApprove: true })).toMatchObject({ policy: "needs_approval", allow: true, mcpServer: "fixture" });
-  });
-});
-
 describe("isolation (§5.3, F9, F10)", () => {
   const input = {
     apiKey: "k",
@@ -128,6 +105,7 @@ describe("isolation (§5.3, F9, F10)", () => {
       mcpServers: { fixture: { command: "/bin/node", args: ["f.js"], env: {} } },
       resume: "sess",
       env: claudeEnv(input),
+      denyRules: ["Read(//Users/u/.ssh/**)", "Edit(//Users/u/.ssh/**)"],
     } as unknown as EngineStart;
     const o = buildQueryOptions(start, { claudePath: "/x/claude", sessionStore: {} as never }, {
       abort: new AbortController(),
@@ -152,5 +130,14 @@ describe("isolation (§5.3, F9, F10)", () => {
     });
     expect(o.env).toBe(start.env);
     expect(o.tools).not.toContain("Skill");
+    // §13 second layer: the hard denylist as SDK deny rules in flag settings.
+    expect(o.settings).toEqual({ permissions: { deny: ["Read(//Users/u/.ssh/**)", "Edit(//Users/u/.ssh/**)"] } });
+    expect(buildQueryOptions({ ...start, denyRules: [] }, { claudePath: "/x/claude", sessionStore: {} as never }, {
+      abort: new AbortController(),
+      hooks: {},
+      canUseTool: async () => ({ behavior: "deny", message: "" }),
+      spawn: () => ({}) as never,
+      stderr: () => {},
+    }).settings).toBeUndefined();
   });
 });

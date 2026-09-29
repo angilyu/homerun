@@ -48,7 +48,10 @@ describe("development-mode CLI (§16 M3, M6)", () => {
     expect(roleAllowedInBuild("cli_dev", "release")).toBe(false);
     expect(roleAllowedInBuild("cli_dev", "development")).toBe(true);
     for (const r of CALLER_ROLES) if (r !== "cli_dev") expect(roleAllowedInBuild(r, "release")).toBe(true);
-    expect(ALLOWLISTS.cli_dev.filter((m) => m !== "cli.request_access")).toEqual(ALLOWLISTS.cli.filter((m) => m !== "cli.request_access"));
+    // Plus grants.create: grants need full authority, which the release CLI never has (§5.2, §5.6).
+    expect(ALLOWLISTS.cli_dev.filter((m) => m !== "cli.request_access" && m !== "grants.create") as string[]).toEqual(ALLOWLISTS.cli.filter((m) => m !== "cli.request_access"));
+    expect(ALLOWLISTS.cli_dev).toContain("grants.create");
+    expect(ALLOWLISTS.cli as readonly string[]).not.toContain("grants.create");
     expect(SURFACE_OF_ROLE.cli_dev).toBe("cli");
   });
 

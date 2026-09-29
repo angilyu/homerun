@@ -45,23 +45,39 @@ pnpm homerun chat
 | `monitors state TASK`, `monitors set-state TASK --state FILE\|- [--expected-version N]`, `monitors reset-state TASK` | A monitor's state (§8.3), edited by hand. An edit bumps the version, and a check already running then discards its result. `reset-state` clears it, so the next check records a new baseline |
 | `health [digest] [--days N]` | The health digest over the last N days (default 1): per monitor, runs, changes, failures, misses by cause, fires caught up late, cost; then when the Mac slept or Homerun was not running |
 | `health settings [--on\|--off] [--time HH:MM] [--timezone ZONE]` | When the daily digest is made. Without options, shows it |
-| `input list [--thread T]` | Unanswered input requests, and where each can be answered |
-| `answer REQUEST --completed\|--not-run` | Answer "Did this happen?" for a call a crash interrupted (development builds: `cli_dev`). Exit 0 when applied; 1 when it was already answered, with who answered |
+| `requests [--thread T] [--run R]` (also `input list`) | Unanswered approvals, questions and "Did this happen?", and where each can be answered |
+| `approve REQUEST [--always [--pattern P] [--class C]]`, `deny REQUEST` | Allow or deny a tool call waiting for approval. `--always` also grants the suggested pattern (edited by `--pattern`/`--class`) to the task, where the runtime offers it. Development builds only |
+| `answer REQUEST --choice [N=]LABEL… [--text [N=]TEXT…]` | Answer the agent's question (`AskUserQuestion`): an option by label (any case) or number; `N=` says which question when there are several. `--text` where the question takes free text |
+| `answer REQUEST --completed\|--not-run` | Answer "Did this happen?" for a call a crash interrupted (development builds) |
+| `grants list TASK [--all]`, `grants add TASK --tool T [--pattern P] --class C`, `grants revoke GRANT` | A task's grants (§5.6): what runs without asking. `add` is "Trust this tool" for an MCP tool, or a Bash or WebFetch pattern (development builds) |
 | `blob SHA256 [-o FILE]` | A stored tool input or output (over 4 KB), to stdout or a 0600 file |
 | `version`, `help [COMMAND]` | |
 
 IDs print as 8-character prefixes. Any id argument takes the full id or a unique
 prefix of at least 4 characters. Run `homerun help COMMAND` for all options.
 
-`answer` (milestone 4) answers only "Did this happen?": after a crash, a
-destructive call that may or may not have run parks its run until the user says
-whether it happened (homerund's README, "Crash resume"). The run then resumes with
-the answer as the call's result. If the run is stopped instead, messages sent while
-it waited were never delivered: `threads show` and `watch` mark each one
-"not delivered" and print a `homerun send` command that resends it. Nothing
-resends them on its own. Answering approvals and questions arrives with
-milestone 6: until then a run that stops for them makes `send` exit 75, and
-`input list` shows where each request can be answered.
+### Approvals and questions (milestone 6)
+
+A run stops for input when a call needs approval (a destructive command, a write
+outside the roots, an untrusted MCP tool, a fetch from a tainted run: design §5.5),
+when the agent asks a question (`AskUserQuestion`), or after a crash for "Did this
+happen?" (§5.4). `send` then prints the request with the command that answers it and
+exits 75; `requests` lists what is waiting. A message sent meanwhile is held and
+delivered with the answer (§5.7).
+
+- `approve`, `deny` and `answer` exit 0 when the answer was applied, and 1 when
+  another device answered first (first answer wins): the message says who, and
+  `--json` prints `{"status":"already_resolved",…}`. A request no longer pending
+  only matches by its full id.
+- On a terminal, `chat` answers inline: after a request it reads the next line as
+  the answer when it is one (`y`, `n`, `always`; an option's number or label;
+  `completed`, `not run`), and otherwise sends it as a message.
+- A run waiting a long time holds no process: homerund lets `claude` exit and
+  resumes it when the answer comes (§5.6 `defer`), so an approval can wait overnight.
+- Stopped instead of answered, messages held while it waited were never delivered:
+  `threads show` and `watch` mark each one "not delivered" and print a `homerun send`
+  command that resends it. Nothing resends them on its own.
+- There is no `deny --reason` yet: the response schema has no reason field.
 
 Milestone 5 adds tasks, schedules, monitors and health. Missed and abandoned fires
 have no push notification until milestone 9: `schedules list` counts them, the
@@ -69,7 +85,6 @@ monitor's thread records each group (`threads show`), and `health` sums them.
 Commands that change a task, a schedule or a monitor's state are refused to the
 web client by the runtime (§9.9); the CLI is never a web caller.
 
-Not yet: grants, which the runtime doesn't implement.
 
 ## Builds and access
 
@@ -78,9 +93,8 @@ The build channel fails closed, like homerund's:
 - A compiled binary is **release** unless it was built with exactly
   `--define HOMERUN_CLI_BUILD='"development"'`.
 
-A **development** build connects as `cli_dev`. That role may approve and may
-answer "Did this happen?", but only development runtimes accept it. `answer` is
-its only command that answers anything so far.
+A **development** build connects as `cli_dev`. That role may approve, grant and
+answer "Did this happen?", but only development runtimes accept it.
 
 Development-only switches:
 
@@ -95,7 +109,8 @@ A **release** build:
   before anything else.
 - Runs `version` and `help`.
 - Exits 77 for every command that needs the runtime, without opening the socket or
-  the dev token. A release CLI needs a `cli_token` approved in the Homerun app,
+  the dev token. `approve`, `deny`, `grants add` and `answer --completed|--not-run`
+  say why: the release CLI answers questions only. A release CLI needs a `cli_token` approved in the Homerun app,
   which arrives with the desktop app (§5.2). Even then it will only answer
   questions: never approvals, and never "Did this happen?", which needs full
   authority (`INPUT_ANSWER_RIGHTS.cli`).

@@ -309,10 +309,10 @@ describe("threads.list and blobs.get", () => {
     const pb = (await shell.call("threads.list", {})).threads.find((x) => x.thread_id === b.thread_id)!;
     expect(pb).toMatchObject({ input_pending: true, active_run: { run_id: sent.run_id, state: "pending" } });
     expect(pb.last_message).toMatchObject({ role: "user", preview: "wait" });
-    // Only "Did this happen?" can be answered so far.
-    const na = await rejects(shell.raw("input.answer", { request_id: questionId, response: { type: "question", answers: [{ selected: ["x"] }] }, via: "app" }));
-    expect(na.code).toBe(RPC_ERROR.UNAVAILABLE);
-    expect(na.data).toEqual({ not_implemented: true });
+    // First answer wins (§5.6); a second learns who answered.
+    const answer = { request_id: questionId, response: { type: "question" as const, answers: [{ selected: ["x"] }] }, via: "app" as const };
+    expect(await shell.call("input.answer", answer)).toEqual({ status: "applied" });
+    expect(await shell.call("input.answer", answer)).toMatchObject({ status: "already_resolved", state: "answered" });
 
     const page1 = await shell.call("threads.list", { limit: 2 });
     expect(page1.threads).toHaveLength(2);
@@ -364,6 +364,23 @@ describe("threads.list and blobs.get", () => {
     expect((await rejects(dev.raw("blobs.get", { sha256: "0".repeat(64), offset: 0, length: 10 }))).code).toBe(RPC_ERROR.NOT_FOUND);
     srt.rt.store.db.query("UPDATE blobs SET expires_at = 1 WHERE sha256 = ?").run(c.sha256);
     expect((await rejects(dev.raw("blobs.get", { sha256: c.sha256, offset: 0, length: 10 }))).code).toBe(RPC_ERROR.NOT_FOUND);
+  });
+});
+
+describe("grants (§5.6)", () => {
+  test("create from settings (Trust this tool), list, and revoke", async () => {
+    srt = await socketRuntime();
+    const shell = await srt.shell();
+    const dev = await srt.dev();
+    const task = await shell.call("tasks.create", { spec: sessionSpec({ name: "g" }) as never });
+    const proposal = { tool: "mcp__github__create_issue", pattern: null, class: "write" as const };
+    const { grant } = await shell.call("grants.create", { task_id: task.task.task_id, grant: proposal });
+    expect(grant).toMatchObject({ ...proposal, task_id: task.task.task_id, revoked_at: null });
+    expect((await dev.call("grants.list", { task_id: task.task.task_id })).grants).toEqual([grant]);
+    const { revoked_at } = await dev.call("grants.revoke", { grant_id: grant.grant_id });
+    expect((await shell.call("grants.list", { task_id: task.task.task_id })).grants).toEqual([]);
+    expect((await shell.call("grants.list", { task_id: task.task.task_id, include_revoked: true })).grants).toEqual([{ ...grant, revoked_at }]);
+    expect((await rejects(shell.raw("grants.revoke", { grant_id: uuid() }))).code).toBe(RPC_ERROR.NOT_FOUND);
   });
 });
 

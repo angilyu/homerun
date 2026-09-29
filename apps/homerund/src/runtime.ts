@@ -13,6 +13,7 @@ import { Authenticator, newDevToken, writeDevToken } from "./rpc/auth";
 import { makeHandlers } from "./rpc/handlers";
 import { RpcServer } from "./rpc/server";
 import type { RunContext } from "./runs/context";
+import { InputTimeouts } from "./runs/input-timeouts";
 import { RunManager } from "./runs/manager";
 import { pidAlive } from "./agent/claude/spawn";
 import { bootTime, killEscapedTools, killStaleGroup, sweepTemp } from "./runs/process-groups";
@@ -21,7 +22,7 @@ import { Scheduler } from "./runs/scheduler";
 import { SecretStore } from "./secrets";
 import { openDb } from "./store/db";
 import { migrate, type MigrateOutcome } from "./store/migrate";
-import { ensureDevice, runsInState, setRunState, updateRun, type RunRow } from "./store/rows";
+import { ensureDevice, getRunRow, runsInState, setRunState, updateRun, type RunRow } from "./store/rows";
 import { DigestScheduler } from "./monitors/digest";
 import { platformAssertions, type PowerAssertions } from "./power/power";
 import { deviceTimezone, systemClock, type Clock } from "./schedule/clock";
@@ -67,6 +68,7 @@ export interface Runtime {
   server: RpcServer;
   fires: FireScheduler;
   digest: DigestScheduler;
+  timeouts: InputTimeouts;
   clock: Clock;
   devToken: string | null;
   report: StartupReport;
@@ -100,6 +102,10 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     //    after we decide it is ambiguous (§5.4 step 1).
     const markers = [config.claudePath, "/bin/bash", ...Object.values(config.devMcpOverrides).map((m) => m.command)];
     const killedGroups: number[] = [];
+    // A run in its short wait for an answer had a live process (§5.6): it recovers like a
+    // running one, so an answer that never reached the call is applied. Its `claude_pid` is
+    // what marks it, so recovery clears it in the same commit, not this loop.
+    const shortWaits = store.db.query<{ run_id: string }, []>("SELECT run_id FROM runs WHERE state = 'waiting_input' AND claude_pid IS NOT NULL").all().map((r) => r.run_id);
     const withGroups = store.db
       .query<RunRow, []>("SELECT * FROM runs WHERE claude_pid IS NOT NULL OR reap_pgid IS NOT NULL")
       .all();
@@ -107,7 +113,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       for (const pgid of new Set([r.claude_pid, r.reap_pgid].filter((p): p is number => p !== null))) {
         if (await killStaleGroup(pgid, r.claude_boot, boot, markers, config.claudePath)) killedGroups.push(pgid);
       }
-      updateRun(store, r.run_id, { claude_pid: null, reap_pgid: null });
+      updateRun(store, r.run_id, shortWaits.includes(r.run_id) ? { reap_pgid: null } : { claude_pid: null, reap_pgid: null });
     }
     const killedTools = await killEscapedTools(config.claudeConfigDir);
 
@@ -126,7 +132,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       setRunState(store, r.run_id, "pending", { claude_pid: null, stop_requested_at: null, stop_by: null });
       recovered.push({ run_id: r.run_id, outcome: { kind: "requeued", retried: [] } });
     }
-    for (const r of runsInState(store, ["running"])) {
+    for (const r of [...runsInState(store, ["running"]), ...shortWaits.map((id) => getRunRow(store, id)!)]) {
       const outcome = recoverRun(store, r.run_id, "runtime_restart", t());
       recovered.push({ run_id: r.run_id, outcome });
       log.info("recovered run", { run_id: r.run_id, outcome: outcome.kind });
@@ -147,6 +153,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     const deviceZone = o.deviceZone ?? deviceTimezone;
     const scheduler = new Scheduler(ctx, { power: o.power ?? platformAssertions() });
     const manager = new RunManager(ctx, scheduler);
+    const timeouts = new InputTimeouts(ctx, clock, manager.gateResolver, scheduler);
     let server: RpcServer | null = null;
     const digest = new DigestScheduler(store, deviceZone, (d) => server?.broadcast("health.digest_ready", { digest: d }));
     const fires = new FireScheduler(
@@ -181,6 +188,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     });
     await server.start();
     fires.start();
+    timeouts.start();
     scheduler.kick();
     const srv = server;
 
@@ -196,6 +204,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       server: srv,
       fires,
       digest,
+      timeouts,
       clock,
       devToken,
       report: { migration, killedGroups, killedTools, swept, recovered },
@@ -203,6 +212,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         (stopping ??= (async () => {
           srv.stop();
           fires.stop();
+          timeouts.stop();
           await scheduler.shutdown(config.shutdownGraceMs);
           openDbRef.close();
           if (devToken) rmSync(join(config.runDir, "dev-token"), { force: true });

@@ -13,10 +13,11 @@
 import { PROTOCOL_VERSION, type BuildChannel, type CallerRole } from "@homerun/core";
 import { helpText, parse, type Parsed } from "./args";
 import { BUILD_CHANNEL, CLI_VERSION } from "./build";
+import * as input from "./commands/input";
 import * as records from "./commands/records";
 import * as scheduling from "./commands/scheduling";
 import * as streaming from "./commands/stream";
-import { connect, refuseDevSwitches, releaseRefusal, resolveTarget, toCliError } from "./connect";
+import { connect, fullAuthorityOnly, refuseDevSwitches, releaseQuestionsOnly, releaseRefusal, resolveTarget, toCliError } from "./connect";
 import type { Ctx, Io } from "./context";
 import { CliError, EXIT } from "./exit";
 import { Output, colorWanted } from "./output";
@@ -50,8 +51,14 @@ const HANDLERS: Record<string, Handler> = {
   "monitors reset-state": scheduling.monitorsResetState,
   "health digest": scheduling.healthDigest,
   "health settings": scheduling.healthSettings,
-  "input list": records.inputList,
-  answer: records.answer,
+  requests: input.requests,
+  "input list": input.requests,
+  approve: input.approve,
+  deny: input.deny,
+  answer: input.answer,
+  "grants list": input.grantsList,
+  "grants add": input.grantsAdd,
+  "grants revoke": input.grantsRevoke,
   blob: records.blob,
 };
 
@@ -87,7 +94,9 @@ export async function main(io: Io): Promise<number> {
     if (command.name === "chat" && values.title !== undefined && positionals.length) throw new CliError("--title applies to a new chat", EXIT.USAGE);
     const handler = HANDLERS[command.name];
     if (!handler) throw new CliError(`no handler for ${command.name}`);
-    // A release build has no credential yet. It never reads the development token.
+    // A release build has no credential yet. It never reads the development token. Even with
+    // one it answers questions only (§5.2): approvals and grants need UI the user can see.
+    if (io.channel !== "development" && fullAuthorityOnly(command.name, values)) throw releaseQuestionsOnly();
     if (io.channel !== "development") throw releaseRefusal();
     const target = resolveTarget(values, io.env);
     const c = await connect(io.channel, target);

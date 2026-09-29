@@ -77,7 +77,15 @@ export interface Config {
   chatMaxBudgetUsd: number;
   /** Test hook: how long a graceful shutdown waits for in-flight tool calls. */
   shutdownGraceMs: number;
+  /**
+   * How long a run waits for an answer with its process alive before the call is deferred and
+   * the process exits (§5.6 short waits). Development builds may shorten it for tests.
+   */
+  inputGraceMs: number;
 }
+
+/** §5.6: the grace period before a waiting call is deferred. */
+export const INPUT_GRACE_MS = 120_000;
 
 export interface ConfigInput {
   env?: Record<string, string | undefined>;
@@ -172,5 +180,6 @@ export function loadConfig(input: ConfigInput = {}): Config {
     chatFallbackModel: dev && env.HOMERUN_CHAT_MODEL ? null : "sonnet",
     chatMaxBudgetUsd: num(dev ? env.HOMERUN_CHAT_MAX_BUDGET_USD : undefined, 2),
     shutdownGraceMs: num(dev ? env.HOMERUN_SHUTDOWN_GRACE_MS : undefined, 10_000),
+    inputGraceMs: num(dev ? env.HOMERUN_INPUT_GRACE_MS : undefined, INPUT_GRACE_MS),
   };
 }

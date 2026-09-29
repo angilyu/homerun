@@ -1714,6 +1714,9 @@
                   "type": "null"
                 }
               ]
+            },
+            "grant_id": {
+              "$ref": "#/$defs/GrantId"
             }
           },
           "required": [

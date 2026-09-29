@@ -17,6 +17,8 @@ import {
 } from "../store/rows";
 import { scheduleForTask, setScheduleEnabled, syncSchedule } from "../store/schedule-rows";
 import { AmbiguityResolver, type Answer, type AnswerResult } from "./ambiguity";
+import { GateResolver } from "./answers";
+import { RunDriver } from "./driver";
 import { now, type RunContext } from "./context";
 import { finishRun } from "./finish";
 import { UNKNOWN_TEXT } from "./resume";
@@ -73,6 +75,7 @@ export interface SendMessage {
 /** Messages, stops and thread/task creation: the write side of the protocol (plan §3.1). */
 export class RunManager {
   private resolver: AmbiguityResolver;
+  private gates: GateResolver;
 
   private hooks: ManagerHooks = { schedulesChanged: () => {}, deviceZone: () => "UTC" };
 
@@ -81,6 +84,28 @@ export class RunManager {
     private scheduler: Scheduler,
   ) {
     this.resolver = new AmbiguityResolver(ctx.store, ctx.config.devAmbiguityMode, () => this.scheduler.kick());
+    const live = (runId: string) => {
+      const d = this.scheduler.driverFor(runId);
+      return d instanceof RunDriver ? d : null;
+    };
+    this.gates = new GateResolver(ctx.store, {
+      liveGate: (runId, requestId) => live(runId)?.gateFor(requestId) ?? null,
+      wake: (runId, requestId) => live(runId)?.wake(requestId),
+      requeued: () => this.scheduler.kick(),
+    });
+  }
+
+  /**
+   * input.answer for an approval or a question (§5.6): first answer wins, then the answer goes
+   * to the waiting call or requeues the run. Throws AnswerRejected.
+   */
+  answerInput(requestId: string, a: Answer): AnswerResult & { grant_id?: string } {
+    return this.gates.answer(requestId, a, now(this.ctx));
+  }
+
+  /** The approval/question resolver, shared with the input-timeout sweep. */
+  get gateResolver(): GateResolver {
+    return this.gates;
   }
 
   /** input.answer for "Did this happen?" (§5.4). Throws AnswerRejected. */
@@ -289,7 +314,9 @@ export class RunManager {
     const state = row.state as RunState;
     if (isTerminal(state)) return state;
     const driver = this.scheduler.driverFor(runId);
-    if (state === "running" && driver) {
+    // A run in its short wait for an answer still has its process: it stops like a running one.
+    const live = state === "running" || (state === "waiting_input" && driver instanceof RunDriver && driver.state === "running");
+    if (live && driver) {
       driver.requestStop(by);
       return getRunRow(store, runId)!.state as RunState;
     }

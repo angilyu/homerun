@@ -1,6 +1,7 @@
 export * from "./common";
 export * from "./registry";
 export * from "./tools";
+export * from "./patterns";
 export * from "./cron";
 export * from "./timezone";
 export * from "./schedule";

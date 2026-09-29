@@ -107,7 +107,7 @@ export class Scheduler {
   }
 
   private launch(runId: string, row: RunRow): void {
-    const d: Runner = row.monitor_phase === "rule_check" || row.monitor_phase === "model_check" ? new CheckRunner(this.ctx, row, () => this.kick()) : new RunDriver(this.ctx, row);
+    const d: Runner = row.monitor_phase === "rule_check" || row.monitor_phase === "model_check" ? new CheckRunner(this.ctx, row, () => this.kick()) : new RunDriver(this.ctx, row, { waitingChanged: () => this.syncPower() });
     this.active.set(runId, d);
     this.syncPower();
     void d.done.then(() => {
@@ -126,8 +126,10 @@ export class Scheduler {
   private syncPower(): void {
     const power = this.hooks.power;
     if (!power) return;
-    if (this.active.size > 0 && !this.releasePower) this.releasePower = power.acquire("Homerun is running a task");
-    else if (this.active.size === 0 && this.releasePower) {
+    // A run in its short wait for an answer keeps its process but not the assertion (§8.1).
+    const busy = [...this.active.values()].some((d) => !(d instanceof RunDriver && d.waitingForInput));
+    if (busy && !this.releasePower) this.releasePower = power.acquire("Homerun is running a task");
+    else if (!busy && this.releasePower) {
       this.releasePower();
       this.releasePower = null;
     }

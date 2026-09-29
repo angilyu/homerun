@@ -13,6 +13,7 @@ export interface ClaudeRuntimeOptions {
  * - only the spec's MCP servers, with `strictMcpConfig`;
  * - an explicit built-in tool list (never `Skill`);
  * - `permissionMode: "default"`, so every call goes through the hooks and canUseTool;
+ * - the hard denylist as deny rules in flag settings, which apply even when a hook allows (§13);
  * - the SQLite session store, flushed eagerly (F1);
  * - `env` replaces the environment completely (see env.ts).
  */
@@ -42,6 +43,7 @@ export function buildQueryOptions(
     mcpServers,
     tools: [...start.builtinTools],
     permissionMode: "default",
+    ...(start.denyRules.length ? { settings: { permissions: { deny: [...start.denyRules] } } } : {}),
     hooks: wiring.hooks,
     canUseTool: wiring.canUseTool,
     sessionStore: rt.sessionStore,

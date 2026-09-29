@@ -18,7 +18,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -49,7 +49,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -80,7 +80,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -222,7 +222,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -253,7 +253,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -284,7 +284,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -426,7 +426,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -457,7 +457,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -488,7 +488,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -630,7 +630,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -661,7 +661,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -692,7 +692,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -834,7 +834,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -865,7 +865,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -896,7 +896,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1038,7 +1038,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1069,7 +1069,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1100,7 +1100,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1242,7 +1242,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1273,7 +1273,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1304,7 +1304,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1446,7 +1446,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1455,7 +1455,7 @@
         "decision": "allow_always",
         "grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1482,7 +1482,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1491,7 +1491,7 @@
         "decision": "allow_always",
         "grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1518,7 +1518,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1527,7 +1527,7 @@
         "decision": "allow_always",
         "grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1554,7 +1554,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1563,7 +1563,7 @@
         "decision": "allow_always",
         "grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1590,7 +1590,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
@@ -1599,13 +1599,297 @@
         "decision": "allow_always",
         "grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },
       "from": {
         "role": "ios",
         "via": "notification"
+      },
+      "allowed": false
+    },
+    {
+      "name": "shell: always allow an unmatched Bash command",
+      "prompt": {
+        "type": "approval",
+        "tool": "Bash",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "command": "npm install left-pad@1.3.0"
+          }
+        },
+        "reason": "not_allowlisted",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "Bash",
+          "pattern": "npm install *",
+          "class": "write"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "Bash",
+          "pattern": "npm install *",
+          "class": "write"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "shell: always allow must cover the call",
+      "prompt": {
+        "type": "approval",
+        "tool": "Bash",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "command": "npm install left-pad@1.3.0"
+          }
+        },
+        "reason": "not_allowlisted",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "Bash",
+          "pattern": "npm install *",
+          "class": "write"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "Bash",
+          "pattern": "npm test",
+          "class": "write"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
+      "name": "shell: always allow not offered",
+      "prompt": {
+        "type": "approval",
+        "tool": "Bash",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "write",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "command": "npm install left-pad@1.3.0"
+          }
+        },
+        "reason": "not_allowlisted",
+        "offer_always": false,
+        "suggested_grant": {
+          "tool": "Bash",
+          "pattern": "npm install *",
+          "class": "write"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "Bash",
+          "pattern": "npm install *",
+          "class": "write"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
+      "name": "shell: trust an untrusted MCP tool",
+      "prompt": {
+        "type": "approval",
+        "tool": "mcp__github__create_issue",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "title": "Bug"
+          }
+        },
+        "reason": "untrusted_tool",
+        "offer_always": true
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "mcp__github__create_issue",
+          "pattern": null,
+          "class": "write"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "shell: never always allow a declared destructive tool",
+      "prompt": {
+        "type": "approval",
+        "tool": "mcp__github__delete_repository",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "destructive",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "repo": "x"
+          }
+        },
+        "reason": "destructive",
+        "offer_always": true
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "mcp__github__delete_repository",
+          "pattern": null,
+          "class": "write"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
+      "name": "shell: always allow a domain in a tainted run",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1"
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "shell: a wildcard domain grant covers a subdomain",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1"
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "*.github.com",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "shell: a domain grant must cover the host",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1"
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "github.com",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
       },
       "allowed": false
     },
@@ -1626,7 +1910,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       },

@@ -90,12 +90,15 @@ export class ClaudeEngine implements AgentEngine {
         tool: h.tool_name,
         input: h.tool_input,
         ...(h.mcp_server ? { mcpServer: h.mcp_server.name } : {}),
+        canDefer: true,
       });
+      // §5.6: a long wait ends the turn with the call deferred; the process then exits.
+      if (!d.allow && d.defer) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } };
       return {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: d.allow ? "allow" : "deny",
-          ...(d.allow ? {} : { permissionDecisionReason: d.reason }),
+          ...(d.allow ? (d.updatedInput ? { updatedInput: d.updatedInput } : {}) : { permissionDecisionReason: d.reason }),
         },
       };
     };
@@ -123,7 +126,7 @@ export class ClaudeEngine implements AgentEngine {
       await drainTicks();
       flush();
       const d = await o.gate.preTool({ toolCallId: opts.toolUseID, tool: toolName, input, ...(opts.mcpServer ? { mcpServer: opts.mcpServer.name } : {}) });
-      return d.allow ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: d.reason };
+      return d.allow ? { behavior: "allow", updatedInput: d.updatedInput ?? input } : { behavior: "deny", message: d.reason };
     };
 
     const options = buildQueryOptions(

@@ -175,6 +175,8 @@ export const InputResolvedEvent = named(
         answered_by: DeviceId.nullable(),
         surface: Surface.nullable(),
         via: AnswerVia.nullable(),
+        /** The grant an "Always allow" answer created, in the same transaction (§5.6). */
+        grant_id: GrantId.optional(),
       })
       .refine(
         (p) => (p.state === "answered") === (p.response !== null && p.answered_by !== null && p.surface !== null && p.via !== null),

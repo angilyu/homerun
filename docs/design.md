@@ -685,7 +685,11 @@ declares an allowlist; anything outside it requires approval (§13).
 constrain a shell: `python -c`, `curl`, and `$(…)` all reach outside it.
 
 - Tasks allowlist command patterns (for example `git status`, `npm test`,
-  `ls *`), each with a declared class.
+  `ls *`), each with a declared class. A pattern matches the whole command;
+  `*` matches any run of characters, and everything else is literal.
+- A command that matches no pattern is `destructive` until the user classifies
+  it: its approval may offer *"Always allow"*, whose grant names the command
+  pattern and a non-destructive class (§5.6).
 - A command containing shell metacharacters — `;`, `&&`, `||`, `|`, `$(…)`,
   backticks, or redirection — never matches a pattern. It requires approval
   whatever its prefix.
@@ -699,10 +703,17 @@ send data out. The taint rule cuts the last link.
 - **Untrusted sources:** `WebFetch`, `WebSearch`, browser tools, third-party MCP
   output, and any file read outside the task's declared roots.
 - Once a run has ingested untrusted content, the run is **tainted** until it
-  ends.
+  ends. The runtime records this (`runs.tainted_at`) before dispatching the call
+  that brings the content in, and a run that resumes the same session inherits
+  the taint, because the content is still in its context.
 - In a tainted run, **any network request to a domain outside the task's egress
   allowlist requires approval.** The prompt shows the full URL, including the
   query string, because that is where exfiltrated data hides.
+- **Egress allowlist entries** are hosts. `example.com` covers exactly that
+  host; `*.example.com` covers its subdomains but not `example.com` itself. An
+  IP address matches only the same literal, and a URL that isn't `http` or
+  `https` never matches. The rules are shared code in `@homerun/core`, so every
+  client's "Always allow" editor previews exactly what the runtime enforces.
 - A research task would prompt constantly, so a task may choose **open egress**,
   which disables the taint rule — but only if the task has no private data to
   leak: no declared file roots, and no trusted MCP tools that read private data.
@@ -710,7 +721,19 @@ send data out. The taint rule cuts the last link.
 
 **Enforcement.** Every rule above runs in the runtime's `PreToolUse` hook, which
 the SDK calls before every tool call whatever the permission mode. The hard
-denylist is additionally expressed as SDK deny rules, as a second layer.
+denylist (§13) is decided first: a hit is a plain `denied`, never an input
+request, and no answer, grant or `--dev-auto-approve` overrides it. It covers
+`Read`, `Glob`, `Grep`, `Write`, `Edit` and `NotebookEdit`, even inside a
+declared root; `Glob` and `Grep` are checked on their search path, and their
+results are not filtered. Paths are compared as given and after realpath (of
+the nearest existing ancestor, for a new file), case-insensitively on macOS.
+Inside Homerun's data dir, only the workspaces are open, plus, for reading,
+`claude`'s own saved tool results and task output for the run's session, which
+`claude` tells the model to `Read`. The hard denylist is additionally expressed
+as SDK deny rules (`Read(//path/**)`, `Edit(//path/**)`, in flag settings), as a
+second layer: `claude` applies them even when the hook allows a call (checked
+with `claude` 2.1.278). They can't express the per-session exception, so inside
+the data dir they name the parts other than the workspaces and that scratch.
 
 ### 5.6 Input requests: approvals and questions
 
@@ -728,6 +751,8 @@ happen?"* (§5.4) uses the same mechanism.
 **Short waits and long waits.** Both arrive through the SDK's `canUseTool`
 callback, which can simply stay pending.
 - **Short waits:** the user is present, and the `claude` process stays alive.
+  An answer sets the run back to `running` with `run.resumed`, and messages
+  held meanwhile follow the answer (§5.7).
 - **Long waits:** if there's no answer within a grace period (default two
   minutes), the `PreToolUse` hook returns the SDK's **`defer`** decision. The
   process exits and the run stays in `waiting_input`. When the answer arrives,
@@ -740,6 +765,12 @@ callback, which can simply stay pending.
   - Resuming a deferred call needs no new message: an empty input stream works.
     Resuming after an injected tool result (§5.4) always sends a continuation
     message.
+  - **A crash during a short wait.** The call was never deferred, so the
+    resumed `claude` does not ask about it again (§5.4). The runtime gives it a
+    result instead: the answer to a question, or the denial. An approved call
+    gets *"did not run; run it again"*, and the approval stays usable once, for
+    the identical call when the model re-issues it. If nobody has answered yet,
+    the run waits without a process, like a deferred one.
 - **Never defer a parallel batch.** The model may put several tool calls in one
   message, and parallel tool use cannot be turned off in the SDK. If every call
   in a batch were deferred, the result would name only one, and on resume the
@@ -752,6 +783,10 @@ callback, which can simply stay pending.
   - Only the deferred call gets an `input_requests` row. After the answer, the
     model re-issues the denied calls as new calls, and each goes through the
     policy again.
+  - The runtime implements this as **one open request per run**: while one
+    call waits, every other gated call is denied with that text, whether or not
+    it came in the same API message. This needs no batch boundaries, and a
+    later message cannot open a second request either.
   - Not yet tested: an ungated call (for example `Read`) that streams after the
     deferred one. If this rule proves insufficient, the alternative is to keep
     the process alive until every call is answered. We track an SDK feature
@@ -762,15 +797,19 @@ process, a power assertion, or a concurrency slot.
 
 - **Any surface can answer**, within its authority. Web can answer questions and
   `read` approvals only (§9.9). The release CLI answers questions only (§5.2).
+  The CLI's verbs are `homerun requests`, `approve`, `deny`, `answer`, and
+  `grants`; in a chat on a terminal, it asks inline.
   *"Did this happen?"* counts as an approval: it needs full authority unless the
   call was `read`, because the answer decides whether a side effect is repeated.
 - **First answer wins.** Resolution is a conditional update (`WHERE state =
   'pending'`); a late answer from another device gets *"Already answered on
-  iPhone"*, and every surface updates live.
+  iPhone"*, and every surface updates live. The CLI exits with status 1.
 - **Unattended runs.** A scheduled run that needs input may wait a long time.
   Each task declares `input_timeout` and an action on expiry: `wait` (default for
   sessions; remind after a delay), `deny`, or `cancel_run` (sensible for
-  monitors).
+  monitors). The runtime keeps one timer, for the earliest deadline, and checks
+  at startup, so a request that expired while Homerun was off is handled when it
+  comes back. `wait` reminders arrive with push (§9.7).
 - **Answering a question never authorizes a tool.** If the answer leads the agent
   to a destructive action, that action still needs its own approval. This keeps
   questions low-authority, which matters for the web client.
@@ -783,10 +822,17 @@ process, a power assertion, or a concurrency slot.
 - **For `Bash`,** a grant requires an exact command pattern (never a bare
   `Bash`), and becomes an allowlisted pattern under the tool policy (§5.5).
   Commands with shell metacharacters cannot be granted.
-- **For network requests in a tainted run,** "Always allow" adds the domain to
-  the task's egress allowlist.
+- **For network requests in a tainted run,** "Always allow" creates a
+  `WebFetch` grant for the host, which acts as an entry in the task's egress
+  allowlist.
 - **Not offered for `destructive` actions.** Those are approved one at a time,
-  always.
+  always. An unmatched `Bash` command and an untrusted MCP tool are
+  `destructive` only until classified, so they may offer it: the grant names a
+  non-destructive class. A command with shell metacharacters or `*`, a
+  command matching a pattern declared `destructive`, and a request to an IPv6
+  address never do. A chat has no task to hold a grant, so it never offers it.
+- **Created** by an *"Always allow"* answer, or from the task's settings
+  (`grants.create`, for *"Trust this tool"*). Both need full authority.
 - **Not offered from notifications, or on the web.** Creating a grant needs the
   full app, on desktop or iOS, where the user can see and edit the exact pattern
   first.
@@ -1004,7 +1050,9 @@ CREATE TABLE input_requests (
   expires_at    INTEGER,
   answered_at   INTEGER,
   response      TEXT,                   -- JSON: allow|deny|allow_always, or chosen options / text
-  answered_by   TEXT                    -- device_id of the answering surface
+  answered_by   TEXT,                   -- device_id of the answering surface
+  applied_at    INTEGER,                -- the answer reached the agent (§5.6)
+  deferred_at   INTEGER                 -- the call was deferred; resuming asks again (§5.6)
 );
 ```
 
@@ -1640,8 +1688,9 @@ instructions came from**, not only to who approves.
 - A run is `web_read_only` if the web client started it, or sent it any message
   while it was running. Once downgraded, a run stays downgraded until it ends.
 - In a `web_read_only` run, the task's allowlist is narrowed to `read`-class
-  tools. Every `write`, `destructive`, or `Bash` call, and any network request to
-  a domain outside the task's egress allowlist, becomes an approval request.
+  tools. Every `write`, `destructive`, `Bash`, or `network` call becomes an
+  approval request, even to a domain on the egress allowlist: the web session
+  may be the attacker, and a request is how data leaves.
   **Only desktop or iOS can answer it.** The web client sees *"Approve on your
   phone or Mac"*.
 - A new message from desktop or iOS starts a new run with `full` authority. A
@@ -1974,7 +2023,12 @@ true sandbox**):
 
 - **Path scoping.** Filesystem and shell tools are restricted to declared roots.
   Hard denylist regardless of scope: `~/.ssh`, keychain paths, browser profile
-  directories, `.env` and credential files.
+  directories (Safari, Chrome, Edge, Brave, Arc, Firefox), any `.env` or
+  `.env.*` file, credential files (`~/.aws/credentials`, `~/.netrc`,
+  `~/.config/gh/hosts.yml`, `~/.docker/config.json`, `~/.npmrc`, `~/.pypirc`,
+  `~/.kube/config`, `~/.gnupg`), and Homerun's own data dir, including the
+  `claude` config snapshot (§5.5 for its details). It binds the file tools;
+  `Bash` is not path-checked, and is gated as `destructive` instead.
 - **Tool classification + approval gates** (§5.5). `destructive` tools are
   never auto-approved inside an unattended run. A scheduled run that wants to
   delete something pauses and notifies.
@@ -2099,8 +2153,8 @@ UI last: the runtime is the risky part.
 | 3 | [CLI](../apps/cli/README.md) | Drive the runtime end-to-end with no UI; authenticated socket (§5.2), with a development-mode token until the app exists | **Done** |
 | 4 | **Crash resume** | Kill at every event boundary (§16.2); resume correctly, including ambiguous tool calls | **Done** |
 | 5 | Scheduler + monitors | Cron + timezone + catch-up-on-wake + power assertions; rule-based and model-based checks; state advances only on success; health digest; fake-clock suite including DST and sleep | **Done** |
-| 6 | Approvals + questions | Destructive tool pauses a run; `AskUserQuestion` pauses for an answer; long waits `defer` and resume; answer from CLI; first answer wins | Next |
-| 7 | Desktop app | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | — |
+| 6 | Approvals + questions | Destructive tool pauses a run; `AskUserQuestion` pauses for an answer; long waits `defer` and resume; answer from CLI; first answer wins | **Done** |
+| 7 | Desktop app | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | Next |
 | 8 | Packaging | Menu-bar / tray residency, login item, signed updater, quit confirmation | — |
 | 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | — |
 | 10 | iOS + web | Sign-in and device linking; history sync, live chat, steering, questions, approvals, rich push; web client with reduced authority | — |
@@ -2245,3 +2299,8 @@ One line per major decision: what was chosen, and why.
 | 28 | **Each scheduled slot is claimed once, durably** (§8.1, §8.4) | A slot is claimed or recorded as missed in the transaction that advances the schedule, so a crash neither loses nor repeats a fire |
 | 29 | **The runtime keeps the Mac awake; the shell reports sleep** (§8.1) | `caffeinate -w` dies with the runtime, so a crash can't block sleep. Only an app gets sleep and wake notifications; without the shell, missed ticks show the sleep |
 | 30 | **Threshold checks are edge-triggered; the first check is a baseline** (§8.3) | "Price below $X" reports once when it crosses (or at once, if it already has), not every five minutes; a new "page changed" monitor doesn't report the page as new |
+| 31 | **One open input request per run** (§5.6) | The parallel-call rule without batch boundaries, which the hook cannot see: while one call waits, every other gated call is denied and re-issued after the answer |
+| 32 | **Unclassified calls may be granted "Always allow"** (§5.5, §5.6) | An unmatched `Bash` command and an untrusted MCP tool are `destructive` only by default; otherwise no `Bash` grant or *"Trust this tool"* could exist. The grant must name a non-destructive class |
+| 33 | **A crash during a short wait turns an approval into a one-shot approval** (§5.6) | The resumed `claude` does not ask about a call that was never deferred. The call is reported as not run, and the identical re-issued call runs without asking twice |
+| 34 | **The hard denylist is decided before grants, approvals and `--dev-auto-approve`, and repeated as SDK deny rules** (§5.5, §13) | Keys, keychains, browser profiles, `.env` and credential files, and Homerun's own data are never a question to answer: a hit is `denied`, even inside a declared root. Realpath and case folding close symlink, `..` and case tricks; the SDK rules are a second layer if the hook is ever wrong |
+| 35 | **Grants are per task, never global** (§5.6) | As designed; confirmed in milestone 6 |

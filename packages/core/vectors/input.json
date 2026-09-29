@@ -20,7 +20,7 @@
         "offer_always": true,
         "suggested_grant": {
           "tool": "Bash",
-          "pattern": "npm install",
+          "pattern": "npm install *",
           "class": "write"
         }
       }
@@ -365,7 +365,7 @@
           "offer_always": true,
           "suggested_grant": {
             "tool": "Bash",
-            "pattern": "npm install",
+            "pattern": "npm install *",
             "class": "write"
           }
         },
@@ -478,7 +478,7 @@
           "offer_always": true,
           "suggested_grant": {
             "tool": "Bash",
-            "pattern": "npm install",
+            "pattern": "npm install *",
             "class": "write"
           }
         },
@@ -515,7 +515,7 @@
           "offer_always": true,
           "suggested_grant": {
             "tool": "Bash",
-            "pattern": "npm install",
+            "pattern": "npm install *",
             "class": "write"
           }
         },
@@ -552,7 +552,7 @@
           "offer_always": true,
           "suggested_grant": {
             "tool": "Bash",
-            "pattern": "npm install",
+            "pattern": "npm install *",
             "class": "write"
           }
         },

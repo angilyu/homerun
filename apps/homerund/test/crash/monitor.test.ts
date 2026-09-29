@@ -57,7 +57,7 @@ async function pool<T>(items: readonly T[], fn: (t: T) => Promise<void>): Promis
 const fresh = () => mkdtempSync(join(tmpdir(), "hr-mcrash-"));
 function copyDir(from: string): string {
   const to = fresh();
-  for (const f of ["homerun.db", "homerun.db-wal", "homerun.db-shm", "ledger", "work"]) if (existsSync(join(from, f))) cpSync(join(from, f), join(to, f), { recursive: true });
+  for (const f of ["homerun.db", "homerun.db-wal", "homerun.db-shm", "ledger", "workspaces"]) if (existsSync(join(from, f))) cpSync(join(from, f), join(to, f), { recursive: true });
   return to;
 }
 
@@ -106,7 +106,7 @@ function check(dir: string): string[] {
     if (unfinished.length) problems.push(`runs ended ${unfinished.join(", ")}`);
 
     const st = all<{ state: string; version: number }>("SELECT state, version FROM monitor_state");
-    const hash = createHash("sha256").update(readFileSync(join(dir, "work", "watched.txt"))).digest("hex");
+    const hash = createHash("sha256").update(readFileSync(join(dir, "workspaces", "work", "watched.txt"))).digest("hex");
     if (st.length !== 1 || st[0]!.version !== 2 || !st[0]!.state.includes(hash)) problems.push(`monitor state ${JSON.stringify(st)} (file ${hash})`);
   } finally {
     db.close();

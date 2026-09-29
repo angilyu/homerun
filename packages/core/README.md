@@ -25,12 +25,13 @@ bundler or Bun. Imports are extensionless, with `moduleResolution: "Bundler"`.
 src/
   common.ts         ids (lowercase UUIDs; opaque SDK ids), TimestampMs, JsonValue, Content/BlobRef, Origin, size helpers, assertNever
   tools.ts          ToolClass, built-in tools and their class table, Bash command patterns
+  patterns.ts       Bash pattern and egress domain matching, grantCovers() (shared by runtime and clients)
   cron.ts           dependency-free 5-field cron parser (plus @daily-style macros)
   timezone.ts       IANA zone validation through Intl
   schedule.ts       CronSchedule | IntervalSchedule, catch-up policy, ScheduleState, ScheduleCoverage
   task-spec.ts      SessionSpec | MonitorSpec, policy, checks, SPEC_FORMAT, upgradeSpec()
   grants.ts         ToolGrant and its shape rules, effectiveEgressDomains()
-  input.ts          input prompts and responses, requiredAuthority(), checkResponse()
+  input.ts          input prompts and responses, requiredAuthority(), checkResponse(), alwaysAllowable()
   domain.ts         Device, Task, TaskVersion, Thread, Run (+ transitions), MonitorState, ThreadSummary
   events.ts         thread_events: persisted and live-only unions, parseThreadEventLenient(), HeldMessages
   protocol/

@@ -68,7 +68,7 @@ export function hasShellMetacharacters(command: string): boolean {
 
 /**
  * An allowlisted command pattern such as `git status` or `ls *`. `*` is a wildcard. The first
- * word must be literal, so a bare `*` (any command) is impossible. Matching lives in the runtime.
+ * word must be literal, so a bare `*` (any command) is impossible. Matching: `bashPatternMatches`.
  */
 export const BashCommandPattern = named(
   "BashCommandPattern",

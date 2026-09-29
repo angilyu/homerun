@@ -15,6 +15,11 @@ export interface ChildArgs {
   mode?: "inject" | "truncate";
   /** Name each boundary's kind and print them with the count (`boundaries.ts`). */
   label?: boolean;
+  /**
+   * Gate calls for real instead of `--dev-auto-approve` (§5.6): `wait` answers while the process
+   * waits (the short wait); `defer` defers at once and answers once the process is gone.
+   */
+  approvals?: "wait" | "defer";
 }
 
 export interface Scenario {
@@ -41,6 +46,13 @@ const spec = {
     retention_days: 30,
   },
   model: { model: "haiku" },
+};
+
+/** For approvals: `Bash` asks (no patterns), and the agent may ask the user a question. */
+const approvalSpec = { ...spec, tools: { ...spec.tools, builtin: ["Read", "Bash", "Write", "AskUserQuestion"] } };
+
+const question = {
+  questions: [{ question: "Which log?", header: "Log", options: [{ label: "log.txt", description: "" }, { label: "other.txt", description: "" }], multiSelect: false }],
 };
 
 export const SCENARIOS: Record<string, Scenario> = {
@@ -76,5 +88,25 @@ export const SCENARIOS: Record<string, Scenario> = {
       { name: "write", tool: "Write", input: { file_path: "b.txt", content: "B" } },
     ],
     mirrorAfter: "append",
+  },
+  /** An approval, a question, then a write that needs neither (§5.6). */
+  approve: {
+    message: "Ask which log, append to it, then write b.txt.",
+    spec: approvalSpec,
+    plan: [
+      { name: "read", tool: "Read", input: { file_path: "a.txt" } },
+      { name: "ask", tool: "AskUserQuestion", input: question },
+      { name: "append", tool: "Bash", input: { command: "echo A >> log.txt" } },
+      { name: "write", tool: "Write", input: { file_path: "b.txt", content: "B" } },
+    ],
+  },
+  /** Two gated calls in one assistant message: one waits, the other is denied or never asked (F3). */
+  "approve-parallel": {
+    message: "Do both steps.",
+    spec: approvalSpec,
+    plan: [
+      { name: "one", tool: "Bash", input: { command: "echo 1 >> log.txt" } },
+      { name: "two", tool: "Bash", input: { command: "echo 2 >> log.txt" }, withPrev: true },
+    ],
   },
 };

@@ -11,6 +11,8 @@ import { main } from "../../src/main";
 import { Output, colorWanted } from "../../src/output";
 import { EventRenderer, resendCommand } from "../../src/render";
 import type { Io } from "../../src/context";
+import { alwaysGrant, inlineAnswer, questionResponse } from "../../src/commands/input";
+import type { ApprovalPrompt, QuestionPrompt } from "@homerun/core";
 
 const code = (f: () => unknown) => {
   try {
@@ -188,6 +190,66 @@ describe("rendering", () => {
   });
 });
 
+describe("answers (§5.6)", () => {
+  const q = (question: string, labels: string[], o: { multi?: boolean; free?: boolean } = {}) => ({
+    question,
+    options: labels.map((label) => ({ label })),
+    multi_select: !!o.multi,
+    allow_freeform: !!o.free,
+  });
+  const one: QuestionPrompt = { type: "question", questions: [q("Which?", ["Blue", "Green"])] };
+  const two: QuestionPrompt = { type: "question", questions: [q("Which?", ["Blue", "Green"]), q("Also?", ["A", "B", "C"], { multi: true, free: true })] };
+  const approval: ApprovalPrompt = {
+    type: "approval",
+    tool: "Bash",
+    tool_call_id: "t1" as ApprovalPrompt["tool_call_id"],
+    class: "destructive",
+    input: { kind: "inline", value: { command: "make clean" } },
+    reason: "not_allowlisted",
+    offer_always: true,
+    suggested_grant: { tool: "Bash", pattern: "make clean", class: "write" },
+  };
+
+  test("--choice by label (any case) or number; N= picks the question when there are several", () => {
+    expect(questionResponse(one, ["green"], [])).toEqual({ type: "question", answers: [{ selected: ["Green"] }] });
+    expect(questionResponse(one, ["1"], [])).toEqual({ type: "question", answers: [{ selected: ["Blue"] }] });
+    expect(questionResponse(two, ["1=Blue", "2=A", "2=3"], ["2=and more"])).toEqual({
+      type: "question",
+      answers: [{ selected: ["Blue"] }, { selected: ["A", "C"], text: "and more" }],
+    });
+    expect(code(() => questionResponse(two, ["Blue"], []))).toBe(64);
+    expect(code(() => questionResponse(two, ["1=Blue"], []))).toBe(64);
+    expect(code(() => questionResponse(one, ["Blue", "Green"], []))).toBe(64);
+    expect(code(() => questionResponse(one, ["Red"], []))).toBe(64);
+    expect(code(() => questionResponse(one, [], ["my own"]))).toBe(64);
+  });
+
+  test("--always confirms the suggested grant, with the user's edits", () => {
+    expect(alwaysGrant(approval, {})).toEqual({ tool: "Bash", pattern: "make clean", class: "write" });
+    expect(alwaysGrant(approval, { pattern: "make *", class: "read" })).toEqual({ tool: "Bash", pattern: "make *", class: "read" });
+    expect(code(() => alwaysGrant(approval, { class: "destructive" }))).toBe(64);
+    expect(code(() => alwaysGrant({ ...approval, offer_always: false, suggested_grant: undefined }, {}))).toBe(1);
+  });
+
+  test("chat reads a line as an answer only when it is one", () => {
+    expect(inlineAnswer(approval, "y")).toEqual({ type: "approval", decision: "allow" });
+    expect(inlineAnswer(approval, " No ")).toEqual({ type: "approval", decision: "deny" });
+    expect(inlineAnswer(approval, "always")).toEqual({ type: "approval", decision: "allow_always", grant: approval.suggested_grant });
+    expect(inlineAnswer({ ...approval, offer_always: false }, "always")).toBeNull();
+    expect(inlineAnswer(approval, "what does it delete?")).toBeNull();
+    expect(inlineAnswer(one, "2")).toEqual({ type: "question", answers: [{ selected: ["Green"] }] });
+    expect(inlineAnswer(one, "blue")).toEqual({ type: "question", answers: [{ selected: ["Blue"] }] });
+    expect(inlineAnswer(one, "neither")).toBeNull();
+    expect(inlineAnswer({ type: "question", questions: [q("Which?", ["A", "B"], { multi: true, free: true })] }, "A, 2")).toEqual({ type: "question", answers: [{ selected: ["A", "B"] }] });
+    expect(inlineAnswer({ type: "question", questions: [q("Which?", ["A", "B"], { free: true })] }, "neither")).toEqual({ type: "question", answers: [{ selected: [], text: "neither" }] });
+    expect(inlineAnswer(two, "1")).toBeNull();
+    expect(inlineAnswer({ type: "ambiguous_tool_call", tool: "Bash", tool_call_id: "t" as ApprovalPrompt["tool_call_id"], class: "destructive", input: { kind: "inline", value: {} } }, "not run")).toEqual({
+      type: "ambiguous_tool_call",
+      outcome: "not_run",
+    });
+  });
+});
+
 describe("a release build (in process)", () => {
   function io(argv: string[], env: Record<string, string>): Io & { out: () => string; err: () => string } {
     let out = "";
@@ -226,6 +288,18 @@ describe("a release build (in process)", () => {
       listener.stop(true);
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("answers questions only: approvals, grants and \"Did this happen?\" are refused with 77 (§5.2)", async () => {
+    for (const argv of [["approve", "abcd1234"], ["deny", "abcd1234"], ["answer", "abcd1234", "--completed"], ["grants", "add", "abcd", "--tool", "Bash", "--class", "read"]]) {
+      const x = io(argv, {});
+      expect(await main(x)).toBe(77);
+      expect(x.err()).toContain("the release CLI answers questions only");
+    }
+    // A question needs only a credential, which arrives with the desktop app.
+    const x = io(["answer", "abcd1234", "--choice", "Blue"], {});
+    expect(await main(x)).toBe(77);
+    expect(x.err()).toContain("needs access approved in the Homerun app");
   });
 
   test("refuses development switches with 64, whatever the command", async () => {

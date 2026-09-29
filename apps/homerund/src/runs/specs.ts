@@ -4,11 +4,10 @@ import { getTaskVersionSpec, type RunRow } from "../store/rows";
 import type { Store } from "../store/store";
 
 /**
- * Built-ins for one-off chats (§2.1): reading and research only until approvals exist (M6).
- * AskUserQuestion is left out until questions can be answered (M6); WebFetch and WebSearch
- * are listed but need approval, so they are denied outside `--dev-auto-approve`.
+ * Built-ins for one-off chats (§2.1): reading, research and questions. A chat has no task to
+ * hold grants, so each call outside the policy is approved on its own (§5.6).
  */
-export const CHAT_TOOLS: readonly BuiltinTool[] = ["Read", "Glob", "Grep", "WebFetch", "WebSearch"];
+export const CHAT_TOOLS: readonly BuiltinTool[] = ["Read", "Glob", "Grep", "WebFetch", "WebSearch", "AskUserQuestion"];
 
 export function chatSpec(config: Config): SessionSpec {
   return SessionSpec.parse({

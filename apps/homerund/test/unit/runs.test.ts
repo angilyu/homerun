@@ -5,7 +5,6 @@ import { NO_RESULT, STOPPED_REASON } from "../../src/runs/driver";
 import { UNKNOWN_TEXT } from "../../src/runs/resume";
 import { findToolEvent } from "../../src/store/events";
 import { getRunRow, pendingInputRequests } from "../../src/store/rows";
-import { APPROVALS_UNAVAILABLE } from "../../src/agent/policy";
 import { DESKTOP, persisted, sessionSpec, testRuntime, types, until, uuid, type TestRuntime } from "../helpers";
 
 let rt: TestRuntime | null = null;
@@ -153,11 +152,10 @@ describe("tool calls (§5.4)", () => {
     expect(types(rt.store, thread.thread_id).filter((t) => t.startsWith("tool."))).toEqual(["tool.call", "tool.result"]);
   });
 
-  test("tools outside the spec and calls needing approval are denied, with a result", async () => {
+  test("tools outside the spec are denied, with a result", async () => {
     const { rt, thread, send } = setup(async (s) => {
       const i = (await s.nextInput())!;
       expect(await s.tool({ toolCallId: "t1", tool: "Bash", input: { command: "rm -rf /" } })).toMatchObject({ allow: false });
-      expect(await s.tool({ toolCallId: "t2", tool: "WebFetch", input: { url: "https://example.com" } })).toEqual({ allow: false, reason: APPROVALS_UNAVAILABLE });
       expect(await s.tool({ toolCallId: "t3", tool: "not a tool", input: {} })).toMatchObject({ allow: false });
       s.result([i.uuid]);
     });
@@ -165,15 +163,17 @@ describe("tool calls (§5.4)", () => {
     await rt.scheduler.idle();
     const ev = persisted(rt.store, thread.thread_id);
     const calls = ev.filter((e) => e.type === "tool.call").map((e) => e.payload as { tool_call_id: string; policy: string });
-    expect(calls).toEqual([expect.objectContaining({ tool_call_id: "t1", policy: "denied" }), expect.objectContaining({ tool_call_id: "t2", policy: "needs_approval" })]);
+    expect(calls).toEqual([expect.objectContaining({ tool_call_id: "t1", policy: "denied" })]);
     const results = ev.filter((e) => e.type === "tool.result").map((e) => e.payload as { status: string });
-    expect(results.map((r) => r.status)).toEqual(["denied", "denied"]);
+    expect(results.map((r) => r.status)).toEqual(["denied"]);
   });
 
   test("--dev-auto-approve allows a needs_approval call and keeps the honest policy", async () => {
     const { rt, thread, send } = setup(
       async (s) => {
         const i = (await s.nextInput())!;
+        // Reading outside the roots taints the run; a fetch to an unlisted host then needs approval (§5.5).
+        expect(await s.tool({ toolCallId: "t0", tool: "Read", input: { file_path: "/etc/hosts" } })).toEqual({ allow: true });
         expect(await s.tool({ toolCallId: "t1", tool: "WebFetch", input: { url: "https://example.com" } })).toEqual({ allow: true });
         s.result([i.uuid]);
       },
@@ -181,7 +181,7 @@ describe("tool calls (§5.4)", () => {
     );
     send("go");
     await rt.scheduler.idle();
-    expect(persisted(rt.store, thread.thread_id).find((e) => e.type === "tool.call")!.payload).toMatchObject({ policy: "needs_approval" });
+    expect(findToolEvent(rt.store, thread.thread_id, "tool.call", "t1")!.payload).toMatchObject({ policy: "needs_approval" });
     expect(rt.logs.some((l) => l.includes("--dev-auto-approve"))).toBe(true);
   });
 

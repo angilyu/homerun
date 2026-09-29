@@ -188,6 +188,13 @@ export class EventRenderer {
   }
 }
 
+/** An input whose summary is its one string field, whole: `{ command }` and the like. */
+function isCommandOnly(v: unknown): boolean {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const keys = Object.keys(v);
+  return keys.length === 1 && typeof (v as Record<string, unknown>)[keys[0]!] === "string" && !((v as Record<string, string>)[keys[0]!]!.includes("\n"));
+}
+
 /** A command that resends `text` to the thread; the text itself when it is short enough to copy. */
 export function resendCommand(threadId: string, text: string): string {
   const short = !text.includes("\n") && [...text].length <= 200;
@@ -197,8 +204,18 @@ export function resendCommand(threadId: string, text: string): string {
 
 export function promptLines(p: InputPrompt): string[] {
   switch (p.type) {
-    case "approval":
-      return [`Allow ${p.tool} (${p.class})? ${inputSummary(p.input)}`, `reason: ${p.reason.replaceAll("_", " ")}`];
+    case "approval": {
+      // The exact arguments, as the user must see them (§5.6): in full when a summary would cut them.
+      const summary = inputSummary(p.input, 400);
+      const full = p.input.kind === "inline" && summary !== oneLine(typeof p.input.value === "string" ? p.input.value : JSON.stringify(p.input.value)) && !isCommandOnly(p.input.value);
+      return [
+        `Allow ${p.tool} (${p.class})? ${summary}`,
+        ...(full ? contentText(p.input).split("\n").map((l) => `  ${l}`) : []),
+        ...(p.url ? [`url: ${p.url}`] : []),
+        `reason: ${p.reason.replaceAll("_", " ")}` +
+          (p.offer_always && p.suggested_grant ? ` · always allow: ${p.suggested_grant.tool}${p.suggested_grant.pattern ? ` "${p.suggested_grant.pattern}"` : ""} as ${p.suggested_grant.class}` : ""),
+      ];
+    }
     case "ambiguous_tool_call":
       return [`Did this ${p.tool} call happen before homerund stopped? ${inputSummary(p.input)}`];
     case "question":
@@ -209,14 +226,26 @@ export function promptLines(p: InputPrompt): string[] {
   }
 }
 
-/** Whether this CLI can answer the prompt: "Did this happen?" in a development build (INPUT_ANSWER_RIGHTS). */
+/** Whether this CLI's role may answer the prompt (INPUT_ANSWER_RIGHTS; the release CLI: questions only). */
 export function cliAnswers(p: InputPrompt, role: CallerRole): boolean {
-  return p.type === "ambiguous_tool_call" && mayAnswer(role, p.type);
+  return mayAnswer(role, p.type);
+}
+
+/** The command that answers a prompt from the CLI. */
+export function answerCommand(p: InputPrompt, requestId: string): string {
+  const id = shortId(requestId);
+  switch (p.type) {
+    case "approval":
+      return `homerun approve ${id}${p.offer_always ? " [--always]" : ""} | homerun deny ${id}`;
+    case "question":
+      return p.questions.length === 1 ? `homerun answer ${id} --choice LABEL` : `homerun answer ${id} --choice 1=LABEL --choice 2=LABEL…`;
+    case "ambiguous_tool_call":
+      return `homerun answer ${id} --completed | --not-run`;
+  }
 }
 
 /** Where a prompt can be answered from (INPUT_ANSWER_RIGHTS). */
 export function answerHint(p: InputPrompt, role: CallerRole, requestId: string): string {
-  if (cliAnswers(p, role)) return `Answer it in the Homerun app, or here: homerun answer ${shortId(requestId)} --completed | --not-run`;
-  if (!mayAnswer(role, p.type)) return "Answer it in the Homerun app; the CLI may not answer this kind of request.";
-  return "Answer it in the Homerun app. Answering from the CLI arrives in a later version.";
+  if (cliAnswers(p, role)) return `Answer it in the Homerun app, or here: ${answerCommand(p, requestId)}`;
+  return "Answer it in the Homerun app; the CLI may not answer this kind of request.";
 }
