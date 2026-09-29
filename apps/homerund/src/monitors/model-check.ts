@@ -4,7 +4,7 @@ import { CheckResult, type MonitorSpec, type MonitorState } from "@homerun/core"
 import type { EngineEvent, EngineRun, GateDecision } from "../agent/engine";
 import { claudeEnv } from "../agent/claude/env";
 import { RunSetupError } from "../agent/claude/mcp";
-import { decide } from "../agent/policy";
+import { decide, resolveRoots, type PolicyContext } from "../agent/policy";
 import { RUNTIME_VERSION } from "../config";
 import { log } from "../log";
 import type { RunContext } from "../runs/context";
@@ -66,7 +66,16 @@ export function runModelCheck(
   const mcpServers = withTools ? ctx.mcp.resolveAll(spec.tools.mcp_servers) : {};
   const cwd = spec.policy.roots[0] ? expandHome(spec.policy.roots[0], cfg.userHome) : join(cfg.workspacesDir, threadId);
   if (!spec.policy.roots[0]) mkdirSync(cwd, { recursive: true, mode: 0o700 });
-  const policySpec = { builtin: spec.tools.builtin, mcpServers: spec.tools.mcp_servers.map((s) => s.id), bashPatterns: spec.policy.bash_patterns };
+  const policy: PolicyContext = {
+    spec: { builtin: spec.tools.builtin, mcpServers: spec.tools.mcp_servers.map((s) => s.id), bashPatterns: spec.policy.bash_patterns },
+    roots: resolveRoots(spec.policy.roots, cfg.userHome, cwd),
+    cwd,
+    egress: spec.policy.egress,
+    grants: [],
+    tainted: false,
+    authority: "full",
+    grantsAllowed: false,
+  };
   const forced = cfg.build === "development" && process.env.HOMERUN_FORCE_MODEL ? process.env.HOMERUN_FORCE_MODEL : null;
 
   return new Promise<ModelCheckOutcome>((resolve, reject) => {
@@ -107,8 +116,9 @@ export function runModelCheck(
     const gate = {
       preTool: async (c: { tool: string; input: unknown }): Promise<GateDecision> => {
         if (!withTools) return { allow: false, reason: "The check has no tools; judge the observation you were given." };
-        const d = decide(policySpec, c.tool, c.input, { devAutoApprove: false });
-        return d.allow && d.policy === "allowed" ? { allow: true } : { allow: false, reason: "A check may only look, not act. This call was not run." };
+        // A check only looks (§8.3): read-class calls allowed by the spec alone, never a prompt.
+        const d = decide(policy, c.tool, c.input);
+        return d.allow && d.policy === "allowed" && d.toolClass === "read" ? { allow: true } : { allow: false, reason: "A check may only look, not act. This call was not run." };
       },
       postTool: () => {},
     };

@@ -3,11 +3,13 @@ import { InputRequest, requiredAuthority, type AmbiguousCallPrompt } from "@home
 import { log } from "../log";
 import { contentValue, toContent } from "../store/content";
 import { appendEvent, callsWithoutResult, findToolEvent, runEvents, type EventOf } from "../store/events";
-import { getRunRow, insertInputRequest, setRunState } from "../store/rows";
+import { gateRequestForCall, getRunRow, insertInputRequest, markRequestApplied, setRunState } from "../store/rows";
 import type { Store } from "../store/store";
 import { allToolUseIds, chainTools, sessionView } from "../store/transcript";
 import { finishRun } from "./finish";
 import { UNKNOWN_TEXT } from "./resume";
+import { settleWithoutProcess } from "./answers";
+import { answerText } from "./gate";
 
 /**
  * Crash recovery for one run (§5.4 steps 5–7). Used at startup for every run left `running`,
@@ -21,6 +23,10 @@ import { UNKNOWN_TEXT } from "./resume";
  *      note saying they may be retried;
  *    - any other call: the run parks in `waiting_input` with a "Did this happen?" request per
  *      call. The answer is applied by `AmbiguityResolver` (ambiguity.ts).
+ *    A call held by the gate for an approval or a question (§5.6) never started: while its
+ *    request is pending the run parks in `waiting_input`; an answer that never reached it is
+ *    applied now (`settleWithoutProcess`); a deferred call is asked about again on resume. Only
+ *    an approved call that was handed to the agent can be ambiguous.
  * 3. A run that keeps crashing is abandoned with `resume_loop` after RESUME_LIMIT resumes
  *    without a completed turn.
  *
@@ -44,7 +50,7 @@ export type RecoveryOutcome =
 export function recoverRun(store: Store, runId: string, reason: RecoveryReason, now = Date.now()): RecoveryOutcome {
   return store.tx(() => {
     const row = getRunRow(store, runId);
-    if (!row || row.state !== "running") throw new Error(`recoverRun: run ${runId} is not running`);
+    if (!row || (row.state !== "running" && row.state !== "waiting_input")) throw new Error(`recoverRun: run ${runId} is not running`);
     const view = row.sdk_session_id ? sessionView(store, row.sdk_session_id, row.resume_at) : null;
     const transcript = view ? chainTools(view.chain) : null;
 
@@ -71,7 +77,29 @@ export function recoverRun(store: Store, runId: string, reason: RecoveryReason, 
       }
     }
 
-    const ambiguous = callsWithoutResult(store, runId);
+    // Calls the gate held for an answer (§5.6).
+    let waiting = false;
+    for (const call of callsWithoutResult(store, runId)) {
+      const gr = gateRequestForCall(store, call.payload.tool_call_id);
+      if (!gr) continue;
+      const req = gr.req;
+      if (req.state === "pending") waiting = true;
+      else if (gr.applied_at === null) settleWithoutProcess(store, row, gr, now);
+      else if (req.state === "answered" && req.response?.type === "question" && req.prompt.type === "question") {
+        // AskUserQuestion only hands the answer back; nothing else can have happened.
+        appendEvent(store, row.thread_id, runId, "tool.result", {
+          tool_call_id: call.payload.tool_call_id,
+          status: "ok",
+          output: toContent(store, answerText(req.prompt, req.response), now),
+        }, now);
+        markRequestApplied(store, req.request_id, now);
+      }
+    }
+    const held = (c: EventOf<"tool.call">) => {
+      const gr = gateRequestForCall(store, c.payload.tool_call_id);
+      return gr !== null && gr.applied_at === null;
+    };
+    const ambiguous = callsWithoutResult(store, runId).filter((c) => !held(c));
 
     if (row.stop_requested_at) {
       // The user had asked to stop: finish the cancellation instead of resuming.
@@ -97,6 +125,11 @@ export function recoverRun(store: Store, runId: string, reason: RecoveryReason, 
     }
 
     const note = mergeNotes(row.resume_note, continuationNote(reason, reads, unseen, store));
+    if (others.length === 0 && waiting) {
+      // The process is gone; the request keeps waiting, holding nothing (§5.6).
+      setRunState(store, runId, "waiting_input", { claude_pid: null, resume_count: row.resume_count + 1, resume_reason: "input_answered", resume_note: note });
+      return { kind: "waiting_input", requests: [] };
+    }
     if (others.length === 0) {
       setRunState(store, runId, "pending", {
         claude_pid: null,

@@ -133,6 +133,9 @@ export class Translator {
           errors: m.subtype === "success" ? (m.is_error ? [m.result] : []) : (m.errors ?? []),
           ...(m.subtype === "success" && m.structured_output !== undefined ? { structuredOutput: m.structured_output } : {}),
           ...(m.subtype === "success" && typeof m.result === "string" ? { text: m.result } : {}),
+          ...(m.subtype === "success" && m.terminal_reason === "tool_deferred" && m.deferred_tool_use
+            ? { deferred: { toolCallId: m.deferred_tool_use.id, tool: m.deferred_tool_use.name } }
+            : {}),
         });
         return out;
       }

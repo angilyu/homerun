@@ -20,9 +20,16 @@ export interface ToolCallRequest {
   input: unknown;
   mcpServer?: string;
   parentToolCallId?: string;
+  /** The caller can end the turn with the call deferred (`PreToolUse`, not `canUseTool`). */
+  canDefer?: boolean;
 }
 
-export type GateDecision = { allow: true } | { allow: false; reason: string };
+/**
+ * `updatedInput` replaces the call's input (an `AskUserQuestion` answer, §5.6). `defer` asks
+ * the engine to end the turn with the call deferred; a caller that cannot defer denies with
+ * `reason` instead.
+ */
+export type GateDecision = { allow: true; updatedInput?: Record<string, unknown> } | { allow: false; reason: string; defer?: true };
 
 export interface ToolOutcome {
   toolCallId: string;
@@ -59,6 +66,8 @@ export type EngineEvent =
       structuredOutput?: unknown;
       /** The final text of the turn, when the producer reports it. */
       text?: string;
+      /** The turn ended because the gate deferred this call (`tool_deferred`, §5.6). */
+      deferred?: { toolCallId: string; tool: string };
     };
 
 export interface EngineExit {

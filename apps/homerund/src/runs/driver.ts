@@ -2,16 +2,34 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ToolName, type Origin, type RunError, type SessionSpec, type Surface, type TerminalRunState } from "@homerun/core";
+import { InputRequest, ToolName, requiredAuthority, type InputPrompt, type Origin, type RunError, type SessionSpec, type Surface, type TerminalRunState, type ToolClass } from "@homerun/core";
 import type { EngineEvent, EngineExit, EngineRun, GateDecision, ToolCallRequest, ToolOutcome, UserInput } from "../agent/engine";
 import { claudeEnv } from "../agent/claude/env";
 import { RunSetupError } from "../agent/claude/mcp";
-import { decide, type PolicySpec } from "../agent/policy";
+import { decide, resolveRoots, type Decision, type PolicyContext } from "../agent/policy";
 import { RUNTIME_VERSION } from "../config";
 import { log } from "../log";
-import { toContent } from "../store/content";
+import { contentValue, toContent } from "../store/content";
 import { appendEvent, findToolEvent, publishLive } from "../store/events";
-import { getRunRow, lastInputRequestAt, lastSessionRun, markInputsConsumed, pendingInputs, setRunState, updateRun, type RunRow } from "../store/rows";
+import { listGrants } from "../store/grants";
+import {
+  gateRequestForCall,
+  getGateRequest,
+  getRunRow,
+  insertInputRequest,
+  lastInputRequestAt,
+  lastSessionRun,
+  markInputsConsumed,
+  markRequestApplied,
+  markRequestDeferred,
+  pendingInputRequests,
+  pendingInputs,
+  releaseHeldInputs,
+  setRunState,
+  updateRun,
+  type GateRequest,
+  type RunRow,
+} from "../store/rows";
 import { PROJECT_KEY, transcriptHasInput } from "../store/session-store";
 import { hasConversation } from "../store/transcript";
 import { now, type RunContext } from "./context";
@@ -19,6 +37,8 @@ import { finishRun } from "./finish";
 import { recoverRun } from "./recovery";
 import { prepareResume } from "./resume";
 import { specForRun } from "./specs";
+import { oneShotApproval, requeueIfReady, settleWithoutProcess, type LiveGate } from "./answers";
+import { approvalPrompt, BAD_QUESTION_TEXT, DENIED_TEXT, EXPIRED_TEXT, expiresAt, questionPrompt, SIBLING_TEXT, sdkAnswers } from "./gate";
 
 /** Deltas are coalesced into one live event per message every ~75 ms (§9.8). */
 export const DELTA_COALESCE_MS = 75;
@@ -29,7 +49,23 @@ const MAX_DELTA_CHARS = 100_000;
 export const STOPPED_REASON = "The run was stopped, so this call was not run.";
 export const NO_RESULT = "no result reported";
 
-type Phase = "idle" | "running" | "stopping" | "ending" | "shutdown" | "done";
+/** `deferred`: the turn ended with a call deferred (§5.6); the process is exiting, the run waits. */
+type Phase = "idle" | "running" | "stopping" | "ending" | "shutdown" | "deferred" | "done";
+
+/** The one call of this run waiting for an answer (§5.6 parallel-call rule). */
+interface OpenGate {
+  requestId: string;
+  toolCallId: string;
+  /** `deferring`: the grace period ran out and the gate returned `defer`; the result is due. */
+  phase: "waiting" | "deferring";
+  timer: ReturnType<typeof setTimeout> | null;
+  settle: (how: "answered" | "stopped") => void;
+}
+
+export interface DriverHooks {
+  /** A call started or stopped waiting for input (power assertions, §8.1). */
+  waitingChanged?(): void;
+}
 
 interface DeltaBuf {
   text: string;
@@ -52,7 +88,12 @@ export class RunDriver {
   private phase: Phase = "idle";
   private engine: EngineRun | null = null;
   private spec!: SessionSpec;
-  private policySpec!: PolicySpec;
+  private policyBase!: Omit<PolicyContext, "grants" | "tainted" | "authority">;
+  private open: OpenGate | null = null;
+  /** A deferred call this launch resumes: `claude` asks the gate for it again (§5.6). */
+  private resumeCall: string | null = null;
+  /** Inputs for a deferred resume, sent once the deferred call has its answer. */
+  private heldAfter: UserInput[] = [];
   private pushed = new Set<string>();
   private noteUuid: string | null = null;
   private decisions = new Map<string, Promise<GateDecision>>();
@@ -68,6 +109,7 @@ export class RunDriver {
   constructor(
     private ctx: RunContext,
     row: RunRow,
+    private hooks: DriverHooks = {},
   ) {
     this.runId = row.run_id;
     this.threadId = row.thread_id;
@@ -81,6 +123,21 @@ export class RunDriver {
 
   get pid(): number | null {
     return this.engine?.pid ?? null;
+  }
+
+  /** A call is waiting for an answer with the process alive (short wait, §5.6). */
+  get waitingForInput(): boolean {
+    return this.open !== null;
+  }
+
+  /** Whether this driver holds `requestId` open, for the answer path. */
+  gateFor(requestId: string): LiveGate {
+    return this.open?.requestId === requestId ? this.open.phase : null;
+  }
+
+  /** The answer to the open request was committed: apply it to the waiting call. */
+  wake(requestId: string): void {
+    if (this.open?.requestId === requestId && this.open.phase === "waiting") this.open.settle("answered");
   }
 
   private get store() {
@@ -138,11 +195,6 @@ export class RunDriver {
       throw new RunSetupError("error_max_budget_usd", "The check used this run's whole budget, so the act step could not start.");
     }
     const spec = this.spec;
-    this.policySpec = {
-      builtin: spec.tools.builtin,
-      mcpServers: spec.tools.mcp_servers.map((s) => s.id),
-      bashPatterns: spec.policy.bash_patterns,
-    };
     if (spec.tools.homerun.length) throw new RunSetupError("unsupported_tool", "Homerun's own tools arrive in a later version of Homerun.");
     const mcpServers = this.ctx.mcp.resolveAll(spec.tools.mcp_servers);
     const apiKey = this.ctx.secrets.get("anthropic_api_key");
@@ -151,6 +203,13 @@ export class RunDriver {
     const cwd = spec.policy.roots[0] ? expandHome(spec.policy.roots[0], cfg.userHome) : join(cfg.workspacesDir, this.threadId);
     if (!spec.policy.roots[0]) mkdirSync(cwd, { recursive: true, mode: 0o700 });
     else if (!existsSync(cwd)) throw new RunSetupError("root_missing", `The folder ${spec.policy.roots[0]} does not exist.`);
+    this.policyBase = {
+      spec: { builtin: spec.tools.builtin, mcpServers: spec.tools.mcp_servers.map((s) => s.id), bashPatterns: spec.policy.bash_patterns },
+      roots: resolveRoots(spec.policy.roots, cfg.userHome, cwd),
+      cwd,
+      egress: spec.policy.egress,
+      grantsAllowed: row.task_id !== null,
+    };
     // Only once the run can start: a resume that fails here never delivered its held messages,
     // and clients tell that from the missing `run.resumed` (`HeldMessages`).
     if (row.started_at !== null) {
@@ -168,7 +227,12 @@ export class RunDriver {
     const resume = own ? row.sdk_session_id : (prev?.sdk_session_id ?? null);
     this.costBefore = row.cost_usd ?? 0;
     this.costBaseline = own ? (row.sdk_cost_total ?? 0) : (prev?.sdk_cost_total ?? 0);
-    updateRun(this.store, this.runId, { sdk_cost_baseline: this.costBaseline, ...(resume !== row.sdk_session_id ? { sdk_session_id: resume } : {}) });
+    updateRun(this.store, this.runId, {
+      sdk_cost_baseline: this.costBaseline,
+      ...(resume !== row.sdk_session_id ? { sdk_session_id: resume } : {}),
+      // Untrusted content in the resumed conversation is still in the context (§5.5).
+      ...(prev?.tainted_at && row.tainted_at === null ? { tainted_at: prev.tainted_at } : {}),
+    });
 
     // Give every call the transcript left open the result Homerun recorded, or truncate before
     // it (§5.4), so the model does not see "interrupted" and run it again.
@@ -194,7 +258,11 @@ export class RunDriver {
       if (row.resume_reason === "ambiguity_resolved") inputs.splice(beforePark, 0, { uuid: this.noteUuid, text: row.resume_note });
       else inputs.push({ uuid: this.noteUuid, text: row.resume_note });
     }
-    if (inputs.length === 0) {
+    // A deferred call resumes on an empty input stream (§5.6, spike 3); what else the run was
+    // given follows once the call has its answer.
+    this.resumeCall = own ? this.deferredCall(row) : null;
+    if (this.resumeCall) this.heldAfter = inputs.splice(0);
+    else if (inputs.length === 0) {
       this.end("succeeded", null);
       return;
     }
@@ -235,9 +303,21 @@ export class RunDriver {
     void this.engine.exited.then((ex) => this.onExit(ex));
   }
 
+  /** An answered call deferred by an earlier process of this run, not yet handed to the agent. */
+  private deferredCall(row: RunRow): string | null {
+    const r = this.store.db
+      .query<{ tool_call_id: string }, [string]>(
+        "SELECT tool_call_id FROM input_requests WHERE run_id = ? AND deferred_at IS NOT NULL AND applied_at IS NULL AND state != 'pending' AND tool_call_id IS NOT NULL ORDER BY requested_at DESC LIMIT 1",
+      )
+      .get(row.run_id);
+    if (!r || findToolEvent(this.store, this.threadId, "tool.result", r.tool_call_id)) return null;
+    return r.tool_call_id;
+  }
+
   private onSpawn(pid: number): void {
     // Recorded before any tool can run, so a crash leaves a group the next start can kill (§5.4).
-    if (this.row().state !== "running") return;
+    const state = this.row().state;
+    if (state !== "running" && state !== "waiting_input") return;
     updateRun(this.store, this.runId, { claude_pid: pid, claude_boot: this.ctx.bootTime, claude_started_at: now(this.ctx) });
   }
 
@@ -251,14 +331,16 @@ export class RunDriver {
   }
 
   /** Stop at the next safe point: never mid-call (§5.7). */
-  requestStop(by: Origin | null): void {
+  requestStop(by: Origin | null, reason: "user" | "input_timeout" = "user"): void {
     if (this.phase !== "running") return;
     this.phase = "stopping";
     const t = now(this.ctx);
     this.store.tx(() => {
       updateRun(this.store, this.runId, { stop_requested_at: t, stop_by: by ? JSON.stringify(by) : null });
-      appendEvent(this.store, this.threadId, this.runId, "run.cancelled", { by, reason: "user" }, t);
+      appendEvent(this.store, this.threadId, this.runId, "run.cancelled", { by, reason }, t);
     });
+    // A call waiting for an answer is denied now; the run ends once the agent has seen that.
+    this.open?.settle("stopped");
     publishLive(this.store, this.threadId, this.runId, "run.status", { state: "running", detail: "stopping" });
     void this.stopSequence();
   }
@@ -282,6 +364,8 @@ export class RunDriver {
   async shutdown(graceMs: number): Promise<void> {
     if (this.phase === "running" || this.phase === "stopping") {
       this.phase = "shutdown";
+      // A call waiting for an answer keeps waiting in SQLite; recovery parks the run (§5.6).
+      if (this.open?.timer) clearTimeout(this.open.timer);
       await Promise.race([this.whenNoCallInFlight(), Bun.sleep(graceMs)]);
       this.flushAllDeltas();
       if (this.engine) await this.engine.reap();
@@ -315,35 +399,216 @@ export class RunDriver {
       log.warn("tool with an invalid name denied", { run_id: this.runId, tool: call.tool.slice(0, 200) });
       return { allow: false, reason: `${call.tool} is not one of this task's tools.` };
     }
-    const d = decide(this.policySpec, call.tool, call.input, { devAutoApprove: this.ctx.config.devAutoApprove });
+    // A call with a request already (resumed after `defer`, or asked twice, F6) gets the stored
+    // answer, idempotently by tool_use_id (§5.6).
+    const gr = gateRequestForCall(this.store, call.toolCallId);
+    if (gr) return this.fromRequest(call, gr);
+
+    const row = this.row();
+    const d = decide(this.policyContext(row), call.tool, call.input);
     const stopping = this.phase !== "running";
-    const allow = d.allow && !stopping;
-    const reason = stopping ? STOPPED_REASON : (d.reason ?? "Not allowed.");
-    if (d.allow && d.policy === "needs_approval" && !this.warnedAutoApprove) {
-      this.warnedAutoApprove = true;
-      log.warn("--dev-auto-approve: allowing a call that needs approval", { run_id: this.runId, tool: call.tool });
+    if (stopping || d.policy === "denied") return this.deny(call, d, stopping ? STOPPED_REASON : (d.reason ?? "Not allowed."));
+    if (call.tool === "AskUserQuestion") {
+      const prompt = questionPrompt(call.toolCallId, call.input);
+      return prompt ? this.ask(call, d, prompt) : this.deny(call, d, BAD_QUESTION_TEXT);
+    }
+    if (d.allow) return this.allow(call, d, d.policy);
+    // The user approved this exact call before Homerun restarted, and it never ran.
+    const once = oneShotApproval(this.store, this.runId, call.tool, call.input);
+    if (once) return this.allow(call, d, "needs_approval", once.request_id);
+    if (this.ctx.config.devAutoApprove) {
+      if (!this.warnedAutoApprove) {
+        this.warnedAutoApprove = true;
+        log.warn("--dev-auto-approve: allowing a call that needs approval", { run_id: this.runId, tool: call.tool });
+      }
+      return this.allow(call, d, "needs_approval");
     }
     const t = now(this.ctx);
-    const mcpServer = call.mcpServer ?? d.mcpServer;
+    return this.ask(call, d, approvalPrompt({ toolCallId: call.toolCallId, tool: call.tool, toolClass: d.toolClass, input: toContent(this.store, call.input, t) }, d.approval!));
+  }
+
+  private policyContext(row: RunRow): PolicyContext {
+    return {
+      ...this.policyBase,
+      grants: row.task_id ? listGrants(this.store, row.task_id) : [],
+      tainted: row.tainted_at !== null,
+      authority: row.authority === "web_read_only" ? "web_read_only" : "full",
+    };
+  }
+
+  private recordCall(call: ToolCallRequest, toolClass: ToolClass, policy: Decision["policy"], t: number, extra: { grantId?: string; mcpServer?: string } = {}): void {
+    if (findToolEvent(this.store, this.threadId, "tool.call", call.toolCallId)) return;
+    const mcpServer = call.mcpServer ?? extra.mcpServer;
+    appendEvent(this.store, this.threadId, this.runId, "tool.call", {
+      tool_call_id: call.toolCallId,
+      tool: call.tool,
+      class: toolClass,
+      ...(mcpServer ? { mcp_server: mcpServer } : {}),
+      input: toContent(this.store, call.input, t),
+      policy,
+      ...(extra.grantId ? { grant_id: extra.grantId } : {}),
+      ...(call.parentToolCallId ? { parent_tool_call_id: call.parentToolCallId } : {}),
+    }, t);
+  }
+
+  private deniedResult(id: string, reason: string, t: number): void {
+    if (!findToolEvent(this.store, this.threadId, "tool.result", id)) {
+      appendEvent(this.store, this.threadId, this.runId, "tool.result", { tool_call_id: id, status: "denied", output: null, error: reason }, t);
+    }
+  }
+
+  private deny(call: ToolCallRequest, d: Decision, reason: string): GateDecision {
+    const t = now(this.ctx);
     this.store.tx(() => {
-      if (!findToolEvent(this.store, this.threadId, "tool.call", call.toolCallId)) {
-        appendEvent(this.store, this.threadId, this.runId, "tool.call", {
-          tool_call_id: call.toolCallId,
-          tool: call.tool,
-          class: d.toolClass,
-          ...(mcpServer ? { mcp_server: mcpServer } : {}),
-          input: toContent(this.store, call.input, t),
-          policy: d.policy,
-          ...(call.parentToolCallId ? { parent_tool_call_id: call.parentToolCallId } : {}),
-        }, t);
-      }
-      if (!allow && !findToolEvent(this.store, this.threadId, "tool.result", call.toolCallId)) {
-        appendEvent(this.store, this.threadId, this.runId, "tool.result", { tool_call_id: call.toolCallId, status: "denied", output: null, error: reason }, t);
-      }
+      this.recordCall(call, d.toolClass, d.policy, t, { ...(d.mcpServer ? { mcpServer: d.mcpServer } : {}) });
+      this.deniedResult(call.toolCallId, reason, t);
     });
-    if (!allow) return { allow: false, reason };
+    return { allow: false, reason };
+  }
+
+  /** Dispatch: the call is recorded, and the run tainted first if it brings in untrusted content (§5.5). */
+  private allow(call: ToolCallRequest, d: Decision, policy: Decision["policy"], oneShot?: string): GateDecision {
+    const t = now(this.ctx);
+    this.store.tx(() => {
+      this.recordCall(call, d.toolClass, policy, t, { ...(d.grantId ? { grantId: d.grantId } : {}), ...(d.mcpServer ? { mcpServer: d.mcpServer } : {}) });
+      if (d.taints && this.row().tainted_at === null) updateRun(this.store, this.runId, { tainted_at: t });
+      if (oneShot) markRequestApplied(this.store, oneShot, t);
+    });
     this.inFlight.add(call.toolCallId);
     return { allow: true };
+  }
+
+  /**
+   * Open an input request for the call and wait (§5.6): the request row, `tool.call`,
+   * `input.requested` and `waiting_input` in one transaction. One call per run waits at a time;
+   * a gated sibling from the same batch is denied, and the model re-issues it after the answer.
+   */
+  private ask(call: ToolCallRequest, d: Decision, prompt: InputPrompt): Promise<GateDecision> | GateDecision {
+    if (this.open) return this.deny(call, d, SIBLING_TEXT);
+    const t = now(this.ctx);
+    const req = InputRequest.parse({
+      request_id: randomUUID(),
+      run_id: this.runId,
+      kind: prompt.type === "approval" ? "approval" : "question",
+      tool_call_id: call.toolCallId,
+      prompt,
+      state: "pending",
+      requested_at: t,
+      expires_at: expiresAt(this.spec, t),
+      answered_at: null,
+      response: null,
+      answered_by: null,
+    });
+    this.store.tx(() => {
+      this.recordCall(call, d.toolClass, d.policy === "allowed" ? "allowed" : "needs_approval", t, { ...(d.mcpServer ? { mcpServer: d.mcpServer } : {}) });
+      insertInputRequest(this.store, req);
+      appendEvent(this.store, this.threadId, this.runId, "input.requested", {
+        request_id: req.request_id,
+        prompt: req.prompt,
+        required_authority: requiredAuthority(req.prompt),
+        expires_at: req.expires_at,
+      }, t);
+      setRunState(this.store, this.runId, "waiting_input");
+    });
+    publishLive(this.store, this.threadId, this.runId, "run.status", { state: "waiting_input", detail: "waiting_input" });
+    return this.waitFor(call, req.request_id);
+  }
+
+  private waitFor(call: ToolCallRequest, requestId: string): Promise<GateDecision> {
+    return new Promise<GateDecision>((resolve) => {
+      const gate: OpenGate = {
+        requestId,
+        toolCallId: call.toolCallId,
+        phase: "waiting",
+        timer: null,
+        settle: (how) => {
+          if (this.open !== gate) return;
+          if (gate.timer) clearTimeout(gate.timer);
+          this.open = null;
+          this.hooks.waitingChanged?.();
+          if (how === "stopped") {
+            const t = now(this.ctx);
+            this.store.tx(() => this.deniedResult(call.toolCallId, STOPPED_REASON, t));
+            resolve({ allow: false, reason: STOPPED_REASON });
+            return;
+          }
+          const gr = getGateRequest(this.store, requestId)!;
+          resolve(this.apply(call, gr, true) ?? { allow: false, reason: STOPPED_REASON });
+        },
+      };
+      this.open = gate;
+      this.hooks.waitingChanged?.();
+      // The short wait (§5.6). Only PreToolUse can defer; canUseTool waits for the answer.
+      if (call.canDefer) {
+        gate.timer = setTimeout(() => {
+          if (this.open !== gate || gate.phase !== "waiting") return;
+          gate.phase = "deferring";
+          gate.timer = null;
+          this.hooks.waitingChanged?.();
+          resolve({ allow: false, defer: true, reason: "Waiting for the user's answer." });
+        }, this.ctx.config.inputGraceMs);
+      }
+    });
+  }
+
+  /** A call that already has a request: apply the stored answer, or wait again if none yet. */
+  private fromRequest(call: ToolCallRequest, gr: GateRequest): Promise<GateDecision> | GateDecision {
+    if (findToolEvent(this.store, this.threadId, "tool.result", call.toolCallId)) {
+      const r = findToolEvent(this.store, this.threadId, "tool.result", call.toolCallId)!;
+      return { allow: false, reason: r.payload.error ?? "This call was already handled." };
+    }
+    if (gr.req.state === "pending") {
+      if (this.open) return { allow: false, reason: SIBLING_TEXT };
+      return this.waitFor(call, gr.req.request_id);
+    }
+    return this.apply(call, gr, false) ?? { allow: false, reason: STOPPED_REASON };
+  }
+
+  /**
+   * Hand a resolved request to its call, once (`applied_at`). From a short wait the run goes
+   * back to `running`, and messages held meanwhile follow the answer (§5.7).
+   */
+  private apply(call: ToolCallRequest, gr: GateRequest, fromWait: boolean): GateDecision | null {
+    const req = gr.req;
+    if (req.state === "pending") return null;
+    const t = now(this.ctx);
+    let decision: GateDecision;
+    let release: UserInput[] = [];
+    this.store.tx(() => {
+      const r = req.response;
+      if (req.state === "answered" && r?.type === "approval" && r.decision !== "deny") {
+        decision = { allow: true };
+        const d = decide(this.policyContext(this.row()), call.tool, call.input);
+        if (d.taints && this.row().tainted_at === null) updateRun(this.store, this.runId, { tainted_at: t });
+      } else if (req.state === "answered" && r?.type === "question" && req.prompt.type === "question") {
+        const input = (call.input && typeof call.input === "object" ? call.input : {}) as Record<string, unknown>;
+        decision = { allow: true, updatedInput: { ...input, answers: sdkAnswers(req.prompt, r) } };
+      } else {
+        const reason = req.state === "answered" ? DENIED_TEXT : req.state === "expired" ? EXPIRED_TEXT : STOPPED_REASON;
+        decision = { allow: false, reason };
+        this.deniedResult(call.toolCallId, reason, t);
+      }
+      markRequestApplied(this.store, req.request_id, t);
+      const row = this.row();
+      if (fromWait && row.state === "waiting_input" && this.phase === "running" && pendingInputRequests(this.store, { runId: this.runId }).length === 0) {
+        releaseHeldInputs(this.store, this.runId);
+        setRunState(this.store, this.runId, "running");
+        appendEvent(this.store, this.threadId, this.runId, "run.resumed", { reason: "input_answered" }, t);
+        release = pendingInputs(this.store, this.runId).filter((i) => !this.pushed.has(i.uuid)).map((i) => ({ uuid: i.uuid, text: i.text }));
+      }
+    });
+    if (fromWait && this.row().state === "running") publishLive(this.store, this.threadId, this.runId, "run.status", { state: "running", detail: "running" });
+    if (decision!.allow) this.inFlight.add(call.toolCallId);
+    for (const i of release) this.steer(i);
+    if (call.toolCallId === this.resumeCall) this.afterResumedCall();
+    return decision!;
+  }
+
+  /** The deferred call has its answer: now the rest of what the run was given (§5.6). */
+  private afterResumedCall(): void {
+    this.resumeCall = null;
+    const held = this.heldAfter.splice(0);
+    for (const i of held) this.steer(i);
   }
 
   private postTool(o: ToolOutcome): void {
@@ -471,6 +736,18 @@ export class RunDriver {
       markInputsConsumed(this.store, consumed, now(this.ctx));
     });
     if (this.phase !== "running") return;
+    if (this.open) {
+      // The gate deferred a call: the turn ended waiting for the answer (§5.6).
+      if (!r.deferred || r.deferred.toolCallId !== this.open.toolCallId) log.warn("turn ended while a call waited for input", { run_id: this.runId, deferred: r.deferred?.toolCallId ?? null });
+      this.onDeferred(r.deferred?.toolCallId === this.open.toolCallId);
+      return;
+    }
+    if (this.resumeCall) {
+      // The deferred call was not asked about again; the rest still goes to the agent.
+      const more = this.heldAfter.length > 0;
+      this.afterResumedCall();
+      if (more) return;
+    }
     if (!r.ok) {
       this.end("failed", { code: r.subtype.slice(0, 100), message: (r.errors.join("; ") || r.subtype).slice(0, 10_000) });
     } else if (this.pushed.size === 0) {
@@ -478,10 +755,44 @@ export class RunDriver {
     }
   }
 
+  /**
+   * The process exits and the run keeps waiting, holding no slot (§5.6). `deferred_at` marks a
+   * call `claude` will ask about again on resume; without it (the SDK did not report the
+   * deferral) the answer is written as the call's result instead. An answer that arrived while
+   * the turn was ending requeues the run now.
+   */
+  private onDeferred(reported: boolean): void {
+    const gate = this.open!;
+    this.open = null;
+    this.hooks.waitingChanged?.();
+    this.phase = "deferred";
+    this.flushAllDeltas();
+    const t = now(this.ctx);
+    const pid = this.engine?.pid ?? null;
+    let requeued = false;
+    this.store.tx(() => {
+      if (reported) markRequestDeferred(this.store, gate.requestId, t);
+      updateRun(this.store, this.runId, { claude_pid: null, reap_pgid: pid });
+      const gr = getGateRequest(this.store, gate.requestId)!;
+      if (gr.req.state !== "pending") {
+        const run = this.row();
+        if (!reported) settleWithoutProcess(this.store, run, gr, t);
+        requeued = requeueIfReady(this.store, this.runId);
+      }
+    });
+    log.info("run deferred for input", { run_id: this.runId, request_id: gate.requestId, requeued });
+    void this.reap();
+  }
+
   private onExit(ex: EngineExit): void {
     if (this.phase !== "running") return;
-    // The agent died on its own (§5.1, §5.4).
+    // The agent died on its own (§5.1, §5.4). A waiting call stays waiting in SQLite.
     this.phase = "ending";
+    if (this.open?.timer) clearTimeout(this.open.timer);
+    if (this.open) {
+      this.open = null;
+      this.hooks.waitingChanged?.();
+    }
     this.flushAllDeltas();
     log.warn("agent exited unexpectedly", { run_id: this.runId, code: ex.code, signal: ex.signal, error: ex.error });
     void (async () => {

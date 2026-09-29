@@ -1,17 +1,20 @@
 import type { Origin, RunError, TerminalRunState } from "@homerun/core";
 import { appendEvent, callsWithoutResult } from "../store/events";
-import { getRunRow, pendingInputRequests, runErrorJson, setInputRequestState, setRunState, type RunRow } from "../store/rows";
+import { gateRequestForCall, getRunRow, pendingInputRequests, runErrorJson, setInputRequestState, setRunState, type RunRow } from "../store/rows";
 import type { Store } from "../store/store";
 import { completeMonitorRun, ensureRunStarted, isQuiet, monitorOutcome } from "../monitors/complete";
 
 /**
  * Put a run in a terminal state and append its single `run.end` (§5.7). Pending input requests
  * are cancelled with `input.resolved`. With `unresolved`, each `tool.call` still without a result
- * gets an error result with that text first, so a finished run leaves no call open.
+ * gets an error result with that text first, so a finished run leaves no call open. A call the
+ * gate still held for an approval or a question (§5.6) did not run: it is `denied`.
  *
  * A monitor run also saves its state, settles its fire and records its outcome in the same
  * transaction (§8.3 step 5). One that succeeded with no change writes no thread events.
  */
+export const ENDED_UNANSWERED_TEXT = "The run ended before this call was answered, so it did not run.";
+
 export function finishRun(
   store: Store,
   runId: string,
@@ -23,6 +26,12 @@ export function finishRun(
     const cur = getRunRow(store, runId)!;
     const quiet = isQuiet(cur, state);
     if (cur.monitor_phase && !quiet) ensureRunStarted(store, cur, opts.now);
+    for (const c of callsWithoutResult(store, runId)) {
+      const gr = gateRequestForCall(store, c.payload.tool_call_id);
+      if (gr && gr.applied_at === null) {
+        appendEvent(store, cur.thread_id, runId, "tool.result", { tool_call_id: c.payload.tool_call_id, status: "denied", output: null, error: ENDED_UNANSWERED_TEXT }, opts.now);
+      }
+    }
     if (opts.unresolved) {
       for (const c of callsWithoutResult(store, runId)) {
         appendEvent(store, cur.thread_id, runId, "tool.result", { tool_call_id: c.payload.tool_call_id, status: "error", output: null, error: opts.unresolved }, opts.now);

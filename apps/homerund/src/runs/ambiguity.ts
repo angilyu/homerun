@@ -41,12 +41,20 @@ export interface Answer {
   origin: Origin;
 }
 
+const AUTHORITY_ERRORS = new Set([
+  "answer this in the Homerun app",
+  "approve on your phone or Mac",
+  "grants need the full app on desktop or iOS",
+  "this request must be answered in the app",
+]);
+
 /** Throws AnswerRejected when this caller may not give this answer. */
 export function checkAnswer(req: InputRequest, a: Answer): void {
   const errs = checkResponse(req.prompt, a.response, { role: a.role, via: a.via });
   if (!errs.length) return;
-  const wrongType = req.prompt.type !== a.response.type;
-  throw new AnswerRejected(wrongType ? "invalid" : "authority", errs.join("; "));
+  // Who may answer (§5.6 authority levels) is AUTHORITY_INSUFFICIENT; a malformed answer is not.
+  const authority = errs.some((e) => AUTHORITY_ERRORS.has(e));
+  throw new AnswerRejected(authority ? "authority" : "invalid", errs.join("; "));
 }
 
 export class AmbiguityResolver {

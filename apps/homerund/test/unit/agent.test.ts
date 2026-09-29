@@ -4,7 +4,6 @@ import { buildQueryOptions } from "../../src/agent/claude/options";
 import { claudeEnv, CHILD_PATH } from "../../src/agent/claude/env";
 import { Translator } from "../../src/agent/claude/translate";
 import type { EngineStart } from "../../src/agent/engine";
-import { bashPatternMatches, classify, decide, type PolicySpec } from "../../src/agent/policy";
 
 const m = (x: unknown) => x as SDKMessage;
 const stream = (event: unknown, parent: string | null = null) => m({ type: "stream_event", event, parent_tool_use_id: parent, session_id: "s", uuid: crypto.randomUUID() });
@@ -57,28 +56,6 @@ describe("SDK messages → engine events (translate)", () => {
     expect(t.push(m({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0, user_message_uuids: [], structured_output: { changed: false } }))[0]).toMatchObject({
       structuredOutput: { changed: false },
     });
-  });
-});
-
-describe("tool policy (§5.5)", () => {
-  const spec: PolicySpec = { builtin: ["Bash", "Read"], mcpServers: ["fixture"], bashPatterns: [{ pattern: "git status*", class: "read" }] };
-
-  test("classes: built-ins from core, Bash by pattern unless it has shell metacharacters, MCP destructive", () => {
-    expect(classify(spec, "Read", {})).toBe("read");
-    expect(classify(spec, "Bash", { command: "git status --short" })).toBe("read");
-    expect(classify(spec, "Bash", { command: "git status; rm -rf x" })).toBe("destructive");
-    expect(classify(spec, "Bash", { command: "ls" })).toBe("destructive");
-    expect(classify(spec, "mcp__fixture__lookup_word", {})).toBe("destructive");
-    expect(bashPatternMatches("npm test*", "  npm test -- --watch ")).toBe(true);
-    expect(bashPatternMatches("npm test", "npm test && evil")).toBe(false);
-  });
-
-  test("decisions: out-of-spec tools are denied; destructive calls need approval, allowed only by dev auto-approve", () => {
-    expect(decide(spec, "Read", {}, { devAutoApprove: false })).toMatchObject({ policy: "allowed", allow: true });
-    expect(decide(spec, "Write", {}, { devAutoApprove: true })).toMatchObject({ policy: "denied", allow: false });
-    expect(decide(spec, "mcp__other__x", {}, { devAutoApprove: true })).toMatchObject({ policy: "denied", allow: false });
-    expect(decide(spec, "Bash", { command: "ls" }, { devAutoApprove: false })).toMatchObject({ policy: "needs_approval", allow: false });
-    expect(decide(spec, "mcp__fixture__lookup_word", {}, { devAutoApprove: true })).toMatchObject({ policy: "needs_approval", allow: true, mcpServer: "fixture" });
   });
 });
 

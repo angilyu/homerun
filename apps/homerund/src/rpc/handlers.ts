@@ -19,6 +19,7 @@ import { AnswerRejected } from "../runs/ambiguity";
 import { now, type RunContext } from "../runs/context";
 import type { RunManager } from "../runs/manager";
 import { getBlob } from "../store/content";
+import { getGrant, insertGrant, listGrants, revokeGrant } from "../store/grants";
 import { eventsAfter, historyPage, lastSeq } from "../store/events";
 import { getInputRequest, getRunRow, getTask, getThread, listRuns, listTasks, listThreadSummaries, pendingInputRequests, rowToRun } from "../store/rows";
 import { allSchedules, coverageDays, editMonitorState, getMonitorState, rowToScheduleState, scheduleForTask } from "../store/schedule-rows";
@@ -236,15 +237,30 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     "input.answer": (conn, p) => {
       const r = getInputRequest(store, p.request_id);
       if (!r) throw notFound("input request");
-      if (r.prompt.type !== "ambiguous_tool_call") {
-        throw new RpcFail(RPC_ERROR.UNAVAILABLE, "Answering approvals and questions arrives in a later version of Homerun.", { not_implemented: true });
-      }
+      const a = { response: p.response, role: conn.role!, via: p.via, origin: originOf(conn) };
       try {
-        return manager.answerAmbiguous(p.request_id, { response: p.response, role: conn.role!, via: p.via, origin: originOf(conn) });
+        if (r.prompt.type === "ambiguous_tool_call") return manager.answerAmbiguous(p.request_id, a);
+        const out = manager.answerInput(p.request_id, a);
+        return out.status === "applied" ? { status: "applied" as const } : out;
       } catch (e) {
         if (e instanceof AnswerRejected) throw new RpcFail(e.reason === "authority" ? RPC_ERROR.AUTHORITY_INSUFFICIENT : RPC_ERROR.VALIDATION_FAILED, e.message);
         throw e;
       }
+    },
+
+    // Grants belong to a task (§5.6). Chat runs never use them.
+    "grants.list": (_c, p) => {
+      if (!getTask(store, p.task_id)) throw notFound("task");
+      return { grants: listGrants(store, p.task_id, p.include_revoked ?? false) };
+    },
+    "grants.create": (conn, p) => {
+      if (!getTask(store, p.task_id)) throw notFound("task");
+      return { grant: insertGrant(store, p.task_id, p.grant, originOf(conn).device_id, now(ctx)) };
+    },
+    "grants.revoke": (_c, p) => {
+      const g = getGrant(store, p.grant_id);
+      if (!g) throw notFound("grant");
+      return { revoked_at: revokeGrant(store, p.grant_id, now(ctx))! };
     },
   };
 }
