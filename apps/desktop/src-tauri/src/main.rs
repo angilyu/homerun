@@ -15,6 +15,8 @@ use tauri::{AppHandle, Manager, RunEvent, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod power;
+
 const RUNTIME_METHODS: &[&str] = &["ping", "run.start", "run.list", "keychain.set", "keychain.get", "mcp.probe"];
 
 #[derive(Default)]
@@ -353,6 +355,18 @@ fn main() {
         .setup(|app| {
             log("shell.log", &format!("shell start version={} exe={:?}", app.package_info().version, std::env::current_exe().ok()));
             spawn_runtime(app.handle());
+            let handle = app.handle().clone();
+            power::observe(move |ev| {
+                let rt = handle.state::<Arc<Runtime>>().inner().clone();
+                let version = handle.package_info().version.to_string();
+                // Off the main thread; the runtime also detects sleep from its own ticks (§8.4).
+                std::thread::spawn(move || {
+                    let token = rt.token.lock().unwrap().clone();
+                    if let Err(e) = power::notify(&power::socket_path(&data_dir()), &token, &version, ev.method(), ev.params()) {
+                        log("shell.log", &format!("{} not delivered: {e}", ev.method()));
+                    }
+                });
+            });
             autotest(app.handle());
             Ok(())
         })
