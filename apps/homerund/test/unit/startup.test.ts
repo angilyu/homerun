@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { Database } from "bun:sqlite";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,7 +63,7 @@ describe("startup recovery (§5.4)", () => {
         await never();
       },
       async (s) => {
-        const inputs = [(await s.nextInput())!, (await s.nextInput())!];
+        const inputs = [(await s.nextInput())!];
         s.emit({ type: "message", messageId: "m2", text: "done" });
         s.result(inputs.map((i) => i.uuid));
       },
@@ -72,7 +73,8 @@ describe("startup recovery (§5.4)", () => {
     await b.rt.scheduler.idle();
     const s = b.engine.sessions[0]!;
     expect(s.opts.resume).toBe(`fake-session-${run_id}`);
-    expect(s.opts.initialInputs.map((i) => i.text)).toEqual(["go", RESTART_NOTE]);
+    // "go" is in the stored session already; only the note is new.
+    expect(s.opts.initialInputs.map((i) => i.text)).toEqual([RESTART_NOTE]);
     expect(row(b, run_id)).toMatchObject({ state: "succeeded", resume_count: 0, claude_pid: null });
     expect(eventTypes(b, thread_id)).toEqual(["user.message", "run.started", "run.resumed", "message.final", "run.end"]);
   });
@@ -88,7 +90,7 @@ describe("startup recovery (§5.4)", () => {
         await never();
       },
       async (s) => {
-        const inputs = [(await s.nextInput())!, (await s.nextInput())!];
+        const inputs = [(await s.nextInput())!];
         s.emit({ type: "message", messageId: "m2", text: "done" });
         s.result(inputs.map((i) => i.uuid));
       },
@@ -97,8 +99,8 @@ describe("startup recovery (§5.4)", () => {
         beforeRestart: (dir, runId) => {
           const db = openDb(join(dir, "homerun.db"));
           const { sdk_session_id } = db.query<{ sdk_session_id: string }, [string]>("SELECT sdk_session_id FROM runs WHERE run_id = ?").get(runId)!;
-          const entry = { parentUuid: null, isSidechain: false, type: "assistant", uuid: crypto.randomUUID(), sessionId: sdk_session_id, message: { id: "msg1", role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }] } };
-          db.query("INSERT INTO sdk_transcripts (project_key, session_id, subpath, seq, uuid, entry) VALUES ('homerun', ?, '', 1, ?, ?)").run(sdk_session_id, entry.uuid, JSON.stringify(entry));
+          const entry = { parentUuid: firstInput(db, runId).uuid, isSidechain: false, type: "assistant", uuid: crypto.randomUUID(), sessionId: sdk_session_id, message: { id: "msg1", role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }] } };
+          seed(db, sdk_session_id, [entry]);
           db.close();
         },
       },
@@ -106,11 +108,11 @@ describe("startup recovery (§5.4)", () => {
     expect(b.rt.report.recovered).toEqual([{ run_id, outcome: expect.objectContaining({ kind: "requeued" }) }]);
     await b.shell().then((c) => c.call("secrets.set", { name: "anthropic_api_key", value: KEY }));
     await b.rt.scheduler.idle();
-    expect(b.engine.sessions[0]!.opts.initialInputs[1]!.text).toBe(RESTART_NOTE);
+    expect(b.engine.sessions[0]!.opts.initialInputs.map((i) => i.text)).toEqual([RESTART_NOTE]);
     const sid = row(b, run_id).sdk_session_id as string;
     const chain = chainTo(chainEntries(b.rt.store, sid));
     expect(chainTools(chain).dangling).toEqual([]);
-    expect(chain.at(-1)!.entry).toMatchObject({
+    expect(afterCall(chain, "t1")).toMatchObject({
       type: "user",
       sessionId: sid,
       message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "(no output)", is_error: false }] },
@@ -275,7 +277,8 @@ describe("startup recovery (§5.4)", () => {
 function mirrorToolUses(dir: string, runId: string, ids: string[]): string {
   const db = openDb(join(dir, "homerun.db"));
   const { sdk_session_id: sid } = db.query<{ sdk_session_id: string }, [string]>("SELECT sdk_session_id FROM runs WHERE run_id = ?").get(runId)!;
-  const user = { parentUuid: null, isSidechain: false, type: "user", uuid: crypto.randomUUID(), sessionId: sid, message: { role: "user", content: "go" } };
+  const first = firstInput(db, runId);
+  const user = { parentUuid: null, isSidechain: false, type: "user", uuid: first.uuid, sessionId: sid, message: { role: "user", content: first.text } };
   let parent = user.uuid;
   const entries: Record<string, unknown>[] = [user];
   for (const id of ids) {
@@ -283,11 +286,30 @@ function mirrorToolUses(dir: string, runId: string, ids: string[]): string {
     entries.push(e);
     parent = e.uuid;
   }
-  entries.forEach((e, i) =>
-    db.query("INSERT INTO sdk_transcripts (project_key, session_id, subpath, seq, uuid, entry) VALUES ('homerun', ?, '', ?, ?, ?)").run(sid, i + 1, e.uuid as string, JSON.stringify(e)),
-  );
+  seed(db, sid, entries);
   db.close();
   return user.uuid;
+}
+
+/** The entry right after the assistant message that made this call. */
+function afterCall(chain: ReturnType<typeof chainTo>, toolCallId: string): Record<string, unknown> | undefined {
+  const i = chain.findIndex((c) => JSON.stringify(c.entry).includes(`"id":"${toolCallId}"`));
+  return chain[i + 1]?.entry as Record<string, unknown> | undefined;
+}
+
+/** claude stores a prompt under the uuid it was sent with. */
+function firstInput(db: Database, runId: string): { uuid: string; text: string } {
+  return db.query<{ uuid: string; text: string }, [string]>("SELECT uuid, text FROM run_inputs WHERE run_id = ? ORDER BY created_at, rowid LIMIT 1").get(runId)!;
+}
+
+/** Appends to a session's stored transcript; an entry already there (by uuid) is kept. */
+function seed(db: Database, sid: string, entries: Record<string, unknown>[]): void {
+  for (const e of entries) {
+    db.query(
+      "INSERT OR IGNORE INTO sdk_transcripts (project_key, session_id, subpath, seq, uuid, entry) " +
+        "SELECT 'homerun', ?1, '', COALESCE(MAX(seq), 0) + 1, ?2, ?3 FROM sdk_transcripts WHERE project_key = 'homerun' AND session_id = ?1 AND subpath = ''",
+    ).run(sid, e.uuid as string, JSON.stringify(e));
+  }
 }
 
 const callsLogged = (n: number) => async (a: SocketRuntime, id: string) =>
@@ -353,7 +375,7 @@ describe('answering "Did this happen?" (milestone 4)', () => {
     expect(texts).toContain("did it?");
     const chain = chainTo(chainEntries(b.rt.store, sid));
     expect(chainTools(chain).dangling).toEqual([]);
-    expect(chain.at(-1)!.entry).toMatchObject({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "b1", content: NOT_RUN_TEXT }] } });
+    expect(afterCall(chain, "b1")).toMatchObject({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "b1", content: NOT_RUN_TEXT }] } });
     expect(chain[0]!.uuid).toBe(userUuid);
     const types = eventTypes(b, thread_id);
     expect(types.slice(types.indexOf("input.requested"))).toEqual(["input.requested", "user.message", "input.resolved", "tool.result", "run.resumed", "message.final", "run.end"]);
@@ -470,4 +492,70 @@ describe('answering "Did this happen?" (milestone 4)', () => {
     const content = b.rt.store.db.query<{ n: number }, []>("SELECT count(*) AS n FROM sdk_transcripts WHERE entry LIKE '%tool_result%'").get()!.n;
     expect(content).toBe(0);
   }, 10_000);
+
+  test("a crash before claude stored anything of the conversation: the answer starts the run over, task first, then the note", async () => {
+    const { b, thread_id, run_id } = await crashAndRestart(
+      async (s) => {
+        await s.nextInput();
+        await s.tool({ toolCallId: "b1", tool: "Bash", input: { command: "rm -rf build" } }, never);
+      },
+      async (s) => {
+        const inputs: string[] = [];
+        for (let i = 0; i < s.opts.initialInputs.length; i++) inputs.push((await s.nextInput())!.uuid);
+        s.emit({ type: "message", messageId: "m2", text: "done" });
+        s.result(inputs);
+      },
+      // claude mirrors its transcript a little after the fact: nothing of it made it.
+      { until: callsLogged(1), beforeRestart: (dir, id) => forgetSession(dir, id) },
+    );
+    const shell = await b.shell();
+    await shell.call("secrets.set", { name: "anthropic_api_key", value: KEY });
+    await shell.call("messages.send", { thread_id: thread_id as never, client_msg_id: uuid(), text: "did it?" });
+    const [req] = (await shell.call("input.list_pending", {})).requests;
+    const dev = await b.dev();
+    await dev.call("input.answer", { request_id: req!.request_id, response: { type: "ambiguous_tool_call", outcome: "completed" }, via: "app" });
+    await until(() => row(b, run_id).state === "succeeded", 3000, "resumed run");
+
+    // Resuming a session with nothing stored fails in claude ("No conversation found"), so the
+    // run starts a new one and gets its task again, before the note that says the call happened.
+    const s = b.engine.sessions[0]!;
+    expect(s.opts.resume).toBeNull();
+    const texts = s.opts.initialInputs.map((i) => i.text);
+    expect(texts).toHaveLength(3);
+    expect(texts[0]).toBe("go");
+    expect(texts[1]).toContain("it completed: its effect happened, so do not run it again");
+    expect(texts[2]).toBe("did it?");
+    const sid = row(b, run_id).sdk_session_id as string;
+    const gos = chainEntries(b.rt.store, sid).filter((e) => (e.entry as { message?: { content?: unknown } }).message?.content === "go");
+    expect(gos).toHaveLength(1);
+    expect(row(b, run_id).sdk_cost_baseline).toBe(0);
+  }, 10_000);
+
+  test("a follow-up after a run whose conversation was never stored starts a new session", async () => {
+    const { b, thread_id, run_id } = await crashAndRestart(
+      async (s) => {
+        await s.nextInput();
+        await s.tool({ toolCallId: "b1", tool: "Bash", input: { command: "rm -rf build" } }, never);
+      },
+      echoScript,
+      { until: callsLogged(1), beforeRestart: (dir, id) => forgetSession(dir, id) },
+    );
+    const shell = await b.shell();
+    await shell.call("secrets.set", { name: "anthropic_api_key", value: KEY });
+    expect(await shell.call("runs.stop", { run_id: run_id as never })).toEqual({ state: "cancelled" });
+    const next = await shell.call("messages.send", { thread_id: thread_id as never, client_msg_id: uuid(), text: "next" });
+    await until(() => row(b, next.run_id).state === "succeeded", 3000, "follow-up run");
+    const s = b.engine.sessions[0]!;
+    expect(s.opts.resume).toBeNull();
+    expect(s.opts.initialInputs.map((i) => i.text)).toEqual(["next"]);
+  }, 10_000);
 });
+
+/** Drops what claude's mirror stored of the run's session, as if the crash came before it flushed. */
+function forgetSession(dir: string, runId: string): void {
+  const db = openDb(join(dir, "homerun.db"));
+  const { sdk_session_id: sid } = db.query<{ sdk_session_id: string }, [string]>("SELECT sdk_session_id FROM runs WHERE run_id = ?").get(runId)!;
+  db.query("DELETE FROM sdk_transcripts WHERE session_id = ?").run(sid);
+  db.query("DELETE FROM sdk_session_summaries WHERE session_id = ?").run(sid);
+  db.close();
+}

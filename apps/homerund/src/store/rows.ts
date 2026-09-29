@@ -280,13 +280,16 @@ export function activeRunRow(store: Store, threadId: string): RunRow | null {
   );
 }
 
-/** The thread's most recent run that reached the agent, for a follow-up's `resume`. */
-export function lastSessionRun(store: Store, threadId: string): RunRow | null {
-  return (
-    store.db
-      .query<RunRow, [string]>("SELECT * FROM runs WHERE thread_id = ? AND sdk_session_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1")
-      .get(threadId) ?? null
-  );
+/** The thread's most recent run that reached the agent with a session `usable` accepts, for a follow-up's `resume`. */
+export function lastSessionRun(store: Store, threadId: string, usable: (sessionId: string) => boolean = () => true): RunRow | null {
+  const q = store.db.query<RunRow, [string]>("SELECT * FROM runs WHERE thread_id = ? AND sdk_session_id IS NOT NULL ORDER BY created_at DESC, rowid DESC");
+  for (const r of q.iterate(threadId)) if (usable(r.sdk_session_id!)) return r;
+  return null;
+}
+
+/** When the run last asked for input (it parked then), or null if it never did. */
+export function lastInputRequestAt(store: Store, runId: string): number | null {
+  return store.db.query<{ at: number | null }, [string]>("SELECT MAX(requested_at) AS at FROM input_requests WHERE run_id = ?").get(runId)?.at ?? null;
 }
 
 export interface NewRun {

@@ -11,8 +11,9 @@ import { RUNTIME_VERSION } from "../config";
 import { log } from "../log";
 import { toContent } from "../store/content";
 import { appendEvent, findToolEvent, publishLive } from "../store/events";
-import { getRunRow, lastSessionRun, markInputsConsumed, pendingInputs, setRunState, updateRun, type RunRow } from "../store/rows";
+import { getRunRow, lastInputRequestAt, lastSessionRun, markInputsConsumed, pendingInputs, setRunState, updateRun, type RunRow } from "../store/rows";
 import { PROJECT_KEY, transcriptHasInput } from "../store/session-store";
+import { hasConversation } from "../store/transcript";
 import { now, type RunContext } from "./context";
 import { finishRun } from "./finish";
 import { recoverRun } from "./recovery";
@@ -154,11 +155,16 @@ export class RunDriver {
     }
 
     // Resume this run's own session after a restart, or the thread's last session for a follow-up.
-    const prev = row.sdk_session_id ? null : lastSessionRun(this.store, this.threadId);
-    const resume = row.sdk_session_id ?? prev?.sdk_session_id ?? null;
+    // Only a session with a stored conversation: after a crash early in a session's first turn
+    // nothing may be stored yet, and `claude` cannot resume that. The run then continues from the
+    // thread's previous session, or a new one, and gets its messages again.
+    const usable = (sid: string) => hasConversation(this.store, sid);
+    const own = row.sdk_session_id !== null && usable(row.sdk_session_id);
+    const prev = own ? null : lastSessionRun(this.store, this.threadId, usable);
+    const resume = own ? row.sdk_session_id : (prev?.sdk_session_id ?? null);
     this.costBefore = row.cost_usd ?? 0;
-    this.costBaseline = row.sdk_session_id ? (row.sdk_cost_total ?? 0) : (prev?.sdk_cost_total ?? 0);
-    updateRun(this.store, this.runId, { sdk_cost_baseline: this.costBaseline, ...(resume && !row.sdk_session_id ? { sdk_session_id: resume } : {}) });
+    this.costBaseline = own ? (row.sdk_cost_total ?? 0) : (prev?.sdk_cost_total ?? 0);
+    updateRun(this.store, this.runId, { sdk_cost_baseline: this.costBaseline, ...(resume !== row.sdk_session_id ? { sdk_session_id: resume } : {}) });
 
     // Give every call the transcript left open the result Homerun recorded, or truncate before
     // it (§5.4), so the model does not see "interrupted" and run it again.
@@ -166,16 +172,22 @@ export class RunDriver {
 
     const inputs: UserInput[] = [];
     const delivered: string[] = [];
+    const parkedAt = row.resume_reason === "ambiguity_resolved" ? lastInputRequestAt(this.store, this.runId) : null;
+    let beforePark = 0;
     for (const i of pendingInputs(this.store, this.runId)) {
-      if (row.sdk_session_id && transcriptHasInput(this.store.db, row.sdk_session_id, i.uuid, i.text)) delivered.push(i.uuid);
-      else inputs.push({ uuid: i.uuid, text: i.text });
+      if (own && transcriptHasInput(this.store.db, row.sdk_session_id!, i.uuid, i.text)) delivered.push(i.uuid);
+      else {
+        inputs.push({ uuid: i.uuid, text: i.text });
+        if (parkedAt !== null && i.created_at < parkedAt) beforePark++;
+      }
     }
     if (delivered.length) markInputsConsumed(this.store, delivered, now(this.ctx));
     if (row.resume_note) {
       this.noteUuid = randomUUID();
       // After a "Did this happen?" answer the note explains the injected results, so it comes
-      // before messages that were held while the run waited.
-      if (row.resume_reason === "ambiguity_resolved") inputs.unshift({ uuid: this.noteUuid, text: row.resume_note });
+      // before messages that were held while the run waited, and after what the run was given
+      // before it parked (sent again when its conversation was never stored).
+      if (row.resume_reason === "ambiguity_resolved") inputs.splice(beforePark, 0, { uuid: this.noteUuid, text: row.resume_note });
       else inputs.push({ uuid: this.noteUuid, text: row.resume_note });
     }
     if (inputs.length === 0) {

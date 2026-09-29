@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { FakeScript } from "../../src/agent/fake-engine";
-import { RESUME_LIMIT } from "../../src/runs/recovery";
+import { AGENT_EXITED_NOTE, RESUME_LIMIT } from "../../src/runs/recovery";
 import { NO_RESULT, STOPPED_REASON } from "../../src/runs/driver";
 import { UNKNOWN_TEXT } from "../../src/runs/resume";
 import { findToolEvent } from "../../src/store/events";
@@ -296,15 +296,15 @@ describe("the agent dies while the runtime keeps running (§5.1)", () => {
     const { rt, thread, send, run } = setup(async (s) => {
       const first = (await s.nextInput())!;
       if (s.index === 0) return { code: null, signal: "SIGKILL" };
-      // The resumed agent gets the unconsumed message and the continuation note.
-      const note = (await s.nextInput())!;
-      s.emit({ type: "message", messageId: "m", text: `resumed with: ${first.text} / ${note.text}` });
-      s.result([first.uuid, note.uuid]);
+      s.emit({ type: "message", messageId: "m", text: `resumed with: ${first.text}` });
+      s.result([first.uuid]);
     });
     const r = send("go");
     await until(() => run(r.run_id).state === "succeeded");
     expect(rt.engine.sessions).toHaveLength(2);
     expect(rt.engine.sessions[1]!.opts.resume).toBe(run(r.run_id).sdk_session_id);
+    // The unconsumed message is in the stored session already; the resumed agent gets the note.
+    expect(rt.engine.sessions[1]!.opts.initialInputs.map((i) => i.text)).toEqual([AGENT_EXITED_NOTE]);
     const ev = persisted(rt.store, thread.thread_id);
     expect(ev.map((e) => e.type)).toEqual(["user.message", "run.started", "run.resumed", "message.final", "run.end"]);
     expect(ev[2]!.payload).toEqual({ reason: "agent_exited" });
