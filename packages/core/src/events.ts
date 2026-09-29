@@ -249,9 +249,9 @@ export const RunEndEvent = named(
 
 /**
  * Fires that did not run on time (§8.2, §8.4). Not tied to a run. `asleep` and `not_running` say
- * why the computer could not run them; `skipped_by_policy` covers fires Homerun dropped itself:
- * merged into a later fire because the monitor's previous run was still going (§5.3), or beyond
- * `max_catchup`.
+ * why the computer could not run them, and `caught_up` how many of those the catch-up policy runs
+ * late; the rest are not run. `skipped_by_policy` covers on-time fires Homerun dropped itself,
+ * merged into the fire already waiting because the monitor's previous run was still going (§5.3).
  */
 export const ScheduleMissedEvent = named(
   "ScheduleMissedEvent",

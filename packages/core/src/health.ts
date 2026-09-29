@@ -50,7 +50,7 @@ export const MonitorHealth = named(
     /** Fires that did not run on time, by cause (§8.4). */
     missed_asleep: z.int().nonnegative(),
     missed_not_running: z.int().nonnegative(),
-    /** Fires dropped by Homerun: merged, or beyond `max_catchup`. */
+    /** On-time fires Homerun merged into one already waiting (§5.3). Missed fires the catch-up policy does not run stay counted as missed. */
     skipped: z.int().nonnegative(),
     /** Late runs made by the catch-up policy (§8.1). */
     caught_up: z.int().nonnegative(),
