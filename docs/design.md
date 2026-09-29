@@ -1262,7 +1262,9 @@ memory, so it can be shown to the user, edited, reset, and tested.
 fresh `query()` on the act model, with the check's findings and the saved state.
 
 - **Each monitor run is a fresh SDK session.** It never replays the monitor's
-  thread, so context stays small forever.
+  thread, so context stays small forever. After a crash the act step resumes its
+  own session if the store holds a conversation for it, and otherwise starts a new
+  one; it never falls back to the thread's previous session (§5.4).
 - The act step runs under monitor tool policy: no `Bash`, and destructive actions
   pause for approval (§5.5).
 
