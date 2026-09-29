@@ -30,6 +30,10 @@ hot reload on port 5178. The sidecars are a development-channel `homerund` compi
 and `claude` from the Agent SDK's platform package, so nothing is downloaded. Rust 1.94 is needed
 (`rustup toolchain install 1.94.0`).
 
+Run the CLI through pnpm (`pnpm tauri …` or `pnpm exec tauri …`), not `node_modules/.bin/tauri`.
+The `tauri` crate is 2.12.0, but `@tauri-apps/api` is 2.11.1, the newest 2.x on npm. Called
+directly, `tauri build` fails its version-mismatch check. Pin the api to 2.12.x once npm has it.
+
 Debug builds keep the API key in memory, seeded from `ANTHROPIC_API_KEY` if set, because every
 rebuild is a new code identity and the keychain would ask again each time. Useful variables:
 
