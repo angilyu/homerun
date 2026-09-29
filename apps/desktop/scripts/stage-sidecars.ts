@@ -1,10 +1,10 @@
 /**
  * Stage the helpers `tauri dev` bundles next to the shell (`externalBin`, §5.1):
  * a development-channel `homerund` compiled from source, and `claude` from the Agent SDK's
- * platform package in node_modules. No network. Release bundles use
- * scripts/macos/fetch-toolchain.sh instead, which builds the release channel.
+ * platform package in node_modules. No network. `--release` builds the release channel, which is
+ * what scripts/macos/fetch-toolchain.sh (and so package.sh) stages for a bundle.
  *
- *   bun scripts/stage-sidecars.ts [--release]
+ *   [HOMERUND_VERSION=x.y.z] bun scripts/stage-sidecars.ts [--release]
  */
 import { chmodSync, copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +25,11 @@ const release = process.argv.includes("--release");
 mkdirSync(OUT, { recursive: true });
 const homerund = join(OUT, `homerund-${triple}`);
 const main = join(ROOT, "apps", "homerund", "src", "main.ts");
-const define = release ? [] : ["--define", `HOMERUND_BUILD="development"`];
+// Release: no build define (a compiled binary defaults to the release channel), minified, and the
+// app version when package.sh passes one.
+const define = release
+  ? ["--minify", ...(process.env.HOMERUND_VERSION ? ["--define", `HOMERUND_VERSION=${JSON.stringify(process.env.HOMERUND_VERSION)}`] : [])]
+  : ["--define", `HOMERUND_BUILD="development"`];
 const t0 = Date.now();
 const r = Bun.spawnSync([process.execPath, "build", "--compile", ...define, main, "--outfile", homerund], { stdout: "pipe", stderr: "pipe" });
 if (r.exitCode !== 0) throw new Error(`building homerund failed:\n${r.stderr.toString()}`);
