@@ -1179,7 +1179,10 @@ in flight — `IOPMAssertionCreateWithName` (or `caffeinate -i`) on macOS,
 mid-flight and is the highest-value, lowest-cost mitigation. The runtime holds
 one assertion while any run is running, and none while runs only wait for input
 (§5.6). On macOS it is a `caffeinate -i -w <runtime pid>` child, which exits with
-the runtime, so a crash never leaves the machine unable to sleep.
+the runtime, so a crash never leaves the machine unable to sleep. caffeinate is
+part of macOS (in `/usr/bin` on every macOS 13+ system volume). Keeping awake is
+best-effort: if it is missing, cannot start or exits early, the runtime logs one
+warning, stops trying, and runs carry on.
 
 **2. Catch-up on wake.** The shell subscribes to `NSWorkspace`'s will-sleep and
 did-wake notifications (`PowerRegisterSuspendResumeNotification` on Windows) and
@@ -1236,12 +1239,17 @@ memory, so it can be shown to the user, edited, reset, and tested.
   a local file's hash, or a read-only Homerun tool. Comparators: changed, equals,
   above or below, new items. `equals`, `above` and `below` are edge-triggered:
   they report the condition becoming true, not every run while it stays true.
+  RSS and Atom are read by a small parser in the runtime rather than a
+  dependency. Feeds are untrusted, so it expands no declared entities (no XXE)
+  and bounds size, depth and element count.
 - **Model-based observations:** a model check may name a rule-based source. The
   runtime fetches it, and the model only judges it, with no tools. Without one,
   the model gathers observations with the task's tools, under the task's policy.
   The check and the act step share the run's budget (§7.4).
 - **The first check records a baseline.** With no saved state, the check saves
-  what it observed and reports no change.
+  what it observed and reports no change. A threshold comparator is the
+  exception: if its condition already holds, the first check reports it. A model
+  check is asked to report on a first look only what the user asked to hear.
 - **Rule-based is the default** whenever a monitor can be expressed that way. At
   every five minutes, a rule-based monitor costs nothing. When the user describes
   a monitor in words, the setup flow proposes a rule-based check if one fits.
@@ -2234,4 +2242,4 @@ One line per major decision: what was chosen, and why.
 | 27 | **Our own cron evaluator** (§8) | §8 fixes the DST rules, and cron libraries apply their own. Ours is checked against a minute-by-minute oracle across zones and transitions |
 | 28 | **Each scheduled slot is claimed once, durably** (§8.1, §8.4) | A slot is claimed or recorded as missed in the transaction that advances the schedule, so a crash neither loses nor repeats a fire |
 | 29 | **The runtime keeps the Mac awake; the shell reports sleep** (§8.1) | `caffeinate -w` dies with the runtime, so a crash can't block sleep. Only an app gets sleep and wake notifications; without the shell, missed ticks show the sleep |
-| 30 | **Threshold checks are edge-triggered; the first check is a baseline** (§8.3) | "Price below $X" reports once when it crosses, not every five minutes, and a new monitor doesn't report what was already there |
+| 30 | **Threshold checks are edge-triggered; the first check is a baseline** (§8.3) | "Price below $X" reports once when it crosses (or at once, if it already has), not every five minutes; a new "page changed" monitor doesn't report the page as new |
