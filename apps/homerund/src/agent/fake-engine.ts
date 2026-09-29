@@ -1,3 +1,5 @@
+import { appendTranscript, PROJECT_KEY } from "../store/session-store";
+import type { Store } from "../store/store";
 import type { AgentEngine, EngineEvent, EngineExit, EngineRun, EngineStart, GateDecision, ToolCallRequest, ToolOutcome, UserInput } from "./engine";
 
 /**
@@ -33,10 +35,18 @@ let fakePid = 90_000_000;
 export class FakeEngine implements AgentEngine {
   readonly sessions: FakeSession[] = [];
 
+  private store: Store | null = null;
+
   constructor(private script: FakeScript = echoScript) {}
 
   setScript(script: FakeScript): void {
     this.script = script;
+  }
+
+  /** Mirror each input a session takes into this store's transcript, as `claude` does. */
+  attach(store: Store): this {
+    this.store = store;
+    return this;
   }
 
   start(o: EngineStart): EngineRun {
@@ -49,15 +59,27 @@ export class FakeEngine implements AgentEngine {
     const killed = new Promise<void>((r) => (resolveKilled = r));
     // Out of any real pid range, so a stray kill(-pid) can never hit a real process.
     const pid = ++fakePid;
+    const sessionId = o.resume ?? `fake-session-${o.runId}`;
+    const store = this.store;
+    let parent: string | null = store && o.resume ? (o.resumeAt ?? lastUuid(store, o.resume)) : null;
+    const took = (i: UserInput | undefined | null) => {
+      if (i && store) {
+        appendTranscript(store, { projectKey: PROJECT_KEY, sessionId }, [
+          { type: "user", uuid: i.uuid, parentUuid: parent, isSidechain: false, sessionId, message: { role: "user", content: i.text } },
+        ]);
+        parent = i.uuid;
+      }
+      return i ?? null;
+    };
 
     const session: FakeSession = {
       opts: o,
       index: this.sessions.length,
       nextInput: () => {
         const v = buf.shift();
-        if (v) return Promise.resolve(v);
+        if (v) return Promise.resolve(took(v));
         if (closed) return Promise.resolve(null);
-        return new Promise((r) => waiters.push(r));
+        return new Promise<UserInput | null>((r) => waiters.push(r)).then(took);
       },
       emit: (e) => o.sink(e),
       tool: async (call, run) => {
@@ -90,7 +112,7 @@ export class FakeEngine implements AgentEngine {
     queueMicrotask(() => o.onSpawn(pid));
     const exited = (async (): Promise<EngineExit> => {
       await Promise.resolve();
-      o.sink({ type: "session", sessionId: o.resume ?? `fake-session-${o.runId}`, tools: [...o.builtinTools], mcpServers: [], skills: [], plugins: [], model: o.model });
+      o.sink({ type: "session", sessionId, tools: [...o.builtinTools], mcpServers: [], skills: [], plugins: [], model: o.model });
       const done = this.script(session).then((x) => x ?? { code: 0, signal: null });
       return Promise.race([done, killed.then((): EngineExit => ({ code: null, signal: "SIGKILL" }))]);
     })();
@@ -122,4 +144,12 @@ export class FakeEngine implements AgentEngine {
       exited,
     };
   }
+}
+
+function lastUuid(store: Store, sessionId: string): string | null {
+  return (
+    store.db
+      .query<{ uuid: string }, [string, string]>("SELECT uuid FROM sdk_transcripts WHERE project_key = ? AND session_id = ? AND subpath = '' AND uuid IS NOT NULL ORDER BY seq DESC LIMIT 1")
+      .get(PROJECT_KEY, sessionId)?.uuid ?? null
+  );
 }

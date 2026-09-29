@@ -47,7 +47,7 @@ export function testRuntime(opts: { script?: FakeScript; env?: Record<string, st
   store.bus.subscribeAll((e) => live.push(e));
   const secrets = new SecretStore();
   if (opts.key !== false) secrets.set("anthropic_api_key", MOCK_KEY);
-  const engine = new FakeEngine(opts.script);
+  const engine = new FakeEngine(opts.script).attach(store);
   const ctx: RunContext = { store, config, device: ensureDevice(store), secrets, engine, mcp: new McpLauncher(config.devMcpOverrides), bootTime: 1 };
   const scheduler = new Scheduler(ctx);
   const manager = new RunManager(ctx, scheduler);
@@ -108,7 +108,7 @@ export async function socketRuntime(opts: { script?: FakeScript; env?: Record<st
   setLogSink((l) => logs.push(l), "debug");
   const config = loadConfig({ env: { HOMERUN_DATA_DIR: dir, HOMERUN_CLAUDE_PATH: "/usr/bin/false", HOME: dir, ...opts.env } });
   const engine = opts.engine ?? new FakeEngine(opts.script);
-  const rt = await startRuntime({ config, launchToken: LAUNCH_TOKEN, engine: () => engine, checkResults: true, setTmpdir: false });
+  const rt = await startRuntime({ config, launchToken: LAUNCH_TOKEN, engine: (store) => engine.attach(store), checkResults: true, setTmpdir: false });
   const clients: RpcClient[] = [];
   const track = async (p: Promise<RpcClient>) => {
     const c = await p;

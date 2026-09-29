@@ -421,7 +421,7 @@ SDK `query()` and translates between the SDK and Homerun:
 | Streamed replies | `includePartialMessages` → `message.delta`, which clients see live and which is never persisted |
 | Chat history for clients | Assistant and user messages → `message.final` in `thread_events` |
 | Model-facing transcript | A `sessionStore` adapter writing to SQLite (§6), with `sessionStoreFlush: "eager"`. `claude` writes its local JSONL first and the SDK mirrors each entry to the store. The local copy is a disposable cache (below); resume needs only SQLite |
-| Follow-up message on an idle thread | A new `query()` with `resume: <sdk_session_id>` |
+| Follow-up message on an idle thread | A new `query()` with `resume: <sdk_session_id>`, from the thread's latest session with a stored conversation (§5.4) |
 | Message sent during a run | Pushed into the query's streaming input, and seen by the agent after its current step (§5.7) |
 | Stop | `interrupt()`, or abort the query's controller; then kill the run's processes (§5.1) |
 | Approvals and questions | A `PreToolUse` hook plus `canUseTool` → `input_requests` (§5.6) |
@@ -503,6 +503,16 @@ source of truth for each purpose.
 
 A partial model response — deltas streamed but no `message.final` — is
 discarded on resume, and the request is re-issued.
+
+The mirror trails `claude`: a tool can start, and finish its side effect, before
+anything of the session is in the store, and `claude` cannot resume a session
+with no stored conversation. So a run resumes its own session only if the store
+holds a conversation for it. Otherwise it falls back to the thread's previous
+session that has one, or to a new session, and the run's messages are supplied
+again. After a *"Did this happen?"* answer the order is: the messages the run
+had before it paused, then the continuation message (step 5 below), then the
+messages held while it waited (§5.7). A follow-up run skips an empty session in
+the same way.
 
 **Ambiguous tool calls.** A crash in the middle of a tool call leaves it unknown
 whether the side effect happened. This is handled per tool call:

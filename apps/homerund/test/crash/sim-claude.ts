@@ -16,7 +16,11 @@ import { chainEntries, chainTo, chainTools, type Entry, type TEntry } from "../.
  * - The model is naive and has no memory: it runs each step of its plan unless the transcript
  *   shows it finished (a non-error result, or a note saying it ran).
  * - The transcript mirror can lag: with `lagUse`, the `tool_use` entry is written only after the
- *   call finished, so a crash can leave a finished call the transcript never showed.
+ *   call finished, so a crash can leave a finished call the transcript never showed. With
+ *   `mirrorAfter`, nothing is stored until that step's side effect happened, so a crash can leave
+ *   a session with no stored conversation at all.
+ * - Like `claude`, it cannot resume a session with no stored conversation: it exits with
+ *   "No conversation found".
  *
  * Side effects go to a ledger file (the outside world), one line per effect, fsynced: the truth
  * the "Did this happen?" oracle answers from.
@@ -51,6 +55,8 @@ export class SimEngine implements AgentEngine {
     private plan: readonly Step[],
     private ledger: string,
     private hooks: SimHooks,
+    /** Store nothing until this step's side effect happened. */
+    private mirrorAfter?: string,
   ) {}
 
   start(o: EngineStart): EngineRun {
@@ -58,6 +64,7 @@ export class SimEngine implements AgentEngine {
     const hooks = this.hooks;
     const plan = this.plan;
     const ledger = this.ledger;
+    const mirrorAfter = this.mirrorAfter;
     const sessionId = o.resume ?? crypto.randomUUID();
     const key = { projectKey: PROJECT_KEY, sessionId };
     const pid = 91_000_000 + ++this.starts;
@@ -79,6 +86,14 @@ export class SimEngine implements AgentEngine {
     };
 
     let chain: TEntry[] = [];
+    let lagging: Entry[] | null = mirrorAfter ? [] : null;
+    const flush = () => {
+      if (!lagging) return;
+      const entries = lagging;
+      lagging = null;
+      if (entries.length) appendTranscript(store, key, entries as never);
+      alive();
+    };
     const write = (partial: Entry): string => {
       alive();
       const uuid = (partial.uuid as string | undefined) ?? crypto.randomUUID();
@@ -94,7 +109,8 @@ export class SimEngine implements AgentEngine {
         ...partial,
         uuid,
       };
-      appendTranscript(store, key, [e as never]);
+      if (lagging) lagging.push(e);
+      else appendTranscript(store, key, [e as never]);
       chain.push({ seq: 0, uuid, entry: e });
       alive();
       return uuid;
@@ -135,6 +151,7 @@ export class SimEngine implements AgentEngine {
         }
         hooks.point();
         alive();
+        if (c.s.name === mirrorAfter) flush();
         const output = `did ${c.s.name}`;
         o.gate.postTool({ toolCallId: c.id, ok: true, output });
         await tick();
@@ -152,7 +169,9 @@ export class SimEngine implements AgentEngine {
       await Promise.resolve();
       o.sink({ type: "session", sessionId, tools: [...o.builtinTools], mcpServers: [], skills: [], plugins: [], model: o.model });
       if (o.resume) {
-        chain = chainTo(chainEntries(store, sessionId), o.resumeAt ?? undefined);
+        const stored = chainEntries(store, sessionId);
+        if (!stored.length) throw new Error(`No conversation found with session ID: ${sessionId}`);
+        chain = chainTo(stored, o.resumeAt ?? undefined);
         if (o.resumeAt && chain.at(-1)?.uuid !== o.resumeAt) throw new Error(`resumeSessionAt ${o.resumeAt} is not in the transcript`);
         for (const u of chainTools(chain).dangling) {
           write({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: u.id, content: INTERRUPTED, is_error: true }] } });
@@ -178,6 +197,7 @@ export class SimEngine implements AgentEngine {
         }
         const msgId = `msg_${crypto.randomUUID()}`;
         write({ type: "assistant", message: { id: msgId, role: "assistant", content: [{ type: "text", text: "done" }] } });
+        flush();
         o.sink({ type: "message", messageId: msgId, text: "done" });
         o.sink({ type: "result", ok: true, subtype: "success", totalCostUsd: 0.001, consumed, queuedTurnCount: 0, errors: [] });
       }

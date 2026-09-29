@@ -217,4 +217,6 @@ describe("kill at every boundary (§16.2)", () => {
   test("serial: a read, a destructive command, and a write the mirror records late", () => sweep({ scenario: "serial" }), TIMEOUT);
   test("parallel: destructive calls in one assistant message", () => sweep({ scenario: "parallel" }), TIMEOUT);
   test("truncate mode: the fallback resumes from before the ambiguous message", () => sweep({ scenario: "parallel", mode: "truncate" }), TIMEOUT);
+  test("a lagging mirror: nothing of the conversation is stored before the first side effect", () => sweep({ scenario: "lagging" }), TIMEOUT);
+  test("a lagging mirror in truncate mode", () => sweep({ scenario: "lagging", mode: "truncate" }), TIMEOUT);
 });

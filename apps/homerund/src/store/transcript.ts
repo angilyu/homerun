@@ -44,6 +44,20 @@ function isChainEntry(e: Entry): boolean {
   return typeof e.uuid === "string" && "parentUuid" in e && e.isSidechain !== true;
 }
 
+/**
+ * Whether `claude` can resume this session: its stored transcript has a conversation message.
+ * `claude` mirrors its transcript a little after the fact, so a crash early in a session's first
+ * turn can leave a session id with nothing stored; resuming that fails ("No conversation found").
+ */
+export function hasConversation(store: Store, sessionId: string): boolean {
+  return !!store.db
+    .query(
+      "SELECT 1 FROM sdk_transcripts WHERE project_key = ? AND session_id = ? AND subpath = '' AND uuid IS NOT NULL " +
+        "AND json_extract(entry, '$.type') IN ('user', 'assistant') AND json_extract(entry, '$.isSidechain') IS NOT 1 LIMIT 1",
+    )
+    .get(PROJECT_KEY, sessionId);
+}
+
 /** The main transcript's chain entries, in stored order. */
 export function chainEntries(store: Store, sessionId: string): TEntry[] {
   const out: TEntry[] = [];

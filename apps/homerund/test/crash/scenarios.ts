@@ -19,6 +19,8 @@ export interface Scenario {
   message: string;
   plan: Step[];
   spec: unknown;
+  /** The mirror stores nothing until this step's side effect happened (`SimEngine`). */
+  mirrorAfter?: string;
 }
 
 const spec = {
@@ -59,5 +61,18 @@ export const SCENARIOS: Record<string, Scenario> = {
       { name: "one", tool: "Bash", input: { command: "echo 1 >> log.txt" }, withPrev: true },
       { name: "two", tool: "Bash", input: { command: "echo 2 >> log.txt" }, withPrev: true },
     ],
+  },
+  /**
+   * The mirror lags from the start: nothing of the conversation is stored until the first call's
+   * side effect happened, so a crash can leave a session `claude` cannot resume (seen in CI).
+   */
+  lagging: {
+    message: "Append to the log, then write b.txt.",
+    spec,
+    plan: [
+      { name: "append", tool: "Bash", input: { command: "echo A >> log.txt" } },
+      { name: "write", tool: "Write", input: { file_path: "b.txt", content: "B" } },
+    ],
+    mirrorAfter: "append",
   },
 };
