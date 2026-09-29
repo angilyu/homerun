@@ -1,11 +1,12 @@
 import { createInterface } from "node:readline";
-import type { MethodResult, ThreadEvent, UnknownThreadEvent } from "@homerun/core";
+import { mayAnswer, type InputPrompt, type MethodResult, type ThreadEvent, type UnknownThreadEvent } from "@homerun/core";
 import { intOption } from "../args";
 import { lastSeqOf, readAll, subscribe, type Ctx, type Received, type Subscription } from "../context";
 import { CliError, EXIT, usageError } from "../exit";
 import { oneLine, shortId, truncate } from "../format";
 import { resolveThread } from "../ids";
 import { EventRenderer } from "../render";
+import { inlineAnswer, inlineHint, sendInline } from "./input";
 
 type AnyEvent = ThreadEvent | UnknownThreadEvent;
 const runOf = (e: AnyEvent): string | null => (e.type === "unknown" ? null : e.run_id);
@@ -152,6 +153,9 @@ export async function watch(x: Ctx): Promise<number> {
  * Ctrl-C stops the run, and Ctrl-C or Ctrl-D at the prompt leaves. From a pipe, each line is
  * sent after the previous run ends, and the chat ends after the last one; a run that stops for
  * input (or a message held for one) ends it with 75, as `send` does, since nothing can answer.
+ * On a terminal, a request this CLI may answer is answered inline (§5.6): the next line is read
+ * as the answer when it is one (`inlineAnswer`), and otherwise sent as a message, held until the
+ * answer.
  */
 export async function chat(x: Ctx): Promise<number> {
   const { c, o, io } = x;
@@ -167,6 +171,8 @@ export async function chat(x: Ctx): Promise<number> {
   const waiting = new Set<string>();
   const queue: string[] = [];
   let eof = false;
+  /** The request the next line may answer. */
+  let asking: { request_id: string; run_id: string; prompt: InputPrompt } | null = null;
   const exit = Promise.withResolvers<number>();
   const rl = createInterface({ input: io.stdin, output: tty ? (io.stderr as unknown as NodeJS.WritableStream) : undefined, terminal: tty });
   rl.setPrompt(o.ce.bold(o.ce.cyan("› ")));
@@ -189,6 +195,16 @@ export async function chat(x: Ctx): Promise<number> {
     } else if (e.type === "input.requested" && e.run_id) {
       waiting.add(e.run_id);
       waitingInput(e.run_id);
+      const hint = inlineHint(e.payload.prompt);
+      if (tty && hint && mayAnswer(x.role, e.payload.prompt.type)) {
+        asking = { request_id: e.payload.request_id, run_id: e.run_id, prompt: e.payload.prompt };
+        o.note(o.ce.dim(`  ${hint}`));
+        rl.setPrompt(o.ce.bold(o.ce.yellow("? ")));
+        rl.prompt();
+      }
+    } else if (e.type === "input.resolved" && asking?.request_id === e.payload.request_id) {
+      asking = null;
+      rl.setPrompt(o.ce.bold(o.ce.cyan("› ")));
     }
   };
   const waitingInput = (id: string) => {
@@ -234,7 +250,16 @@ export async function chat(x: Ctx): Promise<number> {
 
   rl.on("line", (line) => {
     const text = line.trim();
-    if (!text) return prompt();
+    if (!text) return asking ? rl.prompt() : prompt();
+    const reply = asking ? inlineAnswer(asking.prompt, text) : null;
+    if (asking && reply) {
+      const { request_id } = asking;
+      void sendInline(c, request_id, reply).then(
+        (said) => o.note(o.ce.dim(`  (${said})`)),
+        (e) => exit.reject(e),
+      );
+      return;
+    }
     queue.push(text);
     void pump();
   });

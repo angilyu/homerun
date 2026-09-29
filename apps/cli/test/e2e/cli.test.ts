@@ -276,6 +276,120 @@ describe("answer", () => {
   });
 });
 
+describe("approvals and questions (§5.6, §16 row 6)", () => {
+  const ask = {
+    questions: [{ question: "Which colour?", header: "Colour", options: [{ label: "Blue", description: "" }, { label: "Green", description: "" }], multiSelect: false }],
+  };
+  const pending = async () => (await (await srt.dev()).call("input.list_pending", {})).requests;
+
+  test("a destructive call pauses the run; approve, then answer the agent's question, from the CLI", async () => {
+    const seen: unknown[] = [];
+    srt = await runtime({
+      env: { HOMERUN_INPUT_GRACE_MS: "600000" },
+      script: async (s) => {
+        const i = (await s.nextInput())!;
+        seen.push(await s.tool({ toolCallId: "t1", tool: "Bash", input: { command: "rm -rf build" }, canDefer: true }));
+        const q = await s.tool({ toolCallId: "q1", tool: "AskUserQuestion", input: ask, canDefer: true });
+        seen.push(q);
+        const answers = (q as { updatedInput?: { answers?: Record<string, string> } }).updatedInput?.answers ?? {};
+        s.emit({ type: "message", messageId: "m1", text: `painting it ${answers["Which colour?"]}` });
+        s.result([i.uuid]);
+      },
+    });
+    const task = await (await srt.dev()).call("tasks.create", { spec: sessionSpec({ builtin: ["Bash", "AskUserQuestion"] }) as never });
+    const sent = await cli(srt.dir, ["send", task.thread_id, "go"]);
+    expect(sent.code).toBe(75);
+    expect(sent.stderr).toContain("Allow Bash (destructive)? rm -rf build");
+    expect(sent.stderr).toMatch(/or here: homerun approve [0-9a-f]{8} \[--always\] \| homerun deny/);
+
+    const [req] = await pending();
+    const id = req!.request_id.slice(0, 8);
+    const list = await cli(srt.dir, ["requests"]);
+    expect(list.stdout).toMatch(new RegExp(`${id} .* app, cli +Allow Bash \\(destructive\\)\\? rm -rf build`));
+    expect(list.stderr).toContain("homerun approve REQUEST [--always]");
+    expect((await cli(srt.dir, ["input", "list", "--run", req!.run_id.slice(0, 8)])).stdout).toContain(id);
+    // Wrong verb for the kind: a usage error that names the right one.
+    const wrong = await cli(srt.dir, ["answer", id, "--choice", "Blue"]);
+    expect(wrong.code).toBe(64);
+    expect(wrong.stderr).toContain(`homerun approve ${id}`);
+
+    const ok = await cli(srt.dir, ["approve", id]);
+    expect(ok.code).toBe(0);
+    expect(ok.stderr).toContain("Allowed this Bash call");
+    await until(() => srt.rt.store.db.query("SELECT 1 FROM input_requests WHERE state = 'pending' AND kind = 'question'").get() !== null, 5000, "the question");
+    expect(seen[0]).toEqual({ allow: true });
+
+    const q = (await pending())[0]!;
+    const qid = q.request_id.slice(0, 8);
+    const bare = await cli(srt.dir, ["answer", qid]);
+    expect(bare.code).toBe(64);
+    expect(bare.stderr).toContain("Which colour?");
+    expect(bare.stderr).toContain(`homerun answer ${qid} --choice LABEL`);
+    const unknown = await cli(srt.dir, ["answer", qid, "--choice", "Red"]);
+    expect(unknown.code).toBe(64);
+    expect(unknown.stderr).toContain("1. Blue · 2. Green");
+    const answered = await cli(srt.dir, ["answer", qid, "--choice", "green"]);
+    expect(answered.code).toBe(0);
+    await until(() => srt.rt.store.db.query("SELECT 1 FROM runs WHERE state = 'succeeded'").get() !== null, 5000, "the run to finish");
+    expect(seen[1]).toEqual({ allow: true, updatedInput: { ...ask, answers: { "Which colour?": "Green" } } });
+
+    // First answer wins: a late answer by full id learns it was answered, and exits 1.
+    const late = await cli(srt.dir, ["approve", req!.request_id, "--json"]);
+    expect(late.code).toBe(1);
+    expect(JSON.parse(late.stdout)).toMatchObject({ status: "already_resolved", state: "answered" });
+    const shown = await cli(srt.dir, ["threads", "show", task.thread_id]);
+    expect(shown.stdout).toContain("painting it Green");
+  });
+
+  test("deny; --always creates a grant the next call uses; grants list and revoke", async () => {
+    const decisions: unknown[] = [];
+    srt = await runtime({
+      env: { HOMERUN_INPUT_GRACE_MS: "600000" },
+      script: async (s) => {
+        for (let i = await s.nextInput(); i; i = await s.nextInput()) {
+          decisions.push(await s.tool({ toolCallId: crypto.randomUUID(), tool: "Bash", input: { command: i.text }, canDefer: true }));
+          s.result([i.uuid]);
+        }
+      },
+    });
+    const task = await (await srt.dev()).call("tasks.create", { spec: sessionSpec() as never });
+    const t = task.thread_id;
+
+    // A shell metacharacter: destructive, so never "Always allow".
+    expect((await cli(srt.dir, ["send", t, "rm -rf build && ls"])).code).toBe(75);
+    let id = (await pending())[0]!.request_id.slice(0, 8);
+    const always = await cli(srt.dir, ["approve", id, "--always"]);
+    expect(always.code).toBe(1);
+    expect(always.stderr).toContain("Always allow is not offered");
+    const denied = await cli(srt.dir, ["deny", id]);
+    expect(denied.code).toBe(0);
+    expect(denied.stderr).toContain("Denied");
+    await until(() => decisions.length === 1, 5000, "the denial");
+    expect(decisions[0]).toMatchObject({ allow: false });
+
+    // An unmatched command offers "Always allow" with the command as the pattern.
+    const sent = await cli(srt.dir, ["send", t, "make clean"]);
+    expect(sent.code).toBe(75);
+    expect(sent.stderr).toContain('always allow: Bash "make clean" as write');
+    id = (await pending())[0]!.request_id.slice(0, 8);
+    expect((await cli(srt.dir, ["approve", id, "--pattern", "make clean"])).code).toBe(64);
+    const granted = await cli(srt.dir, ["approve", id, "--always", "--pattern", "make *"]);
+    expect(granted.code).toBe(0);
+    expect(granted.stderr).toContain('Bash "make *" is granted as write');
+    await until(() => decisions.length === 2, 5000, "the approval");
+
+    // The grant covers the next matching call: no question.
+    expect((await cli(srt.dir, ["send", t, "make all"])).code).toBe(0);
+    expect(decisions[2]).toEqual({ allow: true });
+    const grants = await cli(srt.dir, ["grants", "list", task.task.task_id.slice(0, 8)]);
+    expect(grants.stdout).toMatch(/Bash +make \* +write/);
+    const gid = grants.stdout.split("\n")[1]!.split(" ")[0]!;
+    expect((await cli(srt.dir, ["grants", "revoke", gid])).code).toBe(0);
+    expect((await cli(srt.dir, ["grants", "list", task.task.task_id])).stderr).toContain("no grants");
+    expect((await cli(srt.dir, ["send", t, "make all"])).code).toBe(75);
+  });
+});
+
 /** A run that streams a word, then waits until it is stopped. */
 const lingering: FakeScript = async (s) => {
   const i = (await s.nextInput())!;

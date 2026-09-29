@@ -1,8 +1,8 @@
 import { parseArgs } from "node:util";
 import { usageError } from "./exit";
 
-type Opt = { type: "string" | "boolean"; short?: string };
-export type Values = Record<string, string | boolean | undefined>;
+type Opt = { type: "string" | "boolean"; short?: string; multiple?: boolean };
+export type Values = Record<string, string | boolean | string[] | undefined>;
 
 export interface CommandSpec {
   /** "status", "threads list", … */
@@ -164,15 +164,50 @@ export const COMMANDS: CommandSpec[] = [
     json: true,
   },
   {
-    name: "answer",
-    args: "REQUEST (--completed | --not-run)",
-    summary: 'Answer "Did this happen?" for a call a crash interrupted (development builds)',
-    options: { completed: { type: "boolean" }, "not-run": { type: "boolean" } },
+    name: "requests",
+    args: "[--thread THREAD] [--run RUN]",
+    summary: "Unanswered approvals and questions, and where they can be answered (also: input list)",
+    options: { thread: { type: "string" }, run: { type: "string" } },
+    positionals: [0, 0],
+    runtime: true,
+    json: true,
+  },
+  { name: "input list", args: "[--thread THREAD] [--run RUN]", summary: "The same as `requests`", options: { thread: { type: "string" }, run: { type: "string" } }, positionals: [0, 0], runtime: true, json: true },
+  {
+    name: "approve",
+    args: "REQUEST [--always [--pattern P] [--class C]]",
+    summary: "Allow a tool call that waits for approval; --always also grants the pattern (development builds)",
+    options: { always: { type: "boolean" }, pattern: { type: "string" }, class: { type: "string" } },
     positionals: [1, 1],
     runtime: true,
     json: true,
   },
-  { name: "input list", args: "[--thread THREAD]", summary: "Unanswered input requests, and where they can be answered", options: { thread: { type: "string" } }, positionals: [0, 0], runtime: true, json: true },
+  { name: "deny", args: "REQUEST", summary: "Deny a tool call that waits for approval (development builds)", options: {}, positionals: [1, 1], runtime: true, json: true },
+  {
+    name: "answer",
+    args: "REQUEST (--choice [N=]LABEL… [--text [N=]TEXT…] | --completed | --not-run)",
+    summary: 'Answer the agent\'s question, or "Did this happen?" for a call a crash interrupted (development builds)',
+    options: {
+      choice: { type: "string", multiple: true },
+      text: { type: "string", multiple: true },
+      completed: { type: "boolean" },
+      "not-run": { type: "boolean" },
+    },
+    positionals: [1, 1],
+    runtime: true,
+    json: true,
+  },
+  { name: "grants list", args: "TASK [--all]", summary: "A task's grants: tools and patterns allowed without asking (--all: revoked too)", options: { all: { type: "boolean" } }, positionals: [1, 1], runtime: true, json: true },
+  {
+    name: "grants add",
+    args: "TASK --tool TOOL [--pattern P] --class C",
+    summary: "Grant a tool or pattern, e.g. trust an MCP tool (development builds)",
+    options: { tool: { type: "string" }, pattern: { type: "string" }, class: { type: "string" } },
+    positionals: [1, 1],
+    runtime: true,
+    json: true,
+  },
+  { name: "grants revoke", args: "GRANT", summary: "Revoke a grant", options: {}, positionals: [1, 1], runtime: true, json: true },
   {
     name: "blob",
     args: "SHA256 [-o FILE]",

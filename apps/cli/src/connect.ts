@@ -42,6 +42,18 @@ export const releaseRefusal = () =>
     "for now, use a development build: `pnpm homerun …` from the repository",
   );
 
+/** Commands only full authority may run: approvals, "Did this happen?" and grants (INPUT_ANSWER_RIGHTS.cli). */
+export function fullAuthorityOnly(command: string, values: Values): boolean {
+  if (command === "approve" || command === "deny" || command === "grants add") return true;
+  return command === "answer" && (values.completed === true || values["not-run"] === true);
+}
+
+export const releaseQuestionsOnly = () =>
+  new CliError(
+    "the release CLI answers questions only; approve tool calls, answer \"Did this happen?\" and grant tools in the Homerun app",
+    EXIT.NOPERM,
+  );
+
 export interface Target {
   socketPath: string;
   tokenPath: string;
