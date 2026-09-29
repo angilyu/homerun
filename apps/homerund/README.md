@@ -160,7 +160,9 @@ merged into it (`skipped_by_policy`).
 
 **Keeping awake.** While any run is running (not while it waits for input, §5.6), the runtime
 holds one `caffeinate -i -w <pid>` (§8.1). With `-w` it exits when homerund does, so a crash never
-leaves the Mac unable to sleep. Elsewhere this is a no-op for now.
+leaves the Mac unable to sleep. It is best-effort: if caffeinate is missing, cannot start or
+exits while held, homerund logs one warning and stops trying until it restarts; runs are never
+failed or delayed by it. Elsewhere this is a no-op for now.
 
 **Monitor runs** (§8.3). A monitor run is a check, then an act step only if the check found a
 change:
