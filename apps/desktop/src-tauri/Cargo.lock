@@ -1567,6 +1567,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "homerun-shell-core"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

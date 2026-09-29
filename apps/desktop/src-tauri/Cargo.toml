@@ -3,6 +3,9 @@ name = "homerun"
 version = "0.0.1"
 edition = "2021"
 
+[workspace]
+members = [".", "shell-core"]
+
 [build-dependencies]
 tauri-build = { version = "=2.7.0", features = [] }
 
