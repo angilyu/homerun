@@ -12,6 +12,7 @@ import { loadConfig } from "../../src/config";
 import { setLogSink } from "../../src/log";
 import { RpcClient } from "../../src/rpc/client";
 import { startRuntime } from "../../src/runtime";
+import { NoopAssertions } from "../../src/power/power";
 import { pendingInputRequests } from "../../src/store/rows";
 import { Store } from "../../src/store/store";
 import { MOCK_KEY } from "../helpers";
@@ -57,6 +58,7 @@ const rt = await startRuntime({
       },
     }, scenario.mirrorAfter),
   setTmpdir: false,
+  power: new NoopAssertions(),
 });
 rt.secrets.set("anthropic_api_key", MOCK_KEY);
 const origin: Origin = { device_id: rt.device.device_id, surface: "desktop" };

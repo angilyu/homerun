@@ -21,7 +21,11 @@ import { Scheduler } from "./runs/scheduler";
 import { SecretStore } from "./secrets";
 import { openDb } from "./store/db";
 import { migrate, type MigrateOutcome } from "./store/migrate";
-import { ensureDevice, runsInState, updateRun, type RunRow } from "./store/rows";
+import { ensureDevice, runsInState, setRunState, updateRun, type RunRow } from "./store/rows";
+import { DigestScheduler } from "./monitors/digest";
+import { platformAssertions, type PowerAssertions } from "./power/power";
+import { deviceTimezone, systemClock, type Clock } from "./schedule/clock";
+import { FireScheduler } from "./schedule/fire-scheduler";
 import { SqliteSessionStore } from "./store/session-store";
 import { Store } from "./store/store";
 
@@ -34,6 +38,12 @@ export interface RuntimeOptions {
   /** Check every RPC result against its core schema (tests). */
   checkResults?: boolean;
   now?: () => number;
+  /** Wall time and timers for the scheduler (§8); a fake clock in tests. Overrides `now`. */
+  clock?: Clock;
+  /** Defaults to caffeinate on macOS (§8.1). */
+  power?: PowerAssertions;
+  /** The device's IANA zone; defaults to the system's. */
+  deviceZone?: () => string;
   /** Point this process's TMPDIR at `<data>/tmp` (default). In-process tests turn it off. */
   setTmpdir?: boolean;
 }
@@ -55,6 +65,9 @@ export interface Runtime {
   scheduler: Scheduler;
   manager: RunManager;
   server: RpcServer;
+  fires: FireScheduler;
+  digest: DigestScheduler;
+  clock: Clock;
   devToken: string | null;
   report: StartupReport;
   /** Graceful shutdown (stdin EOF): runs stay `running` and resume at the next start (§5.4). */
@@ -103,9 +116,16 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     const { removed: swept } = sweepTemp(config.claudeConfigDir, config.tmpDir);
     prepareShellHome(config.shellHome);
 
-    // 3. Recover every run that was running (§5.4).
+    // 3. Recover every run that was running (§5.4). A monitor's check only read, so it simply
+    //    runs again (§8.3); its act step recovers like any run.
     const recovered: StartupReport["recovered"] = [];
-    const t = o.now ?? Date.now;
+    const clock: Clock = o.clock ?? (o.now ? { now: o.now, setTimer: systemClock.setTimer } : systemClock);
+    const t = () => clock.now();
+    for (const r of runsInState(store, ["running"])) {
+      if (r.monitor_phase !== "rule_check" && r.monitor_phase !== "model_check") continue;
+      setRunState(store, r.run_id, "pending", { claude_pid: null, stop_requested_at: null, stop_by: null });
+      recovered.push({ run_id: r.run_id, outcome: { kind: "requeued", retried: [] } });
+    }
     for (const r of runsInState(store, ["running"])) {
       const outcome = recoverRun(store, r.run_id, "runtime_restart", t());
       recovered.push({ run_id: r.run_id, outcome });
@@ -122,21 +142,47 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       engine,
       mcp: new McpLauncher(config.devMcpOverrides),
       bootTime: boot,
-      ...(o.now ? { now: o.now } : {}),
+      now: t,
     };
-    const scheduler = new Scheduler(ctx);
+    const deviceZone = o.deviceZone ?? deviceTimezone;
+    const scheduler = new Scheduler(ctx, { power: o.power ?? platformAssertions() });
     const manager = new RunManager(ctx, scheduler);
+    let server: RpcServer | null = null;
+    const digest = new DigestScheduler(store, deviceZone, (d) => server?.broadcast("health.digest_ready", { digest: d }));
+    const fires = new FireScheduler(
+      store,
+      clock,
+      {
+        kick: () => scheduler.kick(),
+        onTick: (n) => {
+          digest.tick(n);
+        },
+        nextWake: () => digest.nextAt(clock.now()),
+      },
+      deviceZone,
+    );
+    scheduler.setHooks({ beforePump: () => fires.promoteAll() });
+    manager.setHooks({ schedulesChanged: () => fires.run(), deviceZone });
 
     const devToken = config.build === "development" ? newDevToken() : null;
     if (devToken) writeDevToken(config.runDir, devToken);
     const auth = new Authenticator(config.build, o.launchToken, devToken);
-    const server = new RpcServer({
+    server = new RpcServer({
       socketPath: config.socketPath,
-      handlers: makeHandlers({ ctx, manager, auth }),
+      handlers: makeHandlers({ ctx, manager, auth, digest, settingsChanged: () => fires.run() }),
       ...(o.checkResults ? { checkResults: true } : {}),
+      onNotification: (method, params) => {
+        if (method === "power.will_sleep") fires.willSleep((params as { at: number }).at);
+        else if (method === "power.did_wake") {
+          const p = params as { at: number; slept_at: number | null };
+          fires.didWake(p.at, p.slept_at);
+        }
+      },
     });
     await server.start();
+    fires.start();
     scheduler.kick();
+    const srv = server;
 
     let stopping: Promise<void> | null = null;
     const openDbRef = db;
@@ -147,12 +193,16 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       secrets,
       scheduler,
       manager,
-      server,
+      server: srv,
+      fires,
+      digest,
+      clock,
       devToken,
       report: { migration, killedGroups, killedTools, swept, recovered },
       shutdown: () =>
         (stopping ??= (async () => {
-          server.stop();
+          srv.stop();
+          fires.stop();
           await scheduler.shutdown(config.shutdownGraceMs);
           openDbRef.close();
           if (devToken) rmSync(join(config.runDir, "dev-token"), { force: true });
