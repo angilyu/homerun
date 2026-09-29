@@ -3,7 +3,7 @@
  * the life (a fake clock that never advances), so each life evaluates the schedule once, at start,
  * like a Mac that opens its lid at that instant.
  *
- * - `setup`: create a monitor that runs every five minutes, watching ~/work/watched.txt, let its 10:05 baseline check run,
+ * - `setup`: create a monitor that runs every five minutes, watching ~/workspaces/work/watched.txt, let its 10:05 baseline check run,
  *   stop cleanly, then change the file.
  * - otherwise: start at 11:05 (plus 10 s per later life). The slots 10:10–11:00 were missed while
  *   Homerun was not running; run_all catches up the last three, and 11:05 is on time. The first
@@ -89,13 +89,14 @@ const settled = () =>
   count("SELECT count(*) AS n FROM schedule_fires WHERE state IN ('queued','started')") === 0;
 
 if (args.setup) {
-  const work = join(args.dir, "work");
+  // HOME is the data dir here; only its workspaces are off the hard denylist (§5.5, §13).
+  const work = join(args.dir, "workspaces", "work");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "watched.txt"), "v1");
   const spec = monitorSpec({
     schedule: { kind: "cron", cron: "*/5 * * * *", timezone: "UTC", catchup: "run_all", max_catchup: 3 },
-    roots: ["~/work"],
-    check: { kind: "rule", source: { type: "file_hash", path: "~/work/watched.txt" }, comparator: { op: "changed" } },
+    roots: ["~/workspaces/work"],
+    check: { kind: "rule", source: { type: "file_hash", path: "~/workspaces/work/watched.txt" }, comparator: { op: "changed" } },
     act_instructions: "Write a report.",
   });
   (spec.tools as { builtin: string[] }).builtin = ["Read", "Write"];
@@ -125,6 +126,6 @@ for (;;) {
 }
 shell.close();
 await rt.shutdown();
-if (args.setup) writeFileSync(join(args.dir, "work", "watched.txt"), "v2");
+if (args.setup) writeFileSync(join(args.dir, "workspaces", "work", "watched.txt"), "v2");
 console.log(JSON.stringify({ points, ...(kinds ? { kinds: kinds.kinds } : {}) }));
 process.exit(0);

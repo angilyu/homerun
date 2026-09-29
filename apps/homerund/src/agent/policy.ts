@@ -1,5 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import {
   BUILTIN_TOOL_CLASS,
   BashCommandPattern,
@@ -21,6 +20,10 @@ import {
   type ToolClass,
   type ToolGrant,
 } from "@homerun/core";
+import { denylistHit, type DenylistConfig } from "./denylist";
+import { canonicalPath, expandTilde } from "./paths";
+
+export { canonicalPath } from "./paths";
 
 /**
  * Tool policy (§5.5, §5.6). `decide` is a pure function of the call and the run's context
@@ -35,6 +38,7 @@ import {
  * - destructive: approval for each call (§13), unless a `Bash` pattern or grant classifies the
  *   command as something else. An untrusted MCP tool is destructive until trusted.
  * A `web_read_only` run (§9.9) needs approval for anything that is not read-class.
+ * Before any of this, the hard denylist (§13, `denylist.ts`) denies file tools outright.
  */
 
 export interface PolicySpec {
@@ -57,6 +61,10 @@ export interface PolicyContext {
   authority: Authority;
   /** "Always allow" needs a task to hold the grant (§5.6); a chat has none. */
   grantsAllowed: boolean;
+  /** The hard denylist (§13). */
+  denylist: DenylistConfig;
+  /** The run's `claude` session: its own saved tool results stay readable (`denylist.ts`). */
+  sessionId: string | null;
 }
 
 export type PolicyVerdict = "allowed" | "granted" | "needs_approval" | "denied";
@@ -88,26 +96,8 @@ export function parseMcpName(tool: string): { server: string; tool: string } | n
   return m ? { server: m[1]!, tool: m[2]! } : null;
 }
 
-/** Canonical form of a path: realpath of its nearest existing ancestor, plus the rest. */
-export function canonicalPath(p: string): string {
-  let head = resolve(p);
-  const rest: string[] = [];
-  while (!existsSync(head)) {
-    const up = dirname(head);
-    if (up === head) break;
-    rest.unshift(head.slice(up.length + (up.endsWith(sep) ? 0 : 1)));
-    head = up;
-  }
-  try {
-    head = realpathSync(head);
-  } catch {
-    // unreadable ancestor: compare lexically
-  }
-  return rest.length ? join(head, ...rest) : head;
-}
-
 export function resolveRoots(roots: readonly string[], home: string, fallback: string): string[] {
-  const abs = roots.length ? roots.map((r) => (r === "~" ? home : r.startsWith("~/") ? join(home, r.slice(2)) : r)) : [fallback];
+  const abs = roots.length ? roots.map((r) => expandTilde(r, home)) : [fallback];
   return abs.map(canonicalPath);
 }
 
@@ -144,6 +134,9 @@ function decideFull(ctx: PolicyContext, tool: string, input: unknown): Decision 
   if (!inSpec || !ToolName.safeParse(tool).success) {
     return { ...base, toolClass: isBuiltinTool(tool) ? BUILTIN_TOOL_CLASS[tool] : "destructive", policy: "denied", allow: false, reason: NOT_RUN(tool), taints: false };
   }
+  // §13: before grants, approvals and --dev-auto-approve; nothing overrides it.
+  const hit = denylistHit(ctx.denylist, { tool, input, cwd: ctx.cwd, sessionId: ctx.sessionId });
+  if (hit) return { ...base, toolClass: BUILTIN_TOOL_CLASS[tool as BuiltinTool], policy: "denied", allow: false, reason: hit.reason, taints: false };
   const openEgress = ctx.egress.mode === "open";
   const covering = ctx.grants.find((g) => g.revoked_at === null && grantCovers(g, { tool, input }));
 

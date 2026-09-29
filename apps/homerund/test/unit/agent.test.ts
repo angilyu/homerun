@@ -105,6 +105,7 @@ describe("isolation (§5.3, F9, F10)", () => {
       mcpServers: { fixture: { command: "/bin/node", args: ["f.js"], env: {} } },
       resume: "sess",
       env: claudeEnv(input),
+      denyRules: ["Read(//Users/u/.ssh/**)", "Edit(//Users/u/.ssh/**)"],
     } as unknown as EngineStart;
     const o = buildQueryOptions(start, { claudePath: "/x/claude", sessionStore: {} as never }, {
       abort: new AbortController(),
@@ -129,5 +130,14 @@ describe("isolation (§5.3, F9, F10)", () => {
     });
     expect(o.env).toBe(start.env);
     expect(o.tools).not.toContain("Skill");
+    // §13 second layer: the hard denylist as SDK deny rules in flag settings.
+    expect(o.settings).toEqual({ permissions: { deny: ["Read(//Users/u/.ssh/**)", "Edit(//Users/u/.ssh/**)"] } });
+    expect(buildQueryOptions({ ...start, denyRules: [] }, { claudePath: "/x/claude", sessionStore: {} as never }, {
+      abort: new AbortController(),
+      hooks: {},
+      canUseTool: async () => ({ behavior: "deny", message: "" }),
+      spawn: () => ({}) as never,
+      stderr: () => {},
+    }).settings).toBeUndefined();
   });
 });

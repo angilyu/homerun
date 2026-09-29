@@ -5,6 +5,7 @@ import type { EngineEvent, EngineRun, GateDecision } from "../agent/engine";
 import { claudeEnv } from "../agent/claude/env";
 import { RunSetupError } from "../agent/claude/mcp";
 import { decide, resolveRoots, type PolicyContext } from "../agent/policy";
+import { denylistConfig, sdkDenyRules } from "../agent/denylist";
 import { RUNTIME_VERSION } from "../config";
 import { log } from "../log";
 import type { RunContext } from "../runs/context";
@@ -75,6 +76,8 @@ export function runModelCheck(
     tainted: false,
     authority: "full",
     grantsAllowed: false,
+    denylist: denylistConfig(cfg),
+    sessionId: null,
   };
   const forced = cfg.build === "development" && process.env.HOMERUN_FORCE_MODEL ? process.env.HOMERUN_FORCE_MODEL : null;
 
@@ -117,7 +120,7 @@ export function runModelCheck(
       preTool: async (c: { tool: string; input: unknown }): Promise<GateDecision> => {
         if (!withTools) return { allow: false, reason: "The check has no tools; judge the observation you were given." };
         // A check only looks (§8.3): read-class calls allowed by the spec alone, never a prompt.
-        const d = decide(policy, c.tool, c.input);
+        const d = decide({ ...policy, sessionId }, c.tool, c.input);
         return d.allow && d.policy === "allowed" && d.toolClass === "read" ? { allow: true } : { allow: false, reason: "A check may only look, not act. This call was not run." };
       },
       postTool: () => {},
@@ -135,6 +138,7 @@ export function runModelCheck(
         fallbackModel: null,
         maxBudgetUsd: spec.budget.max_run_usd,
         builtinTools: withTools ? spec.tools.builtin : [],
+        denyRules: withTools ? sdkDenyRules(policy.denylist) : [],
         mcpServers,
         resume: null,
         env: claudeEnv({

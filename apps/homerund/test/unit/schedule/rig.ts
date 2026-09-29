@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PersistedThreadEvent } from "@homerun/core";
 import type { FakeScript } from "../../../src/agent/fake-engine";
@@ -41,7 +41,9 @@ export async function rig(o: { start: number; zone?: string; script?: FakeScript
   const sr = await socketRuntime({ clock, power, deviceZone: o.zone ?? "UTC", ...(o.script ? { script: o.script } : {}), ...(o.dir ? { dir: o.dir } : {}), ...(o.env ? { env: o.env } : {}) });
   const shell = await sr.shell();
   await shell.call("secrets.set", { name: "anthropic_api_key", value: MOCK_KEY });
-  const file = join(sr.dir, "watched.txt");
+  // Under workspaces/: the rest of the data dir is on the hard denylist (§5.5).
+  mkdirSync(join(sr.dir, "workspaces"), { recursive: true });
+  const file = join(sr.dir, "workspaces", "watched.txt");
   writeFileSync(file, "v1");
   const store = () => sr.rt.store;
   const idle = () =>

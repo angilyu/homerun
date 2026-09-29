@@ -93,6 +93,8 @@ export interface EngineStart {
   fallbackModel: string | null;
   maxBudgetUsd: number;
   builtinTools: readonly BuiltinTool[];
+  /** The hard denylist as SDK deny rules, the second layer under the hook (§13, `denylist.ts`). */
+  denyRules: readonly string[];
   /** Resolved stdio MCP servers, by spec id. */
   mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
   resume: string | null;

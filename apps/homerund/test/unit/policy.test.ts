@@ -39,6 +39,8 @@ function ctx(over: Partial<PolicyContext> = {}): PolicyContext {
     tainted: false,
     authority: "full",
     grantsAllowed: true,
+    denylist: { homes: [join(dir, "home")], dataDir: join(dir, "data"), workspacesDir: join(dir, "data", "workspaces"), claudeConfigDir: join(dir, "data", "claude-config"), tmpDir: join(dir, "data", "tmp"), caseInsensitive: false },
+    sessionId: null,
     ...over,
   };
 }

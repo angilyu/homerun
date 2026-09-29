@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import type { AnswerVia, CallerRole, InputResponse, Origin } from "@homerun/core";
 import type { FakeScript } from "../../src/agent/fake-engine";
 import type { GateDecision } from "../../src/agent/engine";
@@ -342,6 +343,39 @@ describe("AskUserQuestion (§5.6)", () => {
     await s.rt.scheduler.idle();
     expect(seen!).toMatchObject({ allow: false });
     expect(s.pending(r.run_id)).toHaveLength(0);
+  });
+});
+
+describe("the hard denylist (§5.5, §13)", () => {
+  test("--dev-auto-approve can't reach it: a denylisted call is denied outright, with nothing to answer", async () => {
+    const seen: GateDecision[] = [];
+    const s = setup(
+      async (x) => {
+        const i = (await x.nextInput())!;
+        seen.push(await x.tool({ toolCallId: "d1", tool: "Read", input: { file_path: ".env" }, canDefer: true }));
+        seen.push(await x.tool({ toolCallId: "d2", tool: "Write", input: { file_path: "~/.ssh/authorized_keys", content: "k" }, canDefer: true }));
+        seen.push(await x.tool({ toolCallId: "d3", tool: "Read", input: { file_path: join(s.rt.dir, "homerun.db") }, canDefer: true }));
+        seen.push(await x.tool({ toolCallId: "ok", tool: "Bash", input: rm, canDefer: true }));
+        x.result([i.uuid]);
+      },
+      { env: { HOMERUN_DEV_AUTO_APPROVE: "1" }, builtin: ["Bash", "Read", "Write"] },
+    );
+    const r = s.send("look around");
+    await s.rt.scheduler.idle();
+    expect(seen.slice(0, 3)).toEqual([
+      { allow: false, reason: "Homerun never lets the agent read .env files. This call was not run." },
+      { allow: false, reason: "Homerun never lets the agent change SSH keys. This call was not run." },
+      { allow: false, reason: "Homerun never lets the agent read Homerun's own data. This call was not run." },
+    ]);
+    // The same run's destructive call is still auto-approved: only the denylist is absolute.
+    expect(seen[3]).toEqual({ allow: true });
+    expect(pendingInputRequests(s.rt.store, {})).toHaveLength(0);
+    expect(types(s.rt.store, s.threadId)).not.toContain("input.requested");
+    for (const id of ["d1", "d2", "d3"]) {
+      expect(findToolEvent(s.rt.store, s.threadId, "tool.call", id)!.payload).toMatchObject({ policy: "denied" });
+      expect(findToolEvent(s.rt.store, s.threadId, "tool.result", id)!.payload).toMatchObject({ status: "denied" });
+    }
+    expect(s.run(r.run_id).state).toBe("succeeded");
   });
 });
 

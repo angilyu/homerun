@@ -7,6 +7,7 @@ import type { EngineEvent, EngineExit, EngineRun, GateDecision, ToolCallRequest,
 import { claudeEnv } from "../agent/claude/env";
 import { RunSetupError } from "../agent/claude/mcp";
 import { decide, resolveRoots, type Decision, type PolicyContext } from "../agent/policy";
+import { denylistConfig, sdkDenyRules } from "../agent/denylist";
 import { RUNTIME_VERSION } from "../config";
 import { log } from "../log";
 import { contentValue, toContent } from "../store/content";
@@ -88,7 +89,7 @@ export class RunDriver {
   private phase: Phase = "idle";
   private engine: EngineRun | null = null;
   private spec!: SessionSpec;
-  private policyBase!: Omit<PolicyContext, "grants" | "tainted" | "authority">;
+  private policyBase!: Omit<PolicyContext, "grants" | "tainted" | "authority" | "sessionId">;
   private open: OpenGate | null = null;
   /** A deferred call this launch resumes: `claude` asks the gate for it again (§5.6). */
   private resumeCall: string | null = null;
@@ -209,6 +210,7 @@ export class RunDriver {
       cwd,
       egress: spec.policy.egress,
       grantsAllowed: row.task_id !== null,
+      denylist: denylistConfig(cfg),
     };
     // Only once the run can start: a resume that fails here never delivered its held messages,
     // and clients tell that from the missing `run.resumed` (`HeldMessages`).
@@ -280,6 +282,7 @@ export class RunDriver {
       // A monitor's check and act step share one run budget (§7.4).
       maxBudgetUsd: row.monitor_phase ? round6(spec.budget.max_run_usd - (row.cost_usd ?? 0)) : spec.budget.max_run_usd,
       builtinTools: spec.tools.builtin,
+      denyRules: sdkDenyRules(this.policyBase.denylist),
       mcpServers,
       resume,
       resumeAt,
@@ -433,6 +436,7 @@ export class RunDriver {
       grants: row.task_id ? listGrants(this.store, row.task_id) : [],
       tainted: row.tainted_at !== null,
       authority: row.authority === "web_read_only" ? "web_read_only" : "full",
+      sessionId: row.sdk_session_id,
     };
   }
 
