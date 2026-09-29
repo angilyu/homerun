@@ -82,7 +82,7 @@ export const approvalPrompt = (over: Record<string, unknown> = {}) => ({
   input: inline({ command: "npm install left-pad@1.3.0" }),
   reason: "not_allowlisted",
   offer_always: true,
-  suggested_grant: { tool: "Bash", pattern: "npm install", class: "write" },
+  suggested_grant: { tool: "Bash", pattern: "npm install *", class: "write" },
   ...over,
 });
 

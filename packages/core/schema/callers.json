@@ -101,7 +101,6 @@
       "health.settings.get",
       "health.settings.set",
       "grants.list",
-      "grants.create",
       "grants.revoke",
       "threads.list",
       "threads.create",

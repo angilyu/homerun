@@ -298,7 +298,6 @@
       "callers": [
         "shell",
         "webview",
-        "cli",
         "cli_dev",
         "ios"
       ],

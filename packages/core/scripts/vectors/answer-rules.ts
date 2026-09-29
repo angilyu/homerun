@@ -51,8 +51,33 @@ const IOS_NOTIFICATION = [T, T, f, T, f, f, f];
 const always = {
   type: "approval",
   decision: "allow_always",
-  grant: { tool: "Bash", pattern: "npm install", class: "write" },
+  grant: { tool: "Bash", pattern: "npm install *", class: "write" },
 };
+const alwaysFor = (grant: Record<string, unknown>) => ({ type: "approval", decision: "allow_always", grant });
+/** An unmatched Bash command: destructive by default, so its grant names a class (§5.5, §5.6). */
+const bashDefault = F.approvalPrompt({ class: "destructive", reason: "not_allowlisted" });
+const untrustedMcp = F.approvalPrompt({
+  tool: "mcp__github__create_issue",
+  class: "destructive",
+  reason: "untrusted_tool",
+  input: F.inline({ title: "Bug" }),
+  suggested_grant: undefined,
+});
+const declaredDestructive = F.approvalPrompt({
+  tool: "mcp__github__delete_repository",
+  class: "destructive",
+  reason: "destructive",
+  input: F.inline({ repo: "x" }),
+  suggested_grant: undefined,
+});
+const taintedFetch = F.approvalPrompt({
+  tool: "WebFetch",
+  class: "network",
+  reason: "tainted_egress",
+  input: F.inline({ url: "https://api.github.com/repos?q=1", prompt: "p" }),
+  url: "https://api.github.com/repos?q=1",
+  suggested_grant: { tool: "WebFetch", pattern: "api.github.com", class: "network" },
+});
 
 export const answerRules: AnswerRuleCase[] = [
   ...Object.entries(IN_APP).flatMap(([role, row]) =>
@@ -76,6 +101,14 @@ export const answerRules: AnswerRuleCase[] = [
   { name: "cli: always allow", prompt: approval("write"), response: always, from: { role: "cli", via: "app" }, allowed: false },
   { name: "web: always allow", prompt: approval("write"), response: always, from: { role: "web", via: "app" }, allowed: false },
   { name: "ios notification: always allow", prompt: approval("write"), response: always, from: { role: "ios", via: "notification" }, allowed: false },
+  { name: "shell: always allow an unmatched Bash command", prompt: bashDefault, response: always, from: { role: "shell", via: "app" }, allowed: true },
+  { name: "shell: always allow must cover the call", prompt: bashDefault, response: alwaysFor({ tool: "Bash", pattern: "npm test", class: "write" }), from: { role: "shell", via: "app" }, allowed: false },
+  { name: "shell: always allow not offered", prompt: F.approvalPrompt({ offer_always: false }), response: always, from: { role: "shell", via: "app" }, allowed: false },
+  { name: "shell: trust an untrusted MCP tool", prompt: untrustedMcp, response: alwaysFor({ tool: "mcp__github__create_issue", pattern: null, class: "write" }), from: { role: "shell", via: "app" }, allowed: true },
+  { name: "shell: never always allow a declared destructive tool", prompt: declaredDestructive, response: alwaysFor({ tool: "mcp__github__delete_repository", pattern: null, class: "write" }), from: { role: "shell", via: "app" }, allowed: false },
+  { name: "shell: always allow a domain in a tainted run", prompt: taintedFetch, response: alwaysFor({ tool: "WebFetch", pattern: "api.github.com", class: "network" }), from: { role: "shell", via: "app" }, allowed: true },
+  { name: "shell: a wildcard domain grant covers a subdomain", prompt: taintedFetch, response: alwaysFor({ tool: "WebFetch", pattern: "*.github.com", class: "network" }), from: { role: "shell", via: "app" }, allowed: true },
+  { name: "shell: a domain grant must cover the host", prompt: taintedFetch, response: alwaysFor({ tool: "WebFetch", pattern: "github.com", class: "network" }), from: { role: "shell", via: "app" }, allowed: false },
   { name: "cli: deny is still an approval answer", prompt: approval("write"), response: { type: "approval", decision: "deny" }, from: { role: "cli", via: "app" }, allowed: false },
   { name: "cli: did this happen, completed", prompt: ambiguous, response: { type: "ambiguous_tool_call", outcome: "completed" }, from: { role: "cli", via: "app" }, allowed: false },
 ];

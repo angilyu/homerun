@@ -79,6 +79,12 @@ const EVERYONE = ["shell", "webview", "cli", "cli_dev", "ios", "web"] as const s
  * enabling schedules, adding grants, or writing monitor state.
  */
 const NOT_WEB = ["shell", "webview", "cli", "cli_dev", "ios"] as const satisfies readonly CallerRole[];
+/**
+ * The full app, where the user can see and edit a grant's exact pattern first (§5.6), plus the
+ * development CLI. Not the release CLI: anything running as the user can invoke it, and it
+ * answers questions only (§5.2). Not the web client (§9.9).
+ */
+const FULL_APP = ["shell", "webview", "cli_dev", "ios"] as const satisfies readonly CallerRole[];
 /** Local app UI only: settings screens that manage local credentials. */
 const LOCAL_UI = ["shell", "webview"] as const satisfies readonly CallerRole[];
 /** The shell's own launch-token connection, never forwarded webview calls (§5.2). */
@@ -230,7 +236,7 @@ export const METHODS = {
   "grants.create": def("grants.create", {
     params: z.object({ task_id: TaskId, grant: GrantProposal }),
     result: z.object({ grant: ToolGrant }),
-    callers: NOT_WEB,
+    callers: FULL_APP,
     description: "Add a grant from settings (e.g. 'Trust this tool', §5.5). 'Always allow' answers create grants via `input.answer`.",
   }),
   "grants.revoke": def("grants.revoke", {

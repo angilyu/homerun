@@ -142,10 +142,17 @@ describe("input rules", () => {
   });
 
   test("always allow: only when offered, never destructive, never from web or a notification", () => {
-    const always = { type: "approval", decision: "allow_always", grant: { tool: "Bash", pattern: "npm install", class: "write" } } as const;
+    const always = { type: "approval", decision: "allow_always", grant: { tool: "Bash", pattern: "npm install *", class: "write" } } as const;
     expect(checkResponse(approval("write"), always, app("webview"))).toEqual([]);
     expect(checkResponse(approval("write", { offer_always: false }), always, app("webview"))).not.toEqual([]);
-    expect(checkResponse(approval("destructive"), always, app("webview"))).not.toEqual([]);
+    // An unmatched Bash command is destructive only by default; its grant names a class (§5.6).
+    expect(checkResponse(approval("destructive"), always, app("webview"))).toEqual([]);
+    const mcp = { tool: "mcp__github__delete_repository", input: F.inline({}), suggested_grant: undefined };
+    const trust = { ...always, grant: { tool: "mcp__github__delete_repository", pattern: null, class: "write" } } as const;
+    expect(checkResponse(approval("destructive", { ...mcp, reason: "untrusted_tool" }), trust, app("webview"))).toEqual([]);
+    expect(checkResponse(approval("destructive", { ...mcp, reason: "destructive" }), trust, app("webview"))).toContain("always allow is not offered for this request");
+    const narrow = { ...always, grant: { tool: "Bash", pattern: "npm install", class: "write" } } as const;
+    expect(checkResponse(approval("write"), narrow, app("webview"))).toContain("the grant must cover the requested call");
     expect(checkResponse(approval("write"), always, { role: "ios", via: "notification" })).not.toEqual([]);
     const other = { ...always, grant: { tool: "Write", pattern: null, class: "write" } } as const;
     expect(checkResponse(approval("write"), other, app("webview"))).toContain("the grant must be for the requested tool");

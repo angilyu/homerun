@@ -2,6 +2,7 @@ import { z } from "zod";
 import { named } from "./registry";
 import { Content, DeviceId, RequestId, RunId, TimestampMs, ToolCallId } from "./common";
 import { GrantProposal } from "./grants";
+import { grantCovers } from "./patterns";
 import { ToolClass, ToolName } from "./tools";
 import { SURFACE_OF_ROLE, type CallerRole } from "./protocol/handshake";
 
@@ -30,7 +31,11 @@ export const ApprovalPrompt = named(
     /** Full URL including the query string, for network requests (§5.5). */
     url: z.string().max(8192).optional(),
     reason: ApprovalReason,
-    /** Whether "Always allow" may be offered; never for destructive calls. */
+    /**
+     * Whether "Always allow" may be offered (§5.6). The runtime decides; never for a call known
+     * to be destructive. An unmatched `Bash` command and an untrusted MCP tool are `destructive`
+     * only until classified, so they may offer it: the grant names a non-destructive class.
+     */
     offer_always: z.boolean(),
     /** The pattern pre-filled in the "Always allow" editor. */
     suggested_grant: GrantProposal.optional(),
@@ -166,9 +171,11 @@ export function checkResponse(prompt: InputPrompt, response: InputResponse, from
   if (!mayAnswer(from.role, prompt.type)) errs.push("answer this in the Homerun app");
   if (surface === "web" && requiredAuthority(prompt) === "full") errs.push("approve on your phone or Mac");
   if (prompt.type === "approval" && response.type === "approval" && response.decision === "allow_always") {
-    if (!prompt.offer_always || prompt.class === "destructive") errs.push("always allow is not offered for this request");
+    if (!prompt.offer_always || !alwaysAllowable(prompt)) errs.push("always allow is not offered for this request");
     if (surface === "web" || from.via === "notification") errs.push("grants need the full app on desktop or iOS");
     if (response.grant && response.grant.tool !== prompt.tool) errs.push("the grant must be for the requested tool");
+    else if (response.grant && prompt.input.kind === "inline" && !grantCovers(response.grant, { tool: prompt.tool, input: prompt.input.value }))
+      errs.push("the grant must cover the requested call");
   }
   if (from.via === "notification" && !answerableFromNotification(prompt)) errs.push("this request must be answered in the app");
   if (prompt.type === "question" && response.type === "question") {
@@ -183,6 +190,15 @@ export function checkResponse(prompt: InputPrompt, response: InputResponse, from
     });
   }
   return errs;
+}
+
+/**
+ * "Always allow" is never offered for a call known to be destructive (§5.6). An unmatched `Bash`
+ * command (its grant becomes an allowlisted pattern with a non-destructive class) and an
+ * untrusted MCP tool ("Trust this tool", §5.5) are destructive only by default.
+ */
+export function alwaysAllowable(p: ApprovalPrompt): boolean {
+  return p.class !== "destructive" || p.tool === "Bash" || p.reason === "untrusted_tool";
 }
 
 /**
