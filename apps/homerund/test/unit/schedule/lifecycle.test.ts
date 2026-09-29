@@ -285,4 +285,15 @@ describe("monitor state (§8.3)", () => {
     await r.idle();
     expect(r.coverage(m.taskId)).toEqual([]);
   });
+
+  test("a reply on a monitor's thread is refused for now, and starts nothing (§5.7)", async () => {
+    r = await rig({ start: T0 });
+    const m = await r.fileMonitor(hourly());
+    const err = await r.shell
+      .call("messages.send", { thread_id: m.threadId, client_msg_id: crypto.randomUUID(), text: "why?" } as never)
+      .catch((e) => e);
+    expect(err.code).toBe(RPC_ERROR.VALIDATION_FAILED);
+    expect(err.message).toContain("monitor's thread");
+    expect(r.runs(m.taskId)).toEqual([]);
+  });
 });

@@ -224,7 +224,7 @@ export class RunManager {
         const task = getTask(store, thread.task_id);
         if (!task) throw new NotFoundError("task");
         if (task.archived_at !== null) throw new InvalidRequestError("This task is archived.");
-        if (task.kind !== "session") throw new InvalidRequestError("Monitor runs arrive in a later version of Homerun.");
+        if (task.kind !== "session") throw new InvalidRequestError("Replying on a monitor's thread arrives in a later version of Homerun.");
         taskId = task.task_id;
         taskVersion = task.version;
       }
