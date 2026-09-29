@@ -113,8 +113,20 @@ export class RunManager {
     return this.resolver.answer(requestId, a, now(this.ctx));
   }
 
-  createThread(title?: string): Thread {
-    return createThread(this.ctx.store, { title: title ?? null, now: now(this.ctx) });
+  /**
+   * threads.create: a one-off chat, or a new chat on a session task (§2.1), which runs under the
+   * task's spec and grants. A monitor has exactly one thread, its own.
+   */
+  createThread(title?: string, taskId?: string): Thread {
+    const store = this.ctx.store;
+    return store.tx(() => {
+      if (!taskId) return createThread(store, { title: title ?? null, now: now(this.ctx) });
+      const task = getTask(store, taskId);
+      if (!task) throw new NotFoundError("task");
+      if (task.archived_at !== null) throw new InvalidRequestError("This task is archived.");
+      if (task.kind !== "session") throw new InvalidRequestError("A monitor has one thread; reply there instead.");
+      return createThread(store, { taskId, title: title ?? task.name, now: now(this.ctx) });
+    });
   }
 
   setHooks(h: ManagerHooks): void {

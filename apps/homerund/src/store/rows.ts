@@ -76,21 +76,74 @@ export function getThread(store: Store, threadId: string): Thread | null {
   return r ? Thread.parse(r) : null;
 }
 
-type SummaryRow = ThreadRow & { msg_seq: number | null; msg_type: string | null; msg_payload: string | null; msg_ts: number | null; input_pending: number; run_id: string | null; run_state: string | null };
+type SummaryRow = ThreadRow & {
+  msg_seq: number | null;
+  msg_type: string | null;
+  msg_payload: string | null;
+  msg_ts: number | null;
+  input_pending: number;
+  unread: number;
+  run_id: string | null;
+  run_state: string | null;
+};
+
+/** Events that count as unread for a device: what the agent said or asked (§9.8). */
+const UNREAD_TYPES = "('message.final', 'input.requested', 'schedule.paused')";
+
+function summaryQuery(where: string[], limited: boolean): string {
+  return `SELECT t.*,
+       m.seq AS msg_seq, m.type AS msg_type, m.payload AS msg_payload, m.ts AS msg_ts,
+       EXISTS (SELECT 1 FROM input_requests i JOIN runs ir ON ir.run_id = i.run_id WHERE ir.thread_id = t.thread_id AND i.state = 'pending') AS input_pending,
+       (SELECT COUNT(*) FROM thread_events u WHERE u.thread_id = t.thread_id AND u.type IN ${UNREAD_TYPES}
+          AND u.seq > COALESCE((SELECT rm.seq FROM read_markers rm WHERE rm.thread_id = t.thread_id AND rm.device_id = ?), 0)) AS unread,
+       r.run_id AS run_id, r.state AS run_state
+     FROM threads t
+     LEFT JOIN thread_events m ON m.thread_id = t.thread_id AND m.seq = (
+       SELECT MAX(seq) FROM thread_events WHERE thread_id = t.thread_id AND type IN ('user.message', 'message.final'))
+     LEFT JOIN runs r ON r.thread_id = t.thread_id AND r.state IN ('pending', 'running', 'waiting_input')
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     ORDER BY t.updated_at DESC, t.thread_id DESC
+     ${limited ? "LIMIT ?" : ""}`;
+}
+
+function rowToSummary(r: SummaryRow): ThreadSummary {
+  return ThreadSummary.parse({
+    thread_id: r.thread_id,
+    task_id: r.task_id,
+    title: r.title,
+    last_seq: r.last_seq,
+    updated_at: r.updated_at,
+    last_message:
+      r.msg_seq !== null
+        ? {
+            seq: r.msg_seq,
+            role: r.msg_type === "user.message" ? "user" : "assistant",
+            preview: preview((JSON.parse(r.msg_payload!) as { text: string }).text),
+            ts: r.msg_ts!,
+          }
+        : null,
+    unread_count: r.unread,
+    input_pending: r.input_pending === 1,
+    active_run: r.run_id ? { run_id: r.run_id, state: r.run_state } : null,
+  });
+}
 
 /**
- * threads.list (§5.7): summaries, most recently updated first. `unread_count` is 0 until
- * per-device read markers and `threads.mark_read` arrive with the desktop app.
+ * threads.list (§5.7): summaries, most recently updated first. `unread_count` is for `deviceId`,
+ * from its read marker (`threads.mark_read`).
  *
  * The cursor is `updated_before` alone, so a page never ends inside a group of threads with the
  * same `updated_at`: the group moves to the next page, or, if it would fill a page by itself,
  * this page holds the whole group (more than `limit`). Otherwise the next page's
  * `updated_before` would skip the rest of the group.
  */
-export function listThreadSummaries(store: Store, o: { limit: number; updatedBefore?: number; taskId?: string }): { threads: ThreadSummary[]; has_more: boolean } {
+export function listThreadSummaries(
+  store: Store,
+  o: { limit: number; updatedBefore?: number; taskId?: string; deviceId: string },
+): { threads: ThreadSummary[]; has_more: boolean } {
   const query = (cond: { before?: number; at?: number }, limit: number | null): SummaryRow[] => {
     const where: string[] = [];
-    const args: Array<string | number> = [];
+    const args: Array<string | number> = [o.deviceId];
     if (cond.before !== undefined) {
       where.push("t.updated_at < ?");
       args.push(cond.before);
@@ -104,21 +157,7 @@ export function listThreadSummaries(store: Store, o: { limit: number; updatedBef
       args.push(o.taskId);
     }
     if (limit !== null) args.push(limit);
-    return store.db
-      .query<SummaryRow, Array<string | number>>(
-        `SELECT t.*,
-           m.seq AS msg_seq, m.type AS msg_type, m.payload AS msg_payload, m.ts AS msg_ts,
-           EXISTS (SELECT 1 FROM input_requests i JOIN runs ir ON ir.run_id = i.run_id WHERE ir.thread_id = t.thread_id AND i.state = 'pending') AS input_pending,
-           r.run_id AS run_id, r.state AS run_state
-         FROM threads t
-         LEFT JOIN thread_events m ON m.thread_id = t.thread_id AND m.seq = (
-           SELECT MAX(seq) FROM thread_events WHERE thread_id = t.thread_id AND type IN ('user.message', 'message.final'))
-         LEFT JOIN runs r ON r.thread_id = t.thread_id AND r.state IN ('pending', 'running', 'waiting_input')
-         ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-         ORDER BY t.updated_at DESC, t.thread_id DESC
-         ${limit !== null ? "LIMIT ?" : ""}`,
-      )
-      .all(...args);
+    return store.db.query<SummaryRow, Array<string | number>>(summaryQuery(where, limit !== null)).all(...args);
   };
 
   const rows = query({ before: o.updatedBefore }, o.limit + 1);
@@ -132,28 +171,34 @@ export function listThreadSummaries(store: Store, o: { limit: number; updatedBef
       hasMore = query({ before: next }, 1).length > 0;
     }
   }
-  const threads = page.map((r) =>
-    ThreadSummary.parse({
-      thread_id: r.thread_id,
-      task_id: r.task_id,
-      title: r.title,
-      last_seq: r.last_seq,
-      updated_at: r.updated_at,
-      last_message:
-        r.msg_seq !== null
-          ? {
-              seq: r.msg_seq,
-              role: r.msg_type === "user.message" ? "user" : "assistant",
-              preview: preview((JSON.parse(r.msg_payload!) as { text: string }).text),
-              ts: r.msg_ts!,
-            }
-          : null,
-      unread_count: 0,
-      input_pending: r.input_pending === 1,
-      active_run: r.run_id ? { run_id: r.run_id, state: r.run_state } : null,
-    }),
-  );
-  return { threads, has_more: hasMore };
+  return { threads: page.map(rowToSummary), has_more: hasMore };
+}
+
+/** One thread's summary for `deviceId` (`threads.changed`), or null if it does not exist. */
+export function threadSummary(store: Store, threadId: string, deviceId: string): ThreadSummary | null {
+  const r = store.db.query<SummaryRow, [string, string]>(summaryQuery(["t.thread_id = ?"], false)).get(deviceId, threadId);
+  return r ? rowToSummary(r) : null;
+}
+
+/**
+ * threads.mark_read: move `deviceId`'s marker to `seq`, clamped to the thread's last event. It
+ * only moves forward, so a late call from a stale view cannot mark read messages unread.
+ * Returns whether it moved.
+ */
+export function markRead(store: Store, threadId: string, deviceId: string, seq: number, now: number): boolean {
+  return store.tx(() => {
+    const t = store.db.query<{ last_seq: number }, [string]>("SELECT last_seq FROM threads WHERE thread_id = ?").get(threadId);
+    if (!t) return false;
+    const to = Math.min(seq, t.last_seq);
+    const r = store.db
+      .query(
+        `INSERT INTO read_markers (thread_id, device_id, seq, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (thread_id, device_id) DO UPDATE SET seq = excluded.seq, updated_at = excluded.updated_at
+         WHERE excluded.seq > read_markers.seq`,
+      )
+      .run(threadId, deviceId, to, now);
+    return r.changes > 0;
+  });
 }
 
 // ---------------------------------------------------------------- tasks (§6)

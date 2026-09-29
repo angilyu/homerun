@@ -21,9 +21,10 @@ import type { RunManager } from "../runs/manager";
 import { getBlob } from "../store/content";
 import { getGrant, insertGrant, listGrants, revokeGrant } from "../store/grants";
 import { eventsAfter, historyPage, lastSeq } from "../store/events";
-import { getInputRequest, getRunRow, getTask, getThread, listRuns, listTasks, listThreadSummaries, pendingInputRequests, rowToRun } from "../store/rows";
+import { getInputRequest, getRunRow, getTask, getThread, listRuns, listTasks, listThreadSummaries, markRead, pendingInputRequests, rowToRun } from "../store/rows";
 import { allSchedules, coverageDays, editMonitorState, getMonitorState, rowToScheduleState, scheduleForTask } from "../store/schedule-rows";
 import { computeDigest, type DigestScheduler } from "../monitors/digest";
+import type { ThreadChanges } from "../threads/changes";
 import type { Authenticator } from "./auth";
 
 /** A JSON-RPC error a handler wants to send as is. */
@@ -55,6 +56,10 @@ export interface HandlerDeps {
   digest: DigestScheduler;
   /** The daily digest's settings changed: re-arm the timers. */
   settingsChanged?: () => void;
+  /** `threads.changed` for changes that write no thread event (§9.8). */
+  changes?: ThreadChanges;
+  /** secrets.verify (§7.2): ask the provider about a candidate key. */
+  verifyKey: (key: string) => Promise<{ outcome: "valid" | "invalid" | "unreachable"; detail?: string }>;
 }
 
 /** A result, plus an optional step to run after the reply is written (subscription backlog). */
@@ -62,7 +67,7 @@ type ResultIn<M extends MethodName> = z.input<(typeof METHODS)[M]["result"]>;
 export type Reply<M extends MethodName> = ResultIn<M> | { result: ResultIn<M>; after: () => void };
 
 type Params<M extends MethodName> = z.output<(typeof METHODS)[M]["params"]>;
-type Handler<M extends MethodName> = (conn: Conn, p: Params<M>) => Reply<M>;
+type Handler<M extends MethodName> = (conn: Conn, p: Params<M>) => Reply<M> | Promise<Reply<M>>;
 export type Handlers = { [M in MethodName]?: Handler<M> };
 
 const BACKLOG_PAGE = 1000;
@@ -103,15 +108,27 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       ctx.secrets.clear(p.name);
       return { ok: true as const };
     },
+    "secrets.verify": (_c, p) => d.verifyKey(p.value),
 
-    "threads.list": (_c, p) =>
+    "threads.list": (conn, p) =>
       listThreadSummaries(store, {
+        deviceId: originOf(conn).device_id,
         limit: p.limit ?? THREADS_DEFAULT,
         ...(p.updated_before !== undefined ? { updatedBefore: p.updated_before } : {}),
         ...(p.task_id ? { taskId: p.task_id } : {}),
       }),
 
-    "threads.create": (_c, p) => ({ thread: manager.createThread(p.title) }),
+    "threads.create": (_c, p) => {
+      const thread = manager.createThread(p.title, p.task_id);
+      d.changes?.touch(thread.thread_id);
+      return { thread };
+    },
+
+    "threads.mark_read": (conn, p) => {
+      if (!getThread(store, p.thread_id)) throw notFound("thread");
+      if (markRead(store, p.thread_id, originOf(conn).device_id, p.seq, now(ctx))) d.changes?.touch(p.thread_id);
+      return { ok: true as const };
+    },
 
     "threads.history": (_c, p) => {
       if (!getThread(store, p.thread_id)) throw notFound("thread");
@@ -171,6 +188,7 @@ export function makeHandlers(d: HandlerDeps): Handlers {
 
     "tasks.create": (_c, p) => {
       const { task, thread } = manager.createTask(p.spec, p.from_thread_id);
+      d.changes?.touch(thread.thread_id);
       return { task, thread_id: thread.thread_id };
     },
     "tasks.get": (_c, p) => {

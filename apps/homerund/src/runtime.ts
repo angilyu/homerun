@@ -29,6 +29,8 @@ import { deviceTimezone, systemClock, type Clock } from "./schedule/clock";
 import { FireScheduler } from "./schedule/fire-scheduler";
 import { SqliteSessionStore } from "./store/session-store";
 import { Store } from "./store/store";
+import { verifyAnthropicKey, type KeyCheck } from "./secrets/verify";
+import { ThreadChanges } from "./threads/changes";
 
 export interface RuntimeOptions {
   config: Config;
@@ -47,6 +49,8 @@ export interface RuntimeOptions {
   deviceZone?: () => string;
   /** Point this process's TMPDIR at `<data>/tmp` (default). In-process tests turn it off. */
   setTmpdir?: boolean;
+  /** secrets.verify; defaults to asking the Anthropic API (§7.2). Tests answer themselves. */
+  verifyKey?: (key: string) => Promise<KeyCheck>;
 }
 
 export interface StartupReport {
@@ -69,6 +73,7 @@ export interface Runtime {
   fires: FireScheduler;
   digest: DigestScheduler;
   timeouts: InputTimeouts;
+  changes: ThreadChanges;
   clock: Clock;
   devToken: string | null;
   report: StartupReport;
@@ -174,9 +179,18 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     const devToken = config.build === "development" ? newDevToken() : null;
     if (devToken) writeDevToken(config.runDir, devToken);
     const auth = new Authenticator(config.build, o.launchToken, devToken);
+    const changes = new ThreadChanges(store, device.device_id, (summary) => server?.broadcast("threads.changed", { summary }));
     server = new RpcServer({
       socketPath: config.socketPath,
-      handlers: makeHandlers({ ctx, manager, auth, digest, settingsChanged: () => fires.run() }),
+      handlers: makeHandlers({
+        ctx,
+        manager,
+        auth,
+        digest,
+        changes,
+        settingsChanged: () => fires.run(),
+        verifyKey: o.verifyKey ?? ((key) => verifyAnthropicKey(key, config.anthropicBaseUrl)),
+      }),
       ...(o.checkResults ? { checkResults: true } : {}),
       onNotification: (method, params) => {
         if (method === "power.will_sleep") fires.willSleep((params as { at: number }).at);
@@ -187,6 +201,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       },
     });
     await server.start();
+    changes.start();
     fires.start();
     timeouts.start();
     scheduler.kick();
@@ -205,12 +220,14 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       fires,
       digest,
       timeouts,
+      changes,
       clock,
       devToken,
       report: { migration, killedGroups, killedTools, swept, recovered },
       shutdown: () =>
         (stopping ??= (async () => {
           srv.stop();
+          changes.stop();
           fires.stop();
           timeouts.stop();
           await scheduler.shutdown(config.shutdownGraceMs);
