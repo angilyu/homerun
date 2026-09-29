@@ -3,7 +3,8 @@
 The local Homerun runtime (docs/design.md §5). It takes a prompt for a task thread or a
 one-off chat and runs it through the Agent SDK's `query()` with the bundled `claude`, isolated
 from `~/.claude` (§5.3). It streams deltas, persists `thread_events` to SQLite, and serves
-JSON-RPC over a 0700 unix socket (§5.2). It also survives being killed (§5.4).
+JSON-RPC over a 0700 unix socket (§5.2). It also survives being killed (§5.4), and it
+runs monitors on their schedules (§8).
 
 Types, the event vocabulary, the protocol and the caller roles come from `@homerun/core`.
 They are not redefined here.
@@ -18,6 +19,9 @@ They are not redefined here.
 | `src/store/` | SQLite (`db.ts`), forward-only migrations with a `VACUUM INTO` backup (`migrate.ts`, `migrations/`), rows, `thread_events`, blobs over 4 KB, the SDK `SessionStore` mirror |
 | `src/agent/` | `AgentEngine` seam. `claude/` holds the real engine: query options, clean env, process-group spawn, process-tree kill, SDK message → event translation. `fake-engine.ts` is for unit tests. `policy.ts` holds tool classes and permissions |
 | `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run), `recovery` (§5.4), `ambiguity` (the answer to "Did this happen?"), `resume` (results for open calls before a resume), `process-groups` |
+| `src/schedule/` | The scheduler (§8): `clock` (wall time and timers; `FakeClock` for tests), `cron-next` and `zone` (next fire in a timezone, with the DST rules), `fire-scheduler` (claims fires, catch-up, downtime, retries, pauses) |
+| `src/monitors/` | Monitor runs (§8.3): `sources` and `feed` (what a rule check observes), `rules` (comparators), `check-runner` (the check step), `model-check`, `complete` (the check result, monitor state, act), `digest` (the health digest) |
+| `src/power/` | Keeping the computer awake while a run is in progress (§8.1) |
 | `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers. The client, the data dir and socket paths and the build channel rule live in [`@homerun/client`](../../packages/client) |
 | `test/unit/` | Fast tests against the fake engine |
 | `test/replay/` | Record/replay harness (§16.2) and the committed cassettes |
@@ -49,7 +53,15 @@ Params, results and callers are defined in `@homerun/core` (`src/protocol/method
   with the same `updated_at`, so paging can't skip one. Its `unread_count` is always 0 until
   read markers arrive (milestone 7).
 - `messages.send`: starts a run, steers the active one, or is held while the run waits for input.
-- `runs.get`, `runs.list`, `runs.stop`; `tasks.create`, `tasks.get`, `tasks.list`.
+- `runs.get`, `runs.list`, `runs.stop`.
+- `tasks.create`, `tasks.get`, `tasks.list`, `tasks.update`, `tasks.archive`; `tasks.run_now`
+  (monitors only: returns the active run if there is one; BUDGET_EXCEEDED at the monthly cap).
+- `schedules.list`, `schedules.set_enabled`, `schedules.coverage`; `monitors.state.get`,
+  `monitors.state.set`, `monitors.state.reset` (CONFLICT unless `expected_version` is current);
+  `health.digest`, `health.settings.get`, `health.settings.set`. The web client may read these
+  but not change a task, a schedule, monitor state or the digest settings (§9.9).
+- Notifications: `health.digest_ready` to every client; `power.will_sleep` and `power.did_wake`
+  from the shell.
 - `input.list_pending`; `input.answer` for "Did this happen?" (below). Approvals and
   questions return UNAVAILABLE with `not_implemented` until milestone 6.
 - `blobs.get`: a stored tool input or output over 4 KB, in pages (`offset`, `length`).
@@ -120,6 +132,66 @@ received after that point are not re-sent.
 A note not yet delivered when the runtime is killed again is merged into the next one, never
 replaced. The note is delivered with a fresh id each launch, so a crash in the middle of
 delivering it can show the model the same note twice.
+
+## Scheduler and monitors (§8, milestone 5)
+
+**Fires.** Every schedule is evaluated when the runtime starts, every 15 s, at each wake, and
+whenever a task or schedule changes. Evaluating a schedule claims each slot since
+`last_evaluated_at` exactly once, in one transaction: a `schedule_fires` row per slot, keyed
+by `(schedule_id, scheduled_for)`, so a crash can neither lose nor repeat a fire. The fire's
+run is inserted with the dedupe key `fire:<schedule>:<slot>:<attempt>` in the transaction
+that starts it. Cron is evaluated in the schedule's own timezone with the §8 DST rules: a time
+in the spring-forward gap fires at the first valid instant after it, and a time in the fall-back
+overlap fires once. Timers are armed at most one tick ahead, so a timer set before a sleep never
+fires late by the length of the sleep.
+
+**Missed fires.** A slot is missed when it falls in a `downtime` interval:
+- *asleep*: from the shell's `power.will_sleep` and `power.did_wake`, or, without a shell, from a
+  gap of more than 45 s between ticks;
+- *not running*: from the previous runtime life's last heartbeat (written every minute) or its
+  clean stop to this start. The new life and its downtime are recorded in one transaction.
+
+The catch-up policy then picks what runs late (§8.1): `run_once` the latest missed slot,
+`run_all` the last `max_catchup`, `skip` none. Each group of missed slots becomes one
+`schedule.missed` event on the monitor's thread, with its cause, count and how many were
+caught up, and `schedules.coverage` counts it per day. A late run is not counted as having run
+on time. An on-time slot that comes due while the monitor's previous fire is still waiting is
+merged into it (`skipped_by_policy`).
+
+**Keeping awake.** While any run is running (not while it waits for input, §5.6), the runtime
+holds one `caffeinate -i -w <pid>` (§8.1). With `-w` it exits when homerund does, so a crash never
+leaves the Mac unable to sleep. Elsewhere this is a no-op for now.
+
+**Monitor runs** (§8.3). A monitor run is a check, then an act step only if the check found a
+change:
+- A *rule check* is evaluated by the runtime with no model call. Sources: `http` (a JSON path, a
+  CSS selector, a regex, or the whole body), `feed` (RSS or Atom, parsed here), `file_hash`
+  under the task's roots. `homerun_tool` sources are refused until Homerun's own tools exist.
+  Comparators: `changed`, `equals`, `above`, `below` (edge-triggered: they report crossing the
+  line, not staying past it), `new_items`.
+- A *model check* is one small `query()` with `check.model` that must return a `CheckResult`
+  (structured output). With a `source`, the runtime fetches the observation and the model
+  judges it with no tools (3 turns). Without one, it may use the task's tools, but only calls the
+  policy allows outright (12 turns). It is capped at the task's `max_run_usd`; the act step gets
+  what is left.
+- The first check records a baseline and reports no change.
+- The check's result is stored on the run as evidence (`runs.get`, `check_result`). A quiet check
+  writes nothing to the thread. A change starts the act step in the same run, with the
+  evidence as its input.
+- Monitor state advances only when the run succeeds, in the transaction that ends it. If the
+  user edited the state meanwhile (`monitors.state.set` bumps its version), the edit wins and
+  the run's new state is dropped.
+
+**Failures.** A failed fire is retried twice, after 1 and 5 minutes, as new attempts of the same
+fire. Three failed fires in a row pause the schedule (`paused_reason: failures`), and reaching
+the task's monthly cap pauses it too (`budget_cap`); each writes `schedule.paused` to the
+thread. Until push notifications arrive (milestone 9), missed and failed fires are reported by
+these events, `schedules.list` (`missed_since_last_run`), the health digest and the CLI.
+
+**Health digest.** Once a day at the configured time (default 08:00, device timezone; late if
+the Mac was asleep), the runtime stores a digest and sends `health.digest_ready`: per monitor,
+fires due, runs, changes, failures, misses by cause, fires caught up, cost; and when the Mac
+was asleep or Homerun was not running. `health.digest` computes one for any period up to 31 days.
 
 ## Running
 
@@ -204,11 +276,32 @@ Other settings:
 pnpm --filter @homerun/homerund typecheck
 pnpm --filter @homerun/homerund test:unit     # fake engine, no network
 pnpm --filter @homerun/homerund test:replay   # real claude against recorded API exchanges, no key
-pnpm --filter @homerun/homerund test:crash    # kill at every event boundary, simulated claude (about a minute)
+pnpm --filter @homerun/homerund test:crash    # kill at every event boundary, simulated claude (about a minute and a half)
 scripts/check-no-secrets.sh                   # from the repo root
 ```
 
 CI runs all of these on Linux (`ubuntu-latest`; `.github/workflows/ci.yml`, job `homerund`). The code is POSIX-only (process groups, `ps`, unix sockets) and is tested on macOS and Linux; liveness checks ignore zombies, which `kill(pid, 0)` still reports as alive.
+
+### Fake-clock suite (§16 row 5)
+
+The scheduler takes a `Clock`; `FakeClock` moves wall time and fires timers only when a test
+says so, and can "sleep" the Mac (time jumps, timers do not fire) or change the device
+timezone. `test/unit/schedule/rig.ts` runs a real `Runtime` on a temporary data dir with the
+fake engine, so the tests reach fires, runs, events and monitor state through the same code as
+production. Covered:
+- `cron-next.test.ts`: the next-fire function against a minute-by-minute oracle across zones and
+  DST transitions, plus the spring-forward gap and fall-back overlap rules spelled out.
+- `fires.test.ts`: on-time fires and power assertions; a sleep across several fires under `run_once`, `run_all`
+  (bounded by `max_catchup`) and `skip`; shell sleep/wake versus gap detection; the wall
+  clock stepping forwards or backwards.
+- `lifecycle.test.ts`: downtime while not running, including a crash with no clean stop; DST
+  in the schedule's zone; a travelling device timezone versus a fixed schedule zone; busy
+  monitors and merged slots; retries and pauses; state advancing only on success; a user edit
+  winning; `tasks.run_now`.
+- `race.test.ts`: two connections claiming or promoting the same slot; a crash between inserting
+  a fire's run and marking the fire; the web client refused.
+- `model-check.test.ts`, `digest.test.ts`, `shell-power.test.ts`, and
+  `test/unit/monitors/rules.test.ts` (sources and comparators against a local HTTP server).
 
 ### Replay harness (§16.2)
 
@@ -284,6 +377,14 @@ After each trial it checks invariants:
 - every run is terminal with one `run.end`, and the last one succeeded;
 - the final transcript has no open `tool_use` and no "interrupted" result, and it agrees
   with the ledger about which calls ran.
+
+`test/crash/monitor.test.ts` does the same for the scheduler (§8.2, §8.4). A monitor was last
+checked at 10:05 and Homerun then stayed stopped until 11:05 while the watched file changed.
+The life under test claims the missed slots (`run_all`, max 3) and the on-time one, runs each
+check, acts once on the change and saves the monitor state. It is killed at every commit and
+around the act's side effect; later lives on the same data dir (`monitor-child.ts`) recover.
+However the crash fell, each slot is claimed and run once, the missed slots are reported once,
+the act's side effect happens once, and the state ends at the new file's hash.
 
 #### Re-recording
 
