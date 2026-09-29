@@ -267,6 +267,7 @@ export interface RunRow {
   monitor_phase: MonitorPhase | null;
   check_session_id: string | null;
   state_version: number | null;
+  tainted_at: number | null;
 }
 
 /** Which step of the monitor pipeline a monitor run is in (§8.3); null for other runs. */
@@ -462,6 +463,8 @@ export function markInputsConsumed(store: Store, uuids: readonly string[], now =
 
 interface InputRequestRow {
   request_id: string;
+  applied_at?: number | null;
+  deferred_at?: number | null;
   run_id: string;
   kind: string;
   tool_call_id: string | null;
@@ -527,4 +530,62 @@ export function answerInputRequest(store: Store, requestId: string, response: In
 
 export function setInputRequestState(store: Store, requestId: string, state: "cancelled" | "expired"): void {
   store.tx(() => store.db.query("UPDATE input_requests SET state = ? WHERE request_id = ? AND state = 'pending'").run(state, requestId));
+}
+
+/** A request as stored, with the columns internal to the runtime (§5.6 gating). */
+export interface GateRequest {
+  req: InputRequest;
+  applied_at: number | null;
+  deferred_at: number | null;
+}
+
+function toGate(r: InputRequestRow): GateRequest {
+  const { applied_at, deferred_at, ...rest } = r;
+  return { req: rowToInputRequest(rest), applied_at: applied_at ?? null, deferred_at: deferred_at ?? null };
+}
+
+/** The approval or question gating a tool call (not "Did this happen?"), newest first. */
+export function gateRequestForCall(store: Store, toolCallId: string): GateRequest | null {
+  const r = store.db
+    .query<InputRequestRow, [string]>(
+      "SELECT * FROM input_requests WHERE tool_call_id = ? AND json_extract(prompt, '$.type') IN ('approval', 'question') ORDER BY requested_at DESC, rowid DESC LIMIT 1",
+    )
+    .get(toolCallId);
+  return r ? toGate(r) : null;
+}
+
+export function getGateRequest(store: Store, requestId: string): GateRequest | null {
+  const r = store.db.query<InputRequestRow, [string]>("SELECT * FROM input_requests WHERE request_id = ?").get(requestId);
+  return r ? toGate(r) : null;
+}
+
+/** Approvals and questions of a run that were answered but never handed to the agent. */
+export function unappliedGateRequests(store: Store, runId: string): GateRequest[] {
+  return store.db
+    .query<InputRequestRow, [string]>(
+      "SELECT * FROM input_requests WHERE run_id = ? AND state = 'answered' AND applied_at IS NULL AND json_extract(prompt, '$.type') IN ('approval', 'question') ORDER BY requested_at, rowid",
+    )
+    .all(runId)
+    .map(toGate);
+}
+
+export function markRequestApplied(store: Store, requestId: string, now: number): void {
+  store.tx(() => store.db.query("UPDATE input_requests SET applied_at = ? WHERE request_id = ? AND applied_at IS NULL").run(now, requestId));
+}
+
+export function markRequestDeferred(store: Store, requestId: string, now: number): void {
+  store.tx(() => store.db.query("UPDATE input_requests SET deferred_at = ? WHERE request_id = ? AND deferred_at IS NULL").run(now, requestId));
+}
+
+/** Pending requests past their `expires_at` (§5.6 `input_timeout`). */
+export function expiredInputRequests(store: Store, now: number): InputRequest[] {
+  return store.db
+    .query<InputRequestRow, [number]>("SELECT * FROM input_requests WHERE state = 'pending' AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at, rowid")
+    .all(now)
+    .map((r) => toGate(r).req);
+}
+
+/** The earliest pending `expires_at`, for the expiry timer. */
+export function nextInputExpiry(store: Store): number | null {
+  return store.db.query<{ t: number | null }, []>("SELECT MIN(expires_at) AS t FROM input_requests WHERE state = 'pending' AND expires_at IS NOT NULL").get()?.t ?? null;
 }
