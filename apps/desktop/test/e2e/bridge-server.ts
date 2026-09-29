@@ -15,9 +15,13 @@
  *   CLI's end-to-end tests.
  * - `replay`: a real `homerund serve` subprocess and the real bundled `claude`, against one of
  *   homerund's recorded cassettes (§16.2). No key, no network, no spend.
+ * - `live` (only with HOMERUN_E2E_LIVE=1; the manual check in live.manual.ts): a real
+ *   `homerund serve` against the real API through a metering proxy that refuses requests once
+ *   the spend cap is reached. It starts with no key, so onboarding runs for real, and it is
+ *   restarted after an unexpected exit, like the supervisor's first backoff step (§5.1).
  */
 import type { ServerWebSocket } from "bun";
-import { mkdirSync, realpathSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join, normalize as normPath } from "node:path";
 import { ConnectionClosedError, RpcCallError, RpcClient, RuntimeUnavailableError } from "@homerun/client";
@@ -60,7 +64,127 @@ const SCENES: Record<string, ReplayScene> = {
 
 type Active =
   | { kind: "fake"; srt: SocketRuntime; socketPath: string }
-  | { kind: "replay"; name: string; hr: Homerund; server: ReplayServer; root: string };
+  | { kind: "replay"; name: string; hr: Homerund; server: ReplayServer; root: string }
+  | { kind: "live"; hr: Homerund; proxy: MeteredProxy; root: string; dataDir: string; stopping: boolean };
+
+const LIVE = process.env.HOMERUN_E2E_LIVE === "1";
+const LIVE_CAP_USD = Number(process.env.HOMERUN_E2E_LIVE_CAP_USD ?? 0.1);
+const LIVE_ENV = {
+  HOMERUN_DEV_AUTO_APPROVE: "0",
+  HOMERUN_INPUT_GRACE_MS: "600000",
+  HOMERUN_CHAT_MAX_BUDGET_USD: "0.03",
+};
+/** USD per token, by model family; unknown models are priced as Opus, to stay under the cap. */
+const PRICES: Array<[RegExp, { input: number; output: number }]> = [
+  [/haiku/, { input: 1e-6, output: 5e-6 }],
+  [/sonnet/, { input: 3e-6, output: 15e-6 }],
+  [/.*/, { input: 5e-6, output: 25e-6 }],
+];
+type Usage = { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
+
+/**
+ * Forwards homerund's API traffic to api.anthropic.com unchanged, including the key homerund
+ * sends, so `secrets.verify` and the runs meet the real API. It adds up each response's usage and
+ * refuses `/v1/messages` once the cap is reached. It never logs headers or bodies.
+ */
+class MeteredProxy {
+  usd = 0;
+  requests = 0;
+  refused = 0;
+  byModel: Record<string, number> = {};
+  private server: ReturnType<typeof Bun.serve> | null = null;
+
+  constructor(private capUsd: number) {}
+
+  get url(): string {
+    return `http://127.0.0.1:${this.server!.port}`;
+  }
+
+  start(): this {
+    this.server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 0, fetch: (req) => this.handle(req) });
+    return this;
+  }
+
+  stop(): void {
+    this.server?.stop(true);
+  }
+
+  private add(model: string, u: Usage): void {
+    const p = PRICES.find(([re]) => re.test(model))![1];
+    const usd =
+      (u.input_tokens ?? 0) * p.input +
+      (u.output_tokens ?? 0) * p.output +
+      (u.cache_creation_input_tokens ?? 0) * p.input * 1.25 +
+      (u.cache_read_input_tokens ?? 0) * p.input * 0.1;
+    this.usd += usd;
+    this.byModel[model] = (this.byModel[model] ?? 0) + usd;
+  }
+
+  private async handle(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const raw = req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
+    let model = "";
+    if (url.pathname === "/v1/messages") {
+      if (this.usd >= this.capUsd) {
+        this.refused++;
+        // A 400: claude retries 5xx and 429, and the cap should end the run.
+        return Response.json({ type: "error", error: { type: "invalid_request_error", message: `live check spend cap $${this.capUsd} reached` } }, { status: 400 });
+      }
+      try {
+        model = String((JSON.parse(new TextDecoder().decode(raw)) as { model?: unknown }).model ?? "");
+      } catch {}
+      this.requests++;
+    }
+    const headers = new Headers();
+    for (const [k, v] of req.headers) if (!["host", "content-length", "connection", "accept-encoding"].includes(k.toLowerCase())) headers.set(k, v);
+    const up = await fetch(`https://api.anthropic.com${url.pathname}${url.search}`, { method: req.method, headers, body: raw });
+    const out = new Headers(up.headers);
+    out.delete("content-encoding");
+    out.delete("content-length");
+    if (!model) return new Response(up.body, { status: up.status, headers: out });
+    if (!(up.headers.get("content-type") ?? "").includes("text/event-stream")) {
+      const text = await up.text();
+      try {
+        this.add(model, ((JSON.parse(text) as { usage?: Usage }).usage ?? {}) as Usage);
+      } catch {}
+      return new Response(text, { status: up.status, headers: out });
+    }
+    // message_start carries the input counts, message_delta the cumulative output: merge, count once.
+    let usage: Usage = {};
+    let buf = "";
+    const dec = new TextDecoder();
+    const reader = up.body!.getReader();
+    const stream = new ReadableStream<Uint8Array>({
+      pull: async (ctrl) => {
+        const { value, done } = await reader.read();
+        if (done) {
+          this.add(model, usage);
+          return ctrl.close();
+        }
+        buf += dec.decode(value, { stream: true });
+        for (let i = buf.indexOf("\n\n"); i >= 0; i = buf.indexOf("\n\n")) {
+          const data = buf
+            .slice(0, i)
+            .split("\n")
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).trim())
+            .join("");
+          buf = buf.slice(i + 2);
+          try {
+            const d = JSON.parse(data) as { usage?: Usage; message?: { usage?: Usage } };
+            usage = { ...usage, ...(d.message?.usage ?? d.usage) };
+          } catch {}
+        }
+        ctrl.enqueue(value);
+      },
+      cancel: async () => {
+        this.add(model, usage);
+        await reader.cancel();
+      },
+    });
+    return new Response(stream, { status: up.status, headers: out });
+  }
+}
 
 class Shell {
   keys = new Map<string, string>();
@@ -92,7 +216,15 @@ class Shell {
     this.active = null;
     if (!a) return;
     if (a.kind === "fake") await a.srt.close();
-    else {
+    else if (a.kind === "live") {
+      a.stopping = true;
+      // Spend across runs of the manual check, so the total stays under the budget.
+      if (process.env.HOMERUN_E2E_LIVE_LEDGER)
+        appendFileSync(process.env.HOMERUN_E2E_LIVE_LEDGER, `${JSON.stringify({ at: new Date().toISOString(), usd: a.proxy.usd, requests: a.proxy.requests, refused: a.proxy.refused })}\n`);
+      await a.hr.stop().catch(() => {});
+      a.proxy.stop();
+      rmSync(a.root, { recursive: true, force: true });
+    } else {
       a.server.stop();
       await a.hr.stop().catch(() => {});
       if (!process.env.HOMERUN_REPLAY_KEEP) rmSync(a.root, { recursive: true, force: true });
@@ -157,6 +289,76 @@ class Shell {
       Object.assign(out, { task_id: created.task.task_id, thread_id: created.thread_id, task_name: created.task.name });
     }
     return out;
+  }
+
+  /** The real API behind a metering proxy, with no key yet: onboarding runs for real. */
+  async live(): Promise<Record<string, unknown>> {
+    if (!LIVE) throw new Error("the live scene needs HOMERUN_E2E_LIVE=1");
+    await this.stop();
+    this.setStatus({ state: "starting" });
+    const root = scratchDir("hr-desktop-live-");
+    const work = join(root, "work");
+    const dataDir = join(root, "data");
+    mkdirSync(work);
+    mkdirSync(dataDir);
+    const proxy = new MeteredProxy(LIVE_CAP_USD).start();
+    const hr = new Homerund({ dataDir, baseUrl: proxy.url, env: LIVE_ENV });
+    const a: Active = { kind: "live", hr, proxy, root, dataDir, stopping: false };
+    this.active = a;
+    this.work = work;
+    this.keys = new Map();
+    await hr.start();
+    this.watch(a);
+    await this.connect(hr.socketPath, hr.token);
+    return { work };
+  }
+
+  /** Live only: an unexpected exit is restarted after 1 s, the supervisor's first backoff step (§5.1). */
+  private watch(a: Extract<Active, { kind: "live" }>): void {
+    const hr = a.hr;
+    void hr.proc!.exited.then(async (code) => {
+      if (a.stopping || this.active !== a || a.hr !== hr) return;
+      this.shell?.close();
+      this.webview?.close();
+      this.shell = this.webview = null;
+      const retryAt = Date.now() + 1000;
+      this.setStatus({ state: "restarting", retry_at: retryAt, last_error: `homerund exited (${hr.proc!.signalCode ?? code})` });
+      await Bun.sleep(1000);
+      if (a.stopping || this.active !== a) return;
+      a.hr = new Homerund({ dataDir: a.dataDir, baseUrl: a.proxy.url, env: LIVE_ENV });
+      this.restarts++;
+      await a.hr.start();
+      this.watch(a);
+      await this.connect(a.hr.socketPath, a.hr.token);
+    });
+  }
+
+  restarts = 0;
+
+  /** Live only: the runtime's pid (for `kill -9`), the spend so far, and each thread's persisted seqs. */
+  async liveInfo(): Promise<Record<string, unknown>> {
+    const a = this.active;
+    if (a?.kind !== "live") throw new Error("no live scene");
+    const threads: Array<{ thread_id: string; seqs: number[] }> = [];
+    if (this.shell?.isOpen) {
+      const list = (await this.shell.raw("threads.list", {})) as { threads: Array<{ thread_id: string }> };
+      for (const t of list.threads) {
+        // Newest page first, ascending within a page.
+        let seqs: number[] = [];
+        let before: number | undefined;
+        for (;;) {
+          const page = (await this.shell.raw("threads.history", { thread_id: t.thread_id, limit: 500, ...(before !== undefined ? { before_seq: before } : {}) })) as {
+            events: Array<{ seq: number }>;
+            has_more: boolean;
+          };
+          seqs = [...page.events.map((e) => e.seq), ...seqs];
+          if (!page.has_more || !page.events.length) break;
+          before = page.events[0]!.seq;
+        }
+        threads.push({ thread_id: t.thread_id, seqs });
+      }
+    }
+    return { pid: a.hr.proc?.pid ?? null, restarts: this.restarts, usd: a.proxy.usd, requests: a.proxy.requests, refused: a.proxy.refused, by_model: a.proxy.byModel, threads };
   }
 
   /** After a replay scene: every cassette entry was used and nothing unexpected was asked. */
@@ -247,9 +449,10 @@ const server = Bun.serve({
     if (url.pathname === "/bridge") return srv.upgrade(req) ? undefined : new Response("upgrade failed", { status: 400 });
     if (url.pathname === "/__e2e/health") return Response.json({ ok: true });
     if (url.pathname === "/__e2e/scene" && req.method === "POST") {
-      const body = (await req.json()) as { mode: "fake" | "replay"; key?: string | null; scenario?: string };
+      const body = (await req.json()) as { mode: "fake" | "replay" | "live"; key?: string | null; scenario?: string };
       try {
-        const out = body.mode === "replay" ? await shell.replay(body.scenario ?? "") : await shell.fake(body.key === undefined ? "sk-ant-mock-not-a-real-key" : body.key);
+        const out =
+          body.mode === "replay" ? await shell.replay(body.scenario ?? "") : body.mode === "live" ? await shell.live() : await shell.fake(body.key === undefined ? "sk-ant-mock-not-a-real-key" : body.key);
         shell.opened = [];
         return Response.json(out);
       } catch (e) {
@@ -263,6 +466,13 @@ const server = Bun.serve({
       return Response.json({ errors });
     }
     if (url.pathname === "/__e2e/opened") return Response.json({ opened: shell.opened });
+    if (url.pathname === "/__e2e/live") {
+      try {
+        return Response.json(await shell.liveInfo());
+      } catch (e) {
+        return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+      }
+    }
     // The built views (scripts/build.ts --e2e).
     const path = url.pathname === "/" ? "/index.html" : url.pathname;
     const file = Bun.file(join(DIST, normPath(path).replace(/^(\.\.[/\\])+/, "")));

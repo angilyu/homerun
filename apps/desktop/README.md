@@ -112,6 +112,22 @@ cd src-tauri && cargo test -p homerun-shell-core
     spend.
   - `HOMERUN_E2E_CHANNEL=chrome` uses an installed Chrome instead of Playwright's Chromium, which
     is what CI does.
+- **Real-key check** (`test/e2e/live.manual.ts`, never in CI). The same views and bridge against
+  the real API, with the key from `.env.local` typed into onboarding:
+  ```sh
+  HOMERUN_E2E_CHANNEL=chrome HOMERUN_E2E_SHOTS=/tmp/hr-live pnpm --filter @homerun/desktop test:live
+  ```
+  It covers:
+  - a wrong key refused by the real API, then the real one accepted;
+  - a chat streaming on Haiku;
+  - Allow once, then Always allow with an edited pattern, and revoking the grant;
+  - an AskUserQuestion card;
+  - `kill -9` of `homerund` mid-stream. The bridge restarts it after 1 s, the supervisor's first
+    backoff step, and the thread must match a fresh load from history.
+
+  The bridge meters the API traffic. It refuses requests past `HOMERUN_E2E_LIVE_CAP_USD` (default
+  $0.10), and `HOMERUN_E2E_LIVE_LEDGER` appends each run's spend to a file. One run costs about
+  $0.04. Traces and videos are off, because they would record the key.
 - **CI.** The `desktop`, `desktop-e2e` and `shell` jobs run on every pull request. The Tauri crate
   and an unsigned `.app` build nightly on macOS.
 
