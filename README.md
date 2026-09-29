@@ -22,11 +22,13 @@ and your data stays on your machine. Users bring their own Anthropic API key.
 | 2 | The runtime, `homerund` ([`apps/homerund`](apps/homerund/README.md)) | Done |
 | 3 | The `homerun` CLI ([`apps/cli`](apps/cli/README.md)) | Done |
 | 4 | Crash resume | Done |
-| 5 | Scheduler and monitors | **Next** |
+| 5 | Scheduler and monitors | Done |
+| 6 | Approvals and questions | Done |
+| 7 | The desktop app ([`apps/desktop`](apps/desktop/README.md)) | Done |
+| 8 | Packaging: menu bar, login item, signed updater | **Next** |
 
-Later milestones (approvals, the desktop app, packaging, relay, iOS and web) are
-listed in [design §16](docs/design.md#16-build-plan). There is no desktop app
-yet: you drive the runtime from the CLI, in development builds.
+Later milestones (relay, iOS and web, distribution) are listed in
+[design §16](docs/design.md#16-build-plan).
 
 ## Repository layout
 
@@ -34,9 +36,10 @@ yet: you drive the runtime from the CLI, in development builds.
 |---|---|
 | [`apps/homerund`](apps/homerund/README.md) | The runtime: agent runs, storage (SQLite), crash resume, the local socket |
 | [`apps/cli`](apps/cli/README.md) | `homerun`, the command-line client |
-| `apps/desktop` | The Tauri shell from the milestone 0 spike; the real app is milestone 7 |
+| [`apps/desktop`](apps/desktop/README.md) | The macOS app: a Tauri shell that supervises `homerund`, and the React UI |
+| [`packages/app-state`](packages/app-state/README.md) | The platform-neutral client state layer the app's views render (and, later, the web and iOS clients) |
 | [`packages/core`](packages/core/README.md) | Task spec, events and the IPC protocol as Zod schemas, plus JSON Schema and test vectors |
-| [`packages/client`](packages/client/README.md) | The socket client shared by the CLI and, later, the app |
+| [`packages/client`](packages/client/README.md) | How a local process finds and talks to `homerund`: the runtime, the CLI and the test harnesses share it |
 | `spikes/` | Milestone 0 experiments: SDK behaviour, signing, packaging, native MCP servers |
 | `scripts/` | Repository checks (`check-no-secrets.sh`, `check-registry.sh`) and the macOS build, signing and notarization scripts (`scripts/macos/`) |
 | [`docs`](docs/) | The design document and the milestone 0 results |
@@ -48,7 +51,13 @@ or later.
 
 ```sh
 pnpm install
-pnpm --filter @homerun/homerund dev    # the runtime, with a dev shell standing in for the app
+pnpm --filter @homerun/desktop tauri dev    # the app (macOS, Rust 1.94)
+```
+
+Or, without the app, the runtime with a dev shell standing in for it:
+
+```sh
+pnpm --filter @homerun/homerund dev
 ```
 
 The dev shell takes the API key from `ANTHROPIC_API_KEY`, or asks for it. In
@@ -59,7 +68,8 @@ pnpm homerun status
 pnpm homerun chat
 ```
 
-See the [CLI README](apps/cli/README.md) for all commands, and the
+See the [app README](apps/desktop/README.md), the
+[CLI README](apps/cli/README.md) for all commands, and the
 [runtime README](apps/homerund/README.md) for the dev shell's options.
 
 ## Documentation
@@ -84,8 +94,14 @@ pnpm --filter @homerun/homerund test:crash   # kill at every event boundary
 pnpm --filter @homerun/cli test:unit
 pnpm --filter @homerun/cli test:e2e
 pnpm --filter @homerun/cli test:replay
+pnpm --filter @homerun/app-state test
+pnpm --filter @homerun/desktop test           # component tests
+pnpm --filter @homerun/desktop test:e2e       # the UI against a real homerund
+(cd apps/desktop/src-tauri && cargo test -p homerun-shell-core)
 scripts/check-no-secrets.sh
 ```
 
 No test needs an API key. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
-runs these in three jobs: the packages, the runtime and the CLI.
+runs these in parallel jobs: the packages, the runtime, its crash tests, the CLI,
+the app's state layer and views, the app end to end, and the shell's supervisor.
+A nightly job builds the full Tauri app on macOS.

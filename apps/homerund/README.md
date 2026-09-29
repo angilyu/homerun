@@ -304,7 +304,8 @@ bun run src/main.ts serve --no-launch-token --dev-auto-approve   # development
 
 ### Dev shell
 
-Until the desktop app exists, `scripts/dev-shell.ts` stands in for the shell:
+The desktop app ([`apps/desktop`](../desktop/README.md)) is the real shell. To work on the
+runtime alone, `scripts/dev-shell.ts` stands in for it:
 
 ```sh
 pnpm --filter @homerun/homerund dev [--no-key] [-- <serve switches>]
