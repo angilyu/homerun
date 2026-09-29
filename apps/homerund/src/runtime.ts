@@ -103,7 +103,8 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     const markers = [config.claudePath, "/bin/bash", ...Object.values(config.devMcpOverrides).map((m) => m.command)];
     const killedGroups: number[] = [];
     // A run in its short wait for an answer had a live process (§5.6): it recovers like a
-    // running one, so an answer that never reached the call is applied.
+    // running one, so an answer that never reached the call is applied. Its `claude_pid` is
+    // what marks it, so recovery clears it in the same commit, not this loop.
     const shortWaits = store.db.query<{ run_id: string }, []>("SELECT run_id FROM runs WHERE state = 'waiting_input' AND claude_pid IS NOT NULL").all().map((r) => r.run_id);
     const withGroups = store.db
       .query<RunRow, []>("SELECT * FROM runs WHERE claude_pid IS NOT NULL OR reap_pgid IS NOT NULL")
@@ -112,7 +113,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       for (const pgid of new Set([r.claude_pid, r.reap_pgid].filter((p): p is number => p !== null))) {
         if (await killStaleGroup(pgid, r.claude_boot, boot, markers, config.claudePath)) killedGroups.push(pgid);
       }
-      updateRun(store, r.run_id, { claude_pid: null, reap_pgid: null });
+      updateRun(store, r.run_id, shortWaits.includes(r.run_id) ? { reap_pgid: null } : { claude_pid: null, reap_pgid: null });
     }
     const killedTools = await killEscapedTools(config.claudeConfigDir);
 

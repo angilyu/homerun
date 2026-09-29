@@ -22,15 +22,21 @@ import { chainEntries, chainTo, chainTools, type Entry, type TEntry } from "../.
  * - Like `claude`, it cannot resume a session with no stored conversation: it exits with
  *   "No conversation found".
  *
+ * - When the gate says `defer` (§5.6, spike 3), the turn ends with the call deferred and the
+ *   process exits. The session remembers the deferral (a `system` entry); on resume the deferred
+ *   call is asked about again before anything else, and only the calls never asked are lost (F3).
+ *
  * Side effects go to a ledger file (the outside world), one line per effect, fsynced: the truth
  * the "Did this happen?" oracle answers from.
  */
 
 export const INTERRUPTED = "[Request interrupted by user for tool use]";
+/** Tools with no side effect in the ledger. */
+export const NO_EFFECT: ReadonlySet<string> = new Set(["Read", "AskUserQuestion"]);
 
 export interface Step {
   name: string;
-  tool: "Read" | "Bash" | "Write";
+  tool: "Read" | "Bash" | "Write" | "AskUserQuestion";
   input: Record<string, unknown>;
   /** Issued in the same assistant message as the previous step (parallel tool use). */
   withPrev?: boolean;
@@ -46,6 +52,11 @@ export interface SimHooks {
 }
 
 class Died extends Error {}
+class Deferred extends Error {
+  constructor(readonly call: { toolCallId: string; tool: string }) {
+    super("deferred");
+  }
+}
 
 export class SimEngine implements AgentEngine {
   private starts = 0;
@@ -125,25 +136,29 @@ export class SimEngine implements AgentEngine {
       }
     };
 
-    const runMessage = async (steps: readonly Step[]) => {
-      const msgId = `msg_${crypto.randomUUID()}`;
-      const calls = steps.map((s) => ({ s, id: `toolu_${crypto.randomUUID().replaceAll("-", "")}` }));
-      const useEntry = (c: (typeof calls)[number]): Entry => ({
-        type: "assistant",
-        message: { id: msgId, role: "assistant", content: [{ type: "tool_use", id: c.id, name: c.s.tool, input: c.s.input }] },
-      });
-      for (const c of calls) if (!c.s.lagUse) write(useEntry(c));
+    type Call = { s: Step; id: string };
+    const useEntry = (msgId: string, c: Call): Entry => ({
+      type: "assistant",
+      message: { id: msgId, role: "assistant", content: [{ type: "tool_use", id: c.id, name: c.s.tool, input: c.s.input }] },
+    });
+
+    const runCalls = async (msgId: string, calls: readonly Call[]) => {
       for (const c of calls) {
-        const d = await o.gate.preTool({ toolCallId: c.id, tool: c.s.tool, input: c.s.input });
+        const d = await o.gate.preTool({ toolCallId: c.id, tool: c.s.tool, input: c.s.input, canDefer: true });
         alive();
+        if (!d.allow && d.defer) {
+          if (c.s.lagUse) write(useEntry(msgId, c));
+          write({ type: "system", subtype: "tool_deferred", tool_use_id: c.id });
+          throw new Deferred({ toolCallId: c.id, tool: c.s.tool });
+        }
         if (!d.allow) {
-          if (c.s.lagUse) write(useEntry(c));
+          if (c.s.lagUse) write(useEntry(msgId, c));
           write({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: c.id, content: d.reason, is_error: true }] } });
           continue;
         }
         hooks.point("before_effect");
         alive();
-        if (c.s.tool !== "Read") {
+        if (!NO_EFFECT.has(c.s.tool)) {
           const fd = openSync(ledger, "a");
           appendFileSync(fd, `${c.s.name} ${c.id}\n`);
           fsyncSync(fd);
@@ -152,10 +167,11 @@ export class SimEngine implements AgentEngine {
         hooks.point("after_effect");
         alive();
         if (c.s.name === mirrorAfter) flush();
-        const output = `did ${c.s.name}`;
+        const answers = (d.updatedInput as { answers?: Record<string, string> } | undefined)?.answers;
+        const output = answers ? `answered ${JSON.stringify(answers)}` : `did ${c.s.name}`;
         o.gate.postTool({ toolCallId: c.id, ok: true, output });
         await tick();
-        if (c.s.lagUse) write(useEntry(c));
+        if (c.s.lagUse) write(useEntry(msgId, c));
         write({
           type: "user",
           message: { role: "user", content: [{ type: "tool_result", tool_use_id: c.id, content: output, is_error: false }] },
@@ -165,6 +181,14 @@ export class SimEngine implements AgentEngine {
       }
     };
 
+    const runMessage = async (steps: readonly Step[]) => {
+      const msgId = `msg_${crypto.randomUUID()}`;
+      const calls = steps.map((s) => ({ s, id: `toolu_${crypto.randomUUID().replaceAll("-", "")}` }));
+      for (const c of calls) if (!c.s.lagUse) write(useEntry(msgId, c));
+      await runCalls(msgId, calls);
+    };
+
+    const resumeCalls: Call[] = [];
     const main = async (): Promise<EngineExit> => {
       await Promise.resolve();
       o.sink({ type: "session", sessionId, tools: [...o.builtinTools], mcpServers: [], skills: [], plugins: [], model: o.model });
@@ -173,11 +197,20 @@ export class SimEngine implements AgentEngine {
         if (!stored.length) throw new Error(`No conversation found with session ID: ${sessionId}`);
         chain = chainTo(stored, o.resumeAt ?? undefined);
         if (o.resumeAt && chain.at(-1)?.uuid !== o.resumeAt) throw new Error(`resumeSessionAt ${o.resumeAt} is not in the transcript`);
+        const deferred = new Set(chain.filter((t) => t.entry.type === "system" && t.entry.subtype === "tool_deferred").map((t) => t.entry.tool_use_id as string));
         for (const u of chainTools(chain).dangling) {
+          if (deferred.has(u.id)) {
+            const use = blocks(u.at.entry).find((b) => b.type === "tool_use" && b.id === u.id)!;
+            const step = plan.find((p) => p.tool === use.name && JSON.stringify(p.input) === JSON.stringify(use.input))!;
+            resumeCalls.push({ s: step, id: u.id });
+            continue;
+          }
           write({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: u.id, content: INTERRUPTED, is_error: true }] } });
         }
       }
-      for (let inputs = await nextInputs(); inputs; inputs = await nextInputs()) {
+      // A deferred call resumes on an empty input stream; the turn goes on from it.
+      let inputs: UserInput[] | null = resumeCalls.length ? [] : await nextInputs();
+      for (; inputs; inputs = await nextInputs()) {
         const consumed: string[] = [];
         const take = (list: UserInput[]) => {
           for (const i of list) {
@@ -186,14 +219,22 @@ export class SimEngine implements AgentEngine {
           }
         };
         take(inputs);
-        for (;;) {
-          await tick();
-          take(buf.splice(0));
-          const i = plan.findIndex((s) => !isDone(s, chain));
-          if (i < 0) break;
-          let j = i + 1;
-          while (j < plan.length && plan[j]!.withPrev && !isDone(plan[j]!, chain)) j++;
-          await runMessage(plan.slice(i, j));
+        try {
+          if (resumeCalls.length) await runCalls(`msg_${crypto.randomUUID()}`, resumeCalls.splice(0));
+          for (;;) {
+            await tick();
+            take(buf.splice(0));
+            const i = plan.findIndex((s) => !isDone(s, chain));
+            if (i < 0) break;
+            let j = i + 1;
+            while (j < plan.length && plan[j]!.withPrev && !isDone(plan[j]!, chain)) j++;
+            await runMessage(plan.slice(i, j));
+          }
+        } catch (e) {
+          if (!(e instanceof Deferred)) throw e;
+          flush();
+          o.sink({ type: "result", ok: true, subtype: "success", totalCostUsd: 0.001, consumed, queuedTurnCount: 0, errors: [], deferred: e.call });
+          return { code: 0, signal: null };
         }
         const msgId = `msg_${crypto.randomUUID()}`;
         write({ type: "assistant", message: { id: msgId, role: "assistant", content: [{ type: "text", text: "done" }] } });

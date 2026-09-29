@@ -3,7 +3,7 @@ import { InputRequest, requiredAuthority, type AmbiguousCallPrompt } from "@home
 import { log } from "../log";
 import { contentValue, toContent } from "../store/content";
 import { appendEvent, callsWithoutResult, findToolEvent, runEvents, type EventOf } from "../store/events";
-import { gateRequestForCall, getRunRow, insertInputRequest, markRequestApplied, setRunState } from "../store/rows";
+import { gateRequestForCall, getRunRow, insertInputRequest, markRequestApplied, releaseHeldInputs, setRunState } from "../store/rows";
 import type { Store } from "../store/store";
 import { allToolUseIds, chainTools, sessionView } from "../store/transcript";
 import { finishRun } from "./finish";
@@ -131,6 +131,8 @@ export function recoverRun(store: Store, runId: string, reason: RecoveryReason, 
       return { kind: "waiting_input", requests: [] };
     }
     if (others.length === 0) {
+      // Nothing is pending any more: messages held while it waited go with it (§5.7).
+      releaseHeldInputs(store, runId);
       setRunState(store, runId, "pending", {
         claude_pid: null,
         resume_count: row.resume_count + 1,
