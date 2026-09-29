@@ -62,21 +62,43 @@ export function scheduleCronColumn(s: ScheduleSpec): string {
   return s.kind === "cron" ? s.cron : `@every ${s.every_minutes}m`;
 }
 
+/** Why a schedule is paused (§5.3, §7.4, §8.2). Null while it is enabled. */
+export const SchedulePausedReason = named(
+  "SchedulePausedReason",
+  z.enum(["user", "failures", "budget_cap", "archived"]),
+  "user: paused by hand; failures: three failed fires in a row (§5.3); budget_cap: the task's monthly cap was reached (§7.4); archived: the task was archived",
+);
+export type SchedulePausedReason = z.infer<typeof SchedulePausedReason>;
+
 /** Scheduler state for a monitor's schedule (§6 `schedules`). Not part of the versioned spec. */
 export const ScheduleState = named(
   "ScheduleState",
-  z.object({
-    schedule_id: ScheduleId,
-    task_id: TaskId,
-    /** False when paused by the user or after three failed fires in a row (§5.3). */
-    enabled: z.boolean(),
-    next_fire_at: TimestampMs.nullable(),
-    last_fired_at: TimestampMs.nullable(),
-  }),
+  z
+    .object({
+      schedule_id: ScheduleId,
+      task_id: TaskId,
+      /** The schedule it evaluates: the task's current spec, echoed for display. */
+      schedule: ScheduleSpec,
+      /** False when paused by the user, after three failed fires in a row (§5.3), or at a budget cap. */
+      enabled: z.boolean(),
+      paused_reason: SchedulePausedReason.nullable(),
+      next_fire_at: TimestampMs.nullable(),
+      last_fired_at: TimestampMs.nullable(),
+      /** Scheduled fires in a row that failed after their retries (§5.3). */
+      consecutive_failures: z.int().nonnegative(),
+      /** Fires missed or dropped since the last fire that ran (§8.2). */
+      missed_since_last_run: z.int().nonnegative(),
+    })
+    .refine((s) => s.enabled === (s.paused_reason === null), "paused_reason is set exactly when the schedule is disabled"),
 );
 export type ScheduleState = z.infer<typeof ScheduleState>;
 
-/** Per-schedule, per-day coverage (§8.4). */
+/**
+ * Per-schedule, per-day coverage (§8.4), `day` in the schedule's timezone. `expected` counts
+ * every slot; `ran` counts slots that ran on time. A catch-up run is not counted as `ran`: its
+ * slots stay counted as missed. `merged` counts fires dropped because the monitor's previous run
+ * was still going (§5.3).
+ */
 export const ScheduleCoverage = named(
   "ScheduleCoverage",
   z
@@ -87,7 +109,8 @@ export const ScheduleCoverage = named(
       ran: z.int().nonnegative(),
       missed_asleep: z.int().nonnegative(),
       missed_not_running: z.int().nonnegative(),
+      merged: z.int().nonnegative(),
     })
-    .refine((c) => c.ran + c.missed_asleep + c.missed_not_running <= c.expected, "ran + missed cannot exceed expected"),
+    .refine((c) => c.ran + c.missed_asleep + c.missed_not_running + c.merged <= c.expected, "ran + missed + merged cannot exceed expected"),
 );
 export type ScheduleCoverage = z.infer<typeof ScheduleCoverage>;

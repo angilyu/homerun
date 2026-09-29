@@ -80,6 +80,20 @@ describe("migrations (§6.3)", () => {
   });
 });
 
+describe("migration 3: the scheduler (§6, §8)", () => {
+  test("a milestone 4 database gains the scheduler tables and the monitor columns on runs", () => {
+    dir = mkdtempSync(join(tmpdir(), "hr-store-"));
+    db = openDb(join(dir, "homerun.db"));
+    migrate(db, { backupDir: join(dir, "b"), runtimeVersion: "t", migrations: MIGRATIONS.filter((m) => m.version <= 2) });
+    const r = migrate(db, { backupDir: join(dir, "b"), runtimeVersion: "t" });
+    expect(r).toMatchObject({ status: "migrated", from: 2, to: N });
+    const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((t) => t.name);
+    for (const t of ["schedules", "monitor_state", "schedule_coverage", "schedule_fires", "downtime", "runtime_lives", "health_digests", "app_settings"]) expect(tables).toContain(t);
+    const cols = db.query<{ name: string; notnull: number }, []>("PRAGMA table_info(runs)").all();
+    for (const c of ["monitor_phase", "check_session_id", "state_version"]) expect(cols.find((x) => x.name === c)).toMatchObject({ notnull: 0 });
+  });
+});
+
 describe("thread_events", () => {
   test("seq is gap-free per thread; events publish only after commit; a rollback leaves no trace", () => {
     const { store } = fresh();

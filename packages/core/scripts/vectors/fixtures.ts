@@ -204,9 +204,46 @@ export const grant = (over: Record<string, unknown> = {}) => ({
 export const scheduleState = (over: Record<string, unknown> = {}) => ({
   schedule_id: SCHEDULE,
   task_id: TASK,
+  schedule: { kind: "cron", cron: "0 9 * * 1-5", timezone: "Europe/London", catchup: "run_once", max_catchup: 1 },
   enabled: true,
+  paused_reason: null,
   next_fire_at: T0 + 3_600_000,
   last_fired_at: T0,
+  consecutive_failures: 0,
+  missed_since_last_run: 0,
+  ...over,
+});
+
+export const monitorHealth = (over: Record<string, unknown> = {}) => ({
+  task_id: TASK,
+  name: "Release watcher",
+  schedule_id: SCHEDULE,
+  enabled: true,
+  paused_reason: null,
+  expected: 96,
+  succeeded: 40,
+  changes: 1,
+  failed: 0,
+  missed_asleep: 56,
+  missed_not_running: 0,
+  skipped: 0,
+  caught_up: 1,
+  cost_usd: 0.02,
+  last_run_at: T0 + 80_000_000,
+  next_fire_at: T0 + 86_400_000 + 900_000,
+  needs_attention: true,
+  ...over,
+});
+
+export const healthDigest = (over: Record<string, unknown> = {}) => ({
+  from: T0,
+  to: T0 + 86_400_000,
+  generated_at: T0 + 86_400_000,
+  timezone: "Europe/London",
+  monitors: [monitorHealth()],
+  downtime: [{ start_at: T0 + 3_600_000, end_at: T0 + 27_600_000, cause: "asleep" }],
+  cost_usd: 0.02,
+  needs_attention: true,
   ...over,
 });
 

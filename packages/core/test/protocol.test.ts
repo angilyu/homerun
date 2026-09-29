@@ -89,7 +89,7 @@ describe("allowlists", () => {
   });
 
   test("web cannot raise the agent's reach (§9.9)", () => {
-    for (const m of ["tasks.create", "tasks.update", "tasks.archive", "schedules.set_enabled", "grants.create", "monitors.state.set", "monitors.state.reset"] as const) {
+    for (const m of ["tasks.create", "tasks.update", "tasks.archive", "schedules.set_enabled", "grants.create", "monitors.state.set", "monitors.state.reset", "health.settings.set"] as const) {
       expect(ALLOWLISTS.web).not.toContain(m);
       expect(ALLOWLISTS.ios).toContain(m);
     }

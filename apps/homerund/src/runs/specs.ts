@@ -1,4 +1,4 @@
-import { SessionSpec, type BuiltinTool } from "@homerun/core";
+import { SessionSpec, type BuiltinTool, type MonitorSpec } from "@homerun/core";
 import type { Config } from "../config";
 import { getTaskVersionSpec, type RunRow } from "../store/rows";
 import type { Store } from "../store/store";
@@ -30,11 +30,32 @@ export function chatSpec(config: Config): SessionSpec {
   });
 }
 
-/** The spec a run executes: its task version, or the chat default for a thread with no task. */
-export function specForRun(store: Store, config: Config, run: Pick<RunRow, "task_id" | "task_version">): SessionSpec {
+/**
+ * The spec a run executes: its task version, the chat default for a thread with no task, or for
+ * a monitor, the session its act step runs (§8.3 step 4).
+ */
+export function specForRun(store: Store, config: Config, run: Pick<RunRow, "task_id" | "task_version" | "monitor_phase">): SessionSpec {
   if (!run.task_id || !run.task_version) return chatSpec(config);
   const spec = getTaskVersionSpec(store, run.task_id, run.task_version);
   if (!spec) throw new Error(`task ${run.task_id} v${run.task_version} not found`);
-  if (spec.kind !== "session") throw new Error("monitor runs arrive in a later milestone");
+  if (spec.kind === "monitor") return actSpec(spec);
   return spec;
+}
+
+/** The act step of a monitor: the task's prompt, tools and policy, with the act model. */
+export function actSpec(m: MonitorSpec): SessionSpec {
+  const context = [
+    "You are the act step of a Homerun monitor. Its check just found a change; the next message says what it saw.",
+    "Your report goes to the user's monitor thread. Keep it short and specific: what changed, and what you did about it.",
+  ].join(" ");
+  return SessionSpec.parse({
+    kind: "session",
+    format: m.format,
+    name: m.name,
+    prompt: [m.prompt, m.act.instructions, context].filter(Boolean).join("\n\n"),
+    budget: m.budget,
+    tools: m.tools,
+    policy: m.policy,
+    model: m.act.model,
+  });
 }

@@ -58,7 +58,8 @@ test/               bun test
 |---|---|---|
 | Common | `DeviceId` `TaskId` `ThreadId` `RunId` `RequestId` `GrantId` `ScheduleId` `ToolCallId` `SdkSessionId` `TimestampMs` `JsonValue` `Content` (`inline` \| `blob`) `BlobRef` `Surface` `Origin` | §6, §6.1, §9.4 |
 | Tools | `ToolClass` `BuiltinTool` (with `BUILTIN_TOOL_CLASS`) `ToolName` `BashCommandPattern` | §5.5 |
-| Schedule | `CronExpression` `IanaTimezone` `CatchupPolicy` `CronSchedule` `IntervalSchedule` `ScheduleSpec` `ScheduleState` `ScheduleCoverage` | §8, §8.1, §8.4 |
+| Schedule | `CronExpression` `IanaTimezone` `CatchupPolicy` `CronSchedule` `IntervalSchedule` `ScheduleSpec` `SchedulePausedReason` `ScheduleState` `ScheduleCoverage` | §5.3, §8, §8.1, §8.4 |
+| Health | `HealthSettings` `TimeOfDay` `Downtime` `MonitorHealth` `HealthDigest` | §8.3, §8.4 |
 | Task spec | `TaskSpec` = `SessionSpec` \| `MonitorSpec`; `ModelChoice` `Budget` `McpServerSpec` `ToolsSpec` `EgressPolicy` `BashPattern` `InputTimeoutPolicy` `TaskPolicy` | §2.1, §5.3, §5.5, §5.6, §7.3, §7.4, §8 |
 | Checks | `RuleCheck` (http json_path/css/regex, rss, file_hash, homerun_tool) `ModelCheck` `CheckSpec` `CheckResult` | §8.3 |
 | Grants | `ToolGrant` | §5.6 |
@@ -74,9 +75,9 @@ last persisted `seq` they follow) instead of `seq`.
 
 | Persisted | Live-only (never in `thread_events`, §6.1) |
 |---|---|
-| `user.message` `message.final` `tool.call` `tool.result` `input.requested` `input.resolved` `run.started` `run.resumed` `run.cancelled` `run.end` `schedule.missed` | `message.delta` `run.status` |
+| `user.message` `message.final` `tool.call` `tool.result` `input.requested` `input.resolved` `run.started` `run.resumed` `run.cancelled` `run.end` `schedule.missed` `schedule.paused` | `message.delta` `run.status` |
 
-**IPC methods.** `schema/manifest.json` lists all 40 methods and 6 notifications with their
+**IPC methods.** `schema/manifest.json` lists all 43 methods and 7 notifications with their
 callers. Shell-only: `secrets.set`, `secrets.clear`, `cli.approve`, `cli.deny`. Runtime → shell:
 `secrets.persist`. Allowed before `hello` (preauth): `hello`, `cli.request_access`. Everything
 except `hello` and `cli.request_access` is **provisional until milestone 7** (D8).
@@ -125,7 +126,7 @@ except `hello` and `cli.request_access` is **provisional until milestone 7** (D8
     hand (list below). The test suite checks both directions of this label with Ajv, so it stays
     accurate.
 
-There are 409 cases across 121 schemas, 54 of them refinement-only. Every event type, method
+There are 505 cases across 133 schemas, 61 of them refinement-only. Every event type, method
 and notification has at least one valid vector.
 
 `vectors/answer-rules.json` has a different shape, because the answer rules depend on who
@@ -195,7 +196,8 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
 ### Authority and callers
 
 - **Web cannot edit tasks.** Web may not call `tasks.create`, `tasks.update`, `tasks.archive`,
-  `schedules.set_enabled`, `grants.create`, `monitors.state.set` or `monitors.state.reset`
+  `schedules.set_enabled`, `grants.create`, `monitors.state.set`, `monitors.state.reset` or
+  `health.settings.set`
   (`NOT_WEB` in `methods.ts`). A web client that could edit a monitor's prompt, tools or roots
   would get full authority at its next scheduled fire, because scheduled runs have no origin.
 - **Only the development-mode CLI answers approvals.** Anything running as the user can invoke
@@ -230,17 +232,31 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
   `*/15 * * * *`, the fall-back overlap rule would lose an hour of fires.
 - **D2. Monitor retries.** A retry is a new run of the same fire with `attempt` 1–2
   (`MAX_RUN_ATTEMPT`); `dedupe_key` is opaque to core, which keeps `UNIQUE(dedupe_key)`
-  compatible with §5.3's two retries. Milestone 5 fixes the key format, for example
-  `task:fire:attempt`.
+  compatible with §5.3's two retries. The runtime uses
+  `fire:<schedule_id>:<scheduled_for>:<attempt>`.
 - **D3. Run columns.** `Run.check_result` (§8.3: evidence stored with the run) and `Run.cost_usd`
   (§7.4: cost summed per task). `run.end` also carries `cost_usd`.
-- `abandoned` means ending without an agent outcome: a fire merged by `run_once` catch-up, or a
-  run that can't be resumed. `RUN_STATE_TRANSITIONS` documents the legal transitions, and tests
+- `abandoned` means ending without an agent outcome, for example a run that can't be resumed. A
+  fire merged into a later one (§5.3) never becomes a run: it is counted in
+  `ScheduleCoverage.merged` and reported by `schedule.missed` with `skipped_by_policy`. `RUN_STATE_TRANSITIONS` documents the legal transitions, and tests
   cover them.
 - The monitor schedule lives in the (versioned) spec. `enabled`, `next_fire_at` and
   `last_fired_at` are scheduler state (`ScheduleState`), so pausing a monitor doesn't create a
   task version. v1 allows one schedule per monitor.
-- `Budget.monthly_cap_usd`: the budget period is monthly.
+- **D11. Why a schedule is paused.** `ScheduleState.paused_reason` is set exactly when it is
+  disabled: `user`, `failures` (three failed fires in a row, §5.3), `budget_cap` (§7.4) or
+  `archived`. The runtime announces the pauses the user didn't make with a persisted
+  `schedule.paused` event. `consecutive_failures` and `missed_since_last_run` feed the
+  "never fail silently" view (§8.2) until push arrives.
+- **D12. Model checks may name a source.** `ModelCheck.source` is a `RuleSource`: the runtime
+  fetches it, as for a rule check, and the model only judges the observation, with no tools.
+  Without a source, the model gathers observations with the task's tools under its policy.
+- **D13. Health digest.** `health.digest` computes a `HealthDigest` for any period up to 31
+  days. The daily one is generated at `HealthSettings.time` and sent as `health.digest_ready`.
+  `ScheduleCoverage.merged` counts fires merged because the previous run was still going, so
+  every slot is ran, missed (asleep or not running) or merged.
+- `Budget.monthly_cap_usd`: the budget period is the calendar month in the schedule's
+  timezone.
 
 ### Input requests
 
@@ -302,8 +318,8 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
 
 ### Where the rest lives
 
-- Next-fire and DST computation: milestone 5, with its fake-clock suite. Core only validates
-  schedules and documents the semantics.
+- Next-fire and DST computation: `apps/homerund/src/schedule/`, with its fake-clock suite.
+  Core only validates schedules and documents the semantics.
 - Bash pattern matching: milestone 6.
 - SQL and migrations: `apps/homerund` (`src/store/migrations/`).
 - Crypto and ciphertext test vectors: milestone 9.

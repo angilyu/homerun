@@ -52,7 +52,30 @@ export const schedule: Vector[] = [
   bad("ScheduleSpec", "interval zero", { kind: "interval", every_minutes: 0, catchup: "skip", max_catchup: 1 }),
   bad("ScheduleSpec", "unknown catchup", { kind: "interval", every_minutes: 5, catchup: "later", max_catchup: 1 }),
   ok("ScheduleState", "enabled", F.scheduleState()),
+  ok("ScheduleState", "paused after failures", F.scheduleState({ enabled: false, paused_reason: "failures", next_fire_at: null, consecutive_failures: 3 })),
+  ok("ScheduleState", "interval", F.scheduleState({ schedule: { kind: "interval", every_minutes: 15, catchup: "skip", max_catchup: 1 } })),
+  bad("ScheduleState", "unknown paused_reason", F.scheduleState({ enabled: false, paused_reason: "tired" })),
+  badRule("ScheduleState", "disabled without a reason", F.scheduleState({ enabled: false, paused_reason: null })),
+  badRule("ScheduleState", "enabled with a reason", F.scheduleState({ paused_reason: "user" })),
   ok("ScheduleCoverage", "ran 10 of 12", {
+    schedule_id: F.SCHEDULE,
+    day: "2026-01-01",
+    expected: 12,
+    ran: 10,
+    missed_asleep: 2,
+    missed_not_running: 0,
+    merged: 0,
+  }),
+  ok("ScheduleCoverage", "one merged", {
+    schedule_id: F.SCHEDULE,
+    day: "2026-01-01",
+    expected: 12,
+    ran: 11,
+    missed_asleep: 0,
+    missed_not_running: 0,
+    merged: 1,
+  }),
+  bad("ScheduleCoverage", "missing merged", {
     schedule_id: F.SCHEDULE,
     day: "2026-01-01",
     expected: 12,
@@ -64,10 +87,26 @@ export const schedule: Vector[] = [
     schedule_id: F.SCHEDULE,
     day: "2026-01-01",
     expected: 2,
-    ran: 3,
-    missed_asleep: 0,
+    ran: 1,
+    missed_asleep: 1,
     missed_not_running: 0,
+    merged: 1,
   }),
+];
+
+export const health: Vector[] = [
+  ok("HealthSettings", "daily at 08:00", { enabled: true, time: "08:00", timezone: "America/Los_Angeles" }),
+  ok("HealthSettings", "off", { enabled: false, time: "08:00", timezone: "UTC" }),
+  bad("HealthSettings", "24:00", { enabled: true, time: "24:00", timezone: "UTC" }),
+  bad("HealthSettings", "single-digit hour", { enabled: true, time: "8:00", timezone: "UTC" }),
+  ok("Downtime", "asleep overnight", { start_at: F.T0, end_at: F.T0 + 25_200_000, cause: "asleep" }),
+  badRule("Downtime", "ends before it starts", { start_at: F.T0 + 1, end_at: F.T0, cause: "not_running" }),
+  ok("MonitorHealth", "mostly asleep", F.monitorHealth()),
+  ok("MonitorHealth", "paused", F.monitorHealth({ enabled: false, paused_reason: "failures", next_fire_at: null })),
+  bad("MonitorHealth", "negative cost", F.monitorHealth({ cost_usd: -1 })),
+  ok("HealthDigest", "one day", F.healthDigest()),
+  ok("HealthDigest", "no monitors", F.healthDigest({ monitors: [], downtime: [], cost_usd: 0, needs_attention: false })),
+  badRule("HealthDigest", "empty period", F.healthDigest({ to: F.T0 })),
 ];
 
 const withBash = (patterns: unknown[]) =>
@@ -89,6 +128,14 @@ export const taskSpec: Vector[] = [
   ok("TaskSpec", "monitor with model check and interval", F.monitorSpec({
     schedule: { kind: "interval", every_minutes: 30, catchup: "run_all", max_catchup: 5 },
     check: { kind: "model", model: "claude-haiku-4-5", instructions: "Has the status page reported an incident?" },
+  })),
+  ok("TaskSpec", "monitor with model check on a fetched source", F.monitorSpec({
+    check: {
+      kind: "model",
+      model: "claude-haiku-4-5",
+      instructions: "Report only incidents that affect the API.",
+      source: { type: "http", url: "https://status.example.com/", extract: { kind: "css", selector: "main" } },
+    },
   })),
   ok("TaskSpec", "monitor with http json_path check", F.monitorSpec({
     check: {

@@ -21,6 +21,8 @@ import type { RunManager } from "../runs/manager";
 import { getBlob } from "../store/content";
 import { eventsAfter, historyPage, lastSeq } from "../store/events";
 import { getInputRequest, getRunRow, getTask, getThread, listRuns, listTasks, listThreadSummaries, pendingInputRequests, rowToRun } from "../store/rows";
+import { allSchedules, coverageDays, editMonitorState, getMonitorState, rowToScheduleState, scheduleForTask } from "../store/schedule-rows";
+import { computeDigest, type DigestScheduler } from "../monitors/digest";
 import type { Authenticator } from "./auth";
 
 /** A JSON-RPC error a handler wants to send as is. */
@@ -49,6 +51,9 @@ export interface HandlerDeps {
   ctx: RunContext;
   manager: RunManager;
   auth: Authenticator;
+  digest: DigestScheduler;
+  /** The daily digest's settings changed: re-arm the timers. */
+  settingsChanged?: () => void;
 }
 
 /** A result, plus an optional step to run after the reply is written (subscription backlog). */
@@ -173,6 +178,45 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       return { task: t };
     },
     "tasks.list": (_c, p) => ({ tasks: listTasks(store, p.kind, p.include_archived ?? false) }),
+    "tasks.update": (_c, p) => ({ task: manager.updateTask(p.task_id, p.spec, p.expected_version) }),
+    "tasks.archive": (_c, p) => ({ archived_at: manager.archiveTask(p.task_id) }),
+    "tasks.run_now": (conn, p) => manager.runNow(p.task_id, originOf(conn)),
+
+    "schedules.list": (_c, p) => ({
+      schedules: allSchedules(store)
+        .filter((s) => !p.task_id || s.task_id === p.task_id)
+        .map(rowToScheduleState),
+    }),
+    "schedules.set_enabled": (_c, p) => ({ schedule: rowToScheduleState(manager.setScheduleEnabled(p.schedule_id, p.enabled)) }),
+    "schedules.coverage": (_c, p) => {
+      if (!getTask(store, p.task_id)) throw notFound("task");
+      const s = scheduleForTask(store, p.task_id);
+      if (!s) throw notFound("schedule");
+      if (p.to_day < p.from_day) throw new RpcFail(RPC_ERROR.VALIDATION_FAILED, "to_day is before from_day");
+      return { days: coverageDays(store, s.schedule_id, p.from_day, p.to_day) };
+    },
+
+    "monitors.state.get": (_c, p) => {
+      if (!getTask(store, p.task_id)) throw notFound("task");
+      return { state: getMonitorState(store, p.task_id) };
+    },
+    "monitors.state.set": (_c, p) => {
+      if (!getTask(store, p.task_id)) throw notFound("task");
+      return { state: editMonitorState(store, p.task_id, p.state, p.expected_version, now(ctx)) };
+    },
+    "monitors.state.reset": (_c, p) => {
+      if (!getTask(store, p.task_id)) throw notFound("task");
+      editMonitorState(store, p.task_id, null, p.expected_version, now(ctx));
+      return { ok: true as const };
+    },
+
+    "health.digest": (_c, p) => ({ digest: computeDigest(store, p.from, p.to, d.digest.settings().timezone, now(ctx)) }),
+    "health.settings.get": () => ({ settings: d.digest.settings() }),
+    "health.settings.set": (_c, p) => {
+      const settings = d.digest.setSettings(p.settings, now(ctx));
+      d.settingsChanged?.();
+      return { settings };
+    },
 
     "blobs.get": (_c, p) => {
       const b = getBlob(store, p.sha256, now(ctx));

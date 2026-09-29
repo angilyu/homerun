@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import m0001 from "./migrations/0001_initial.sql" with { type: "text" };
 import m0002 from "./migrations/0002_resume_at.sql" with { type: "text" };
+import m0003 from "./migrations/0003_scheduler.sql" with { type: "text" };
 
 /**
  * Forward-only, chained migrations (§6.3). Migration `i` takes the schema from version i-1 to i.
@@ -18,6 +19,7 @@ export interface Migration {
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, sql: m0001 },
   { version: 2, sql: m0002 },
+  { version: 3, sql: m0003 },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

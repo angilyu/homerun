@@ -51,9 +51,12 @@ describe("SDK messages → engine events (translate)", () => {
     ]);
     expect(t.push(m({ type: "system", subtype: "api_retry", retry_delay_ms: 500 }), 1000)).toEqual([{ type: "status", detail: "retrying_model", retryAt: 1500 }]);
     expect(t.push(m({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, user_message_uuids: ["u1"], result: "ok" }))).toEqual([
-      { type: "result", ok: true, subtype: "success", totalCostUsd: 0.01, consumed: ["u1"], queuedTurnCount: null, errors: [] },
+      { type: "result", ok: true, subtype: "success", totalCostUsd: 0.01, consumed: ["u1"], queuedTurnCount: null, errors: [], text: "ok" },
     ]);
     expect(t.push(m({ type: "result", subtype: "error_max_budget_usd", is_error: true, errors: ["budget"] }))[0]).toMatchObject({ ok: false, subtype: "error_max_budget_usd", errors: ["budget"] });
+    expect(t.push(m({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0, user_message_uuids: [], structured_output: { changed: false } }))[0]).toMatchObject({
+      structuredOutput: { changed: false },
+    });
   });
 });
 

@@ -182,9 +182,19 @@ export const RuleCheck = named(
   "Evaluated by the runtime with no model call (§8.3)",
 );
 
+/**
+ * One cheap `query()` that returns a CheckResult (§8.3). With a `source`, the runtime fetches the
+ * observation itself, as for a rule check, and the model only judges it, with no tools. Without
+ * one, the model gathers observations with the task's own tools, under the task's policy.
+ */
 export const ModelCheck = named(
   "ModelCheck",
-  z.object({ kind: z.literal("model"), model: ModelId, instructions: z.string().max(20_000).optional() }),
+  z.object({
+    kind: z.literal("model"),
+    model: ModelId,
+    instructions: z.string().max(20_000).optional(),
+    source: RuleSource.optional(),
+  }),
   "One cheap query() that returns CheckResult (§8.3)",
 );
 

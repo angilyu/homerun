@@ -21,7 +21,8 @@
       "run.resumed",
       "run.cancelled",
       "run.end",
-      "schedule.missed"
+      "schedule.missed",
+      "schedule.paused"
     ],
     "live_only": [
       "message.delta",
@@ -231,6 +232,50 @@
       "params": "SchedulesCoverageParams",
       "result": "SchedulesCoverageResult",
       "description": "Per-day ran / missed counts for the coverage display (§8.4)."
+    },
+    "health.digest": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "HealthDigestParams",
+      "result": "HealthDigestResult",
+      "description": "Summarise every monitor over a period: runs, changes, failures, misses by cause, and cost."
+    },
+    "health.settings.get": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "HealthSettingsGetParams",
+      "result": "HealthSettingsGetResult",
+      "description": "When the daily digest is generated, or whether it is off."
+    },
+    "health.settings.set": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios"
+      ],
+      "params": "HealthSettingsSetParams",
+      "result": "HealthSettingsSetResult",
+      "description": "Change or turn off the daily digest."
     },
     "grants.list": {
       "direction": "to_runtime",
@@ -642,6 +687,19 @@
       ],
       "params": "CliAccessRequestedNotification",
       "description": "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`."
+    },
+    "health.digest_ready": {
+      "direction": "runtime_to_client",
+      "recipients": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "HealthDigestReadyNotification",
+      "description": "The daily digest (§8.3) was generated. Also stored; `health.digest` recomputes any period."
     },
     "power.will_sleep": {
       "direction": "shell_to_runtime",

@@ -225,15 +225,166 @@
       "value": {
         "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
         "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+        "schedule": {
+          "kind": "cron",
+          "cron": "0 9 * * 1-5",
+          "timezone": "Europe/London",
+          "catchup": "run_once",
+          "max_catchup": 1
+        },
         "enabled": true,
+        "paused_reason": null,
         "next_fire_at": 1767229200000,
-        "last_fired_at": 1767225600000
+        "last_fired_at": 1767225600000,
+        "consecutive_failures": 0,
+        "missed_since_last_run": 0
+      }
+    },
+    {
+      "schema": "ScheduleState",
+      "name": "paused after failures",
+      "valid": true,
+      "value": {
+        "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+        "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+        "schedule": {
+          "kind": "cron",
+          "cron": "0 9 * * 1-5",
+          "timezone": "Europe/London",
+          "catchup": "run_once",
+          "max_catchup": 1
+        },
+        "enabled": false,
+        "paused_reason": "failures",
+        "next_fire_at": null,
+        "last_fired_at": 1767225600000,
+        "consecutive_failures": 3,
+        "missed_since_last_run": 0
+      }
+    },
+    {
+      "schema": "ScheduleState",
+      "name": "interval",
+      "valid": true,
+      "value": {
+        "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+        "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+        "schedule": {
+          "kind": "interval",
+          "every_minutes": 15,
+          "catchup": "skip",
+          "max_catchup": 1
+        },
+        "enabled": true,
+        "paused_reason": null,
+        "next_fire_at": 1767229200000,
+        "last_fired_at": 1767225600000,
+        "consecutive_failures": 0,
+        "missed_since_last_run": 0
+      }
+    },
+    {
+      "schema": "ScheduleState",
+      "name": "unknown paused_reason",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+        "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+        "schedule": {
+          "kind": "cron",
+          "cron": "0 9 * * 1-5",
+          "timezone": "Europe/London",
+          "catchup": "run_once",
+          "max_catchup": 1
+        },
+        "enabled": false,
+        "paused_reason": "tired",
+        "next_fire_at": 1767229200000,
+        "last_fired_at": 1767225600000,
+        "consecutive_failures": 0,
+        "missed_since_last_run": 0
+      }
+    },
+    {
+      "schema": "ScheduleState",
+      "name": "disabled without a reason",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+        "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+        "schedule": {
+          "kind": "cron",
+          "cron": "0 9 * * 1-5",
+          "timezone": "Europe/London",
+          "catchup": "run_once",
+          "max_catchup": 1
+        },
+        "enabled": false,
+        "paused_reason": null,
+        "next_fire_at": 1767229200000,
+        "last_fired_at": 1767225600000,
+        "consecutive_failures": 0,
+        "missed_since_last_run": 0
+      }
+    },
+    {
+      "schema": "ScheduleState",
+      "name": "enabled with a reason",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+        "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01",
+        "schedule": {
+          "kind": "cron",
+          "cron": "0 9 * * 1-5",
+          "timezone": "Europe/London",
+          "catchup": "run_once",
+          "max_catchup": 1
+        },
+        "enabled": true,
+        "paused_reason": "user",
+        "next_fire_at": 1767229200000,
+        "last_fired_at": 1767225600000,
+        "consecutive_failures": 0,
+        "missed_since_last_run": 0
       }
     },
     {
       "schema": "ScheduleCoverage",
       "name": "ran 10 of 12",
       "valid": true,
+      "value": {
+        "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+        "day": "2026-01-01",
+        "expected": 12,
+        "ran": 10,
+        "missed_asleep": 2,
+        "missed_not_running": 0,
+        "merged": 0
+      }
+    },
+    {
+      "schema": "ScheduleCoverage",
+      "name": "one merged",
+      "valid": true,
+      "value": {
+        "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
+        "day": "2026-01-01",
+        "expected": 12,
+        "ran": 11,
+        "missed_asleep": 0,
+        "missed_not_running": 0,
+        "merged": 1
+      }
+    },
+    {
+      "schema": "ScheduleCoverage",
+      "name": "missing merged",
+      "valid": false,
+      "layer": "json_schema",
       "value": {
         "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
         "day": "2026-01-01",
@@ -252,9 +403,10 @@
         "schedule_id": "6b7c8d9e-0f1a-4b2c-9d4e-5f6a7b8c9d01",
         "day": "2026-01-01",
         "expected": 2,
-        "ran": 3,
-        "missed_asleep": 0,
-        "missed_not_running": 0
+        "ran": 1,
+        "missed_asleep": 1,
+        "missed_not_running": 0,
+        "merged": 1
       }
     }
   ]

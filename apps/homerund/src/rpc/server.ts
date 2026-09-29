@@ -5,18 +5,22 @@ import type { Socket, TCPSocketListener, UnixSocketListener } from "bun";
 import {
   MAX_FRAME_BYTES,
   METHODS,
+  NOTIFICATIONS,
   RPC_ERROR,
   authorize,
   classifyFrame,
   mayReceive,
+  maySend,
   type CallerRole,
   type MethodName,
   type NotificationName,
   type RpcId,
+  type RpcNotification,
   type RpcRequest,
 } from "@homerun/core";
 import { log, scrub } from "../log";
-import { InvalidRequestError, NotFoundError } from "../runs/manager";
+import { BudgetCapError, InvalidRequestError, NotFoundError, VersionConflictError } from "../runs/manager";
+import { StateConflictError } from "../store/schedule-rows";
 import { RpcFail, type Conn, type Handlers } from "./handlers";
 
 export const HELLO_TIMEOUT_MS = 2_000;
@@ -29,6 +33,8 @@ export interface ServerOptions {
   /** Parse every result with its core schema before sending (tests and development). */
   checkResults?: boolean;
   helloTimeoutMs?: number;
+  /** Notifications the shell sends the runtime (`power.*`), already checked against their schema. */
+  onNotification?: (method: NotificationName, params: unknown) => void;
 }
 
 type Data = { conn: Connection };
@@ -67,6 +73,11 @@ export class RpcServer {
     });
     chmodSync(path, 0o600);
     log.info("listening", { socket: path });
+  }
+
+  /** Send a notification to every connection whose role may receive it. */
+  broadcast(method: NotificationName, params: unknown): void {
+    for (const c of this.connections) c.notify(method, params);
   }
 
   /** Stop accepting and close every connection. */
@@ -156,9 +167,30 @@ export class Connection implements Conn {
       const id = readableId(raw);
       return this.fail(id, RPC_ERROR.INVALID_REQUEST, "Invalid request.", { issues: c.error.issues.slice(0, 20) as unknown as object });
     }
-    // Client notifications (power.*) and replies to runtime → shell requests arrive in later milestones.
+    if (c.kind === "notification") return this.onNotification(c.frame as RpcNotification);
+    // Replies to runtime → shell requests arrive in a later milestone.
     if (c.kind !== "request") return;
     this.onRequest(c.frame as RpcRequest);
+  }
+
+  /** Only the shell may send notifications, only known ones, and a bad one is dropped (§5.2). */
+  private onNotification(n: RpcNotification): void {
+    if (this.role === null || !(n.method in NOTIFICATIONS)) return;
+    const name = n.method as NotificationName;
+    if (!maySend(this.role, name)) {
+      log.warn("notification from a caller that may not send it", { role: this.role, method: name });
+      return;
+    }
+    const parsed = NOTIFICATIONS[name].params.safeParse(n.params ?? {});
+    if (!parsed.success) {
+      log.warn("invalid notification params", { method: name });
+      return;
+    }
+    try {
+      this.opts.onNotification?.(name, parsed.data);
+    } catch (e) {
+      log.error("notification handler failed", { method: name, err: e instanceof Error ? e : String(e) });
+    }
   }
 
   private onRequest(req: RpcRequest): void {
@@ -182,6 +214,11 @@ export class Connection implements Conn {
       if (e instanceof RpcFail) return this.fail(req.id, e.code, e.message, e.data, e.close);
       if (e instanceof NotFoundError) return this.fail(req.id, RPC_ERROR.NOT_FOUND, e.message);
       if (e instanceof InvalidRequestError) return this.fail(req.id, RPC_ERROR.VALIDATION_FAILED, e.message);
+      if (e instanceof VersionConflictError) return this.fail(req.id, RPC_ERROR.CONFLICT, e.message, { current_version: e.currentVersion });
+      if (e instanceof StateConflictError) {
+        return e.current === null ? this.fail(req.id, RPC_ERROR.NOT_FOUND, e.message) : this.fail(req.id, RPC_ERROR.CONFLICT, e.message, { current_version: e.current });
+      }
+      if (e instanceof BudgetCapError) return this.fail(req.id, RPC_ERROR.BUDGET_EXCEEDED, e.message);
       log.error("handler failed", { method, err: e instanceof Error ? e : String(e) });
       return this.fail(req.id, RPC_ERROR.INTERNAL_ERROR, "Internal error.");
     }

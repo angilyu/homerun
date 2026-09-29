@@ -94,12 +94,29 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
   "schedules.set_enabled": {
     params: [["pause", { schedule_id: F.SCHEDULE, enabled: false }]],
     badParams: [["string boolean", { schedule_id: F.SCHEDULE, enabled: "false" }]],
-    results: [["paused", { schedule: F.scheduleState({ enabled: false, next_fire_at: null }) }]],
+    results: [["paused", { schedule: F.scheduleState({ enabled: false, paused_reason: "user", next_fire_at: null }) }]],
   },
   "schedules.coverage": {
     params: [["a week", { task_id: F.TASK, from_day: "2026-01-01", to_day: "2026-01-07" }]],
     badParams: [["datetime instead of day", { task_id: F.TASK, from_day: "2026-01-01T00:00:00Z", to_day: "2026-01-07" }]],
-    results: [["one day", { days: [{ schedule_id: F.SCHEDULE, day: "2026-01-01", expected: 12, ran: 12, missed_asleep: 0, missed_not_running: 0 }] }]],
+    results: [["one day", { days: [{ schedule_id: F.SCHEDULE, day: "2026-01-01", expected: 12, ran: 12, missed_asleep: 0, missed_not_running: 0, merged: 0 }] }]],
+  },
+  "health.digest": {
+    params: [["a day", { from: F.T0, to: F.T0 + 86_400_000 }]],
+    badParams: [["missing to", { from: F.T0 }]],
+    badParamsRule: [["empty period", { from: F.T0, to: F.T0 }], ["over 31 days", { from: F.T0, to: F.T0 + 32 * 86_400_000 }]],
+    results: [["digest", { digest: F.healthDigest() }]],
+  },
+  "health.settings.get": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["on", { settings: { enabled: true, time: "08:00", timezone: "Europe/London" } }]],
+  },
+  "health.settings.set": {
+    params: [["off", { settings: { enabled: false, time: "08:00", timezone: "Europe/London" } }]],
+    badParams: [["bad time", { settings: { enabled: true, time: "8am", timezone: "Europe/London" } }]],
+    badParamsRule: [["unknown zone", { settings: { enabled: true, time: "08:00", timezone: "Mars/Olympus_Mons" } }]],
+    results: [["set", { settings: { enabled: true, time: "07:30", timezone: "Europe/London" } }]],
   },
   "grants.list": {
     params: [["active", { task_id: F.TASK }], ["with revoked", { task_id: F.TASK, include_revoked: true }]],
@@ -276,6 +293,10 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
   "cli.access_requested": {
     valid: [["request", { request_id: F.CLI_REQUEST, client: { name: "homerun-cli", version: "0.1.0" }, hostname: "studio.local", requested_at: F.T0 }]],
     invalid: [["missing hostname", { request_id: F.CLI_REQUEST, client: { name: "homerun-cli", version: "0.1.0" }, requested_at: F.T0 }]],
+  },
+  "health.digest_ready": {
+    valid: [["digest", { digest: F.healthDigest() }]],
+    invalid: [["missing digest", {}]],
   },
   "power.will_sleep": { valid: [["sleep", { at: F.T0 }]], invalid: [["iso time", { at: "2026-01-01T00:00:00Z" }]] },
   "power.did_wake": {

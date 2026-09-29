@@ -14,6 +14,9 @@ import { killRunTree } from "./process-tree";
 import { spawnInGroup } from "./spawn";
 import { Translator } from "./translate";
 
+/** The tool `claude` adds for `outputFormat`; the model calls it to give its answer. */
+export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+
 /** A push-based AsyncIterable used as the query's streaming input (§5.7 steering). */
 export class InputQueue implements AsyncIterable<SDKUserMessage> {
   private buf: SDKUserMessage[] = [];
@@ -72,8 +75,14 @@ export class ClaudeEngine implements AgentEngine {
       for (const e of translator.flush()) o.sink(e);
     };
 
+    // With `outputFormat`, claude returns the answer by calling its own StructuredOutput tool.
+    // That call has no side effect and is how the result arrives, so it bypasses the gate.
+    const answerTool = (tool: string) => o.outputSchema !== undefined && tool === STRUCTURED_OUTPUT_TOOL;
+    const allowAnswer = { hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: "allow" as const } };
+
     const pre: HookCallback = async (input) => {
       const h = input as PreToolUseHookInput;
+      if (answerTool(h.tool_name)) return allowAnswer;
       await drainTicks();
       flush();
       const d = await o.gate.preTool({
@@ -92,11 +101,13 @@ export class ClaudeEngine implements AgentEngine {
     };
     const post: HookCallback = async (input) => {
       const h = input as PostToolUseHookInput;
+      if (answerTool(h.tool_name)) return {};
       o.gate.postTool({ toolCallId: h.tool_use_id, ok: true, output: h.tool_response, ...(h.duration_ms !== undefined ? { durationMs: h.duration_ms } : {}) });
       return {};
     };
     const postFail: HookCallback = async (input) => {
       const h = input as PostToolUseFailureHookInput;
+      if (answerTool(h.tool_name)) return {};
       o.gate.postTool({
         toolCallId: h.tool_use_id,
         ok: false,
@@ -108,6 +119,7 @@ export class ClaudeEngine implements AgentEngine {
     };
     // Same cached decision as PreToolUse, whichever fires first (§5.4, F6).
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
+      if (answerTool(toolName)) return { behavior: "allow", updatedInput: input };
       await drainTicks();
       flush();
       const d = await o.gate.preTool({ toolCallId: opts.toolUseID, tool: toolName, input, ...(opts.mcpServer ? { mcpServer: opts.mcpServer.name } : {}) });

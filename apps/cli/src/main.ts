@@ -14,6 +14,7 @@ import { PROTOCOL_VERSION, type BuildChannel, type CallerRole } from "@homerun/c
 import { helpText, parse, type Parsed } from "./args";
 import { BUILD_CHANNEL, CLI_VERSION } from "./build";
 import * as records from "./commands/records";
+import * as scheduling from "./commands/scheduling";
 import * as streaming from "./commands/stream";
 import { connect, refuseDevSwitches, releaseRefusal, resolveTarget, toCliError } from "./connect";
 import type { Ctx, Io } from "./context";
@@ -36,6 +37,19 @@ const HANDLERS: Record<string, Handler> = {
   "tasks list": records.tasksList,
   "tasks show": records.tasksShow,
   "tasks create": records.tasksCreate,
+  "tasks update": scheduling.tasksUpdate,
+  "tasks archive": scheduling.tasksArchive,
+  "tasks run-now": scheduling.tasksRunNow,
+  "schedules list": scheduling.schedulesList,
+  "schedules enable": scheduling.schedulesEnable,
+  "schedules disable": scheduling.schedulesDisable,
+  "schedules coverage": scheduling.schedulesCoverage,
+  "monitors list": scheduling.monitorsList,
+  "monitors state": scheduling.monitorsState,
+  "monitors set-state": scheduling.monitorsSetState,
+  "monitors reset-state": scheduling.monitorsResetState,
+  "health digest": scheduling.healthDigest,
+  "health settings": scheduling.healthSettings,
   "input list": records.inputList,
   answer: records.answer,
   blob: records.blob,

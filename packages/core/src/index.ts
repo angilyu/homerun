@@ -4,6 +4,7 @@ export * from "./tools";
 export * from "./cron";
 export * from "./timezone";
 export * from "./schedule";
+export * from "./health";
 export * from "./task-spec";
 export * from "./grants";
 export * from "./input";

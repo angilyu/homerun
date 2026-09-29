@@ -55,6 +55,10 @@ export type EngineEvent =
       consumed: string[] | null;
       queuedTurnCount: number | null;
       errors: string[];
+      /** With `outputFormat`: the validated JSON the model returned (§8.3 model checks). */
+      structuredOutput?: unknown;
+      /** The final text of the turn, when the producer reports it. */
+      text?: string;
     };
 
 export interface EngineExit {
@@ -68,6 +72,14 @@ export interface EngineStart {
   runId: string;
   cwd: string;
   appendSystemPrompt: string | null;
+  /**
+   * A complete system prompt instead of the preset plus `appendSystemPrompt`. Monitor checks
+   * use it: one small judgement needs none of the coding agent's instructions (§8.3).
+   */
+  systemPrompt?: string;
+  /** Ask for a JSON result matching this schema (`result.structured_output`). */
+  outputSchema?: Record<string, unknown>;
+  maxTurns?: number;
   model: string;
   fallbackModel: string | null;
   maxBudgetUsd: number;

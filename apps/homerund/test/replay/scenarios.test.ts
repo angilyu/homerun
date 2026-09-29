@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { PersistedThreadEvent, RPC_ERROR, undeliveredMessages, type ThreadEvent } from "@homerun/core";
 import { groupAlive } from "../../src/agent/claude/spawn";
 import type { RpcClient } from "../../src/rpc/client";
-import { sessionSpec, uuid } from "../helpers";
+import { monitorSpec, sessionSpec, uuid } from "../helpers";
 import { HOMERUND_DIR, Homerund, REPLAY_KEY, Subscription, loadEnvLocal, scratchDir } from "./harness";
 import { recordSpendUsd, ReplayServer, type Mode } from "./replay-server";
 import type { Fingerprint } from "./cassette";
@@ -23,7 +23,7 @@ const MODEL = "claude-haiku-4-5";
 const SDK_PKG = JSON.parse(readFileSync(join(HOMERUND_DIR, "node_modules/@anthropic-ai/claude-agent-sdk/package.json"), "utf8")) as { version: string; claudeCodeVersion: string };
 const TIMEOUT = MODE === "record" ? 240_000 : 90_000;
 /**
- * Scenarios added in milestone 4 run once their cassette is recorded (recording spends real
+ * Scenarios added since milestone 4 run once their cassette is recorded (recording spends real
  * money, so it waits for the key); until then replay skips them.
  */
 const recorded = (name: string) => MODE === "record" || existsSync(join(CASSETTES, `${name}.json`));
@@ -82,7 +82,7 @@ afterAll(async () => {
   if (MODE === "record") console.error(`recording spend (estimated from usage): $${recordSpendUsd().toFixed(4)}`);
 });
 
-async function scene(name: string, o: { forbid?: RegExp; home?: (root: string) => string; env?: (root: string) => Record<string, string>; gapMs?: number; note: string }, body: (s: Scene) => Promise<void>): Promise<void> {
+async function scene(name: string, o: { forbid?: RegExp; home?: (root: string) => string; env?: (root: string) => Record<string, string>; gapMs?: number; normalize?: Array<[string, string]>; note: string }, body: (s: Scene) => Promise<void>): Promise<void> {
   const root = scratchDir("hr-replay-");
   const work = join(root, "work");
   mkdirSync(work);
@@ -90,6 +90,7 @@ async function scene(name: string, o: { forbid?: RegExp; home?: (root: string) =
     [realpathSync(root), "<ROOT_REAL>"],
     [root, "<ROOT>"],
     [homedir(), "<HOME>"],
+    ...(o.normalize ?? []),
   ];
   if (userInfo().username.length >= 4) normalize.push([userInfo().username, "<USER>"]);
   const server = new ReplayServer({ mode: MODE, scenario: name, cassettePath: join(CASSETTES, `${name}.json`), apiKey, normalize, forbid: o.forbid, expectKey: REPLAY_KEY, gapMs: o.gapMs }).start();
@@ -202,6 +203,54 @@ function outputText(hr: Homerund, r: Of<"tool.result">): string {
 function liveCommands(root: string, needle: string): string[] {
   const out = Bun.spawnSync(["/bin/ps", "-Aww", "-o", "command="]).stdout.toString();
   return out.split("\n").filter((c) => c.includes(needle) && (c.includes(root) || c.includes(realpathSync(root))));
+}
+
+/** A local page for monitor checks to observe; its URL is normalised out of cassettes. */
+function statusPage(initial: string) {
+  let body = initial;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(body, { headers: { "content-type": "text/plain" } }) });
+  const url = `http://127.0.0.1:${server.port}/status`;
+  return { url, set: (b: string) => (body = b), stop: () => server.stop(true), normalize: [[url, "https://status.example.com/status"]] as Array<[string, string]> };
+}
+
+/** A monitor whose model check judges the status page, with no tools (§8.3). */
+function statusMonitor(url: string) {
+  return {
+    ...monitorSpec({
+      name: "Example status",
+      schedule: { kind: "cron", cron: "0 0 1 1 *", timezone: "UTC", catchup: "skip", max_catchup: 1 },
+      check: {
+        kind: "model",
+        model: "haiku",
+        instructions: 'Save the status line as new_state, as {"status": "<the line>"}. Report changed only if it differs from the saved status.',
+        source: { type: "http", url, extract: { kind: "body" } },
+      },
+      max_run_usd: 0.1,
+      act_instructions: "Do not use any tools. Reply with one sentence saying what the status is now.",
+    }),
+    prompt: "Tell me when the Example service's status changes.",
+    tools: { builtin: [], mcp_servers: [], homerun: [] },
+  };
+}
+
+type MonitorRun = { state: string; error: string | null; outcome: string | null; check_result: string | null; cost_usd: number | null; monitor_phase: string | null };
+
+/** A quiet check writes no thread events, so wait on the run row itself. */
+async function monitorRun(s: Scene, runId: string): Promise<MonitorRun> {
+  const row = () => sql<MonitorRun>(s.hr, "SELECT state, error, outcome, check_result, cost_usd, monitor_phase FROM runs WHERE run_id = ?", runId)[0];
+  await until(() => ["succeeded", "failed", "cancelled", "abandoned"].includes(row()?.state ?? ""), TIMEOUT - 10_000, `monitor run ${runId}`);
+  return row()!;
+}
+
+const monitorState = (s: Scene, taskId: string) =>
+  sql<{ state: string; version: number; last_run_id: string }>(s.hr, "SELECT state, version, last_run_id FROM monitor_state WHERE task_id = ?", taskId)[0] ?? null;
+
+/** The model check's requests: their first message is the check prompt (`checkPrompt`). */
+function checkRequests(s: Scene) {
+  return s.server.requests.filter((r) => {
+    const first = r.fp?.messages[0]?.blocks[0];
+    return r.path === "/v1/messages" && first?.t === "text" && first.text.startsWith("Monitor: ");
+  });
 }
 
 describe(`replay (${MODE})`, () => {
@@ -632,6 +681,88 @@ describe(`replay (${MODE})`, () => {
           expect(existsSync(join(s.root, "alt-config", "projects"))).toBe(false);
         },
       );
+    },
+    TIMEOUT,
+  );
+  test.skipIf(!recorded("monitor-model-no-change"))(
+    "a model check with a source: a baseline, then no change; the thread stays quiet (§8.3)",
+    () => {
+      const page = statusPage("Example status: all systems operational.");
+      return scene(
+        "monitor-model-no-change",
+        { note: "A monitor's model check (structured output, no tools) run twice on an unchanged status page.", normalize: page.normalize },
+        async (s) => {
+          const created = await s.shell.call("tasks.create", { spec: statusMonitor(page.url) as never });
+          const taskId = created.task.task_id;
+          const first = (await s.shell.call("tasks.run_now", { task_id: taskId } as never)) as { run_id: string };
+          const a = await monitorRun(s, first.run_id);
+          expect(a).toMatchObject({ state: "succeeded", outcome: "no_change", monitor_phase: "model_check" });
+          expect(JSON.parse(a.check_result!)).toMatchObject({ changed: false, evidence: expect.any(String) });
+          expect(a.cost_usd).toBeGreaterThan(0);
+          const baseline = monitorState(s, taskId);
+          expect(baseline).toMatchObject({ last_run_id: first.run_id });
+          expect(JSON.parse(baseline!.state)).toMatchObject({ status: expect.stringContaining("operational") });
+
+          const second = (await s.shell.call("tasks.run_now", { task_id: taskId } as never)) as { run_id: string };
+          const b = await monitorRun(s, second.run_id);
+          expect(b).toMatchObject({ state: "succeeded", outcome: "no_change" });
+          expect(JSON.parse(b.check_result!).changed).toBe(false);
+          expect(JSON.parse(monitorState(s, taskId)!.state)).toEqual(JSON.parse(baseline!.state));
+
+          // Quiet: no-change runs write nothing to the monitor's thread.
+          expect(sql(s.hr, "SELECT seq FROM thread_events WHERE thread_id = ?", created.thread_id)).toEqual([]);
+          // Structured output with no tools: the model is offered only claude's answer tool, and
+          // one request per check suffices.
+          const checks = checkRequests(s);
+          expect(checks).toHaveLength(2);
+          for (const r of checks) expect(r.fp!.tools).toEqual(["StructuredOutput"]);
+        },
+      ).finally(page.stop);
+    },
+    TIMEOUT,
+  );
+
+  test.skipIf(!recorded("monitor-model-changed-act"))(
+    "a model check finds a change: the act step reports it, and the state advances with the run (§8.3)",
+    () => {
+      const page = statusPage("Example status: all systems operational.");
+      return scene(
+        "monitor-model-changed-act",
+        { note: "A monitor's model check sees the status page change, and the act step reports it.", normalize: page.normalize },
+        async (s) => {
+          const created = await s.shell.call("tasks.create", { spec: statusMonitor(page.url) as never });
+          const taskId = created.task.task_id;
+          const first = (await s.shell.call("tasks.run_now", { task_id: taskId } as never)) as { run_id: string };
+          expect(await monitorRun(s, first.run_id)).toMatchObject({ state: "succeeded", outcome: "no_change" });
+          const baseline = monitorState(s, taskId)!;
+
+          page.set("Example status: major outage. The API is returning errors.");
+          const sub = await s.subscribe(created.thread_id);
+          const second = (await s.shell.call("tasks.run_now", { task_id: taskId } as never)) as { run_id: string };
+          const end = await runEnd(sub, second.run_id);
+          expect(end.payload.state).toBe("succeeded");
+          const b = await monitorRun(s, second.run_id);
+          expect(b).toMatchObject({ state: "succeeded", outcome: "changed", monitor_phase: "act" });
+          const found = JSON.parse(b.check_result!) as { changed: boolean; evidence: string };
+          expect(found.changed).toBe(true);
+          expect(found.evidence.toLowerCase()).toContain("outage");
+
+          // The thread gets the act step's report, and nothing from the quiet baseline.
+          const types = sub.persisted().map((e) => e.type);
+          expect(types[0]).toBe("run.started");
+          expect(types.at(-1)).toBe("run.end");
+          expect(ofType(sub, "message.final").at(-1)!.payload.text.toLowerCase()).toContain("outage");
+          expect(sub.persisted().every((e) => e.run_id === second.run_id)).toBe(true);
+
+          // The state advanced in the transaction that ended the run.
+          const after = monitorState(s, taskId)!;
+          expect(after.version).toBe(baseline.version + 1);
+          expect(after.last_run_id).toBe(second.run_id);
+          expect(JSON.parse(after.state)).toMatchObject({ status: expect.stringContaining("outage") });
+          expect(checkRequests(s)).toHaveLength(2);
+          for (const r of checkRequests(s)) expect(r.fp!.tools).toEqual(["StructuredOutput"]);
+        },
+      ).finally(page.stop);
     },
     TIMEOUT,
   );

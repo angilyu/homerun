@@ -4,20 +4,19 @@ import {
   RPC_ERROR,
   RunState,
   TaskKind,
-  upgradeSpec,
   type CallerRole,
   type InputRequest,
   type Run,
-  type TaskSpec,
 } from "@homerun/core";
 import { RpcCallError } from "@homerun/client";
 import { intOption } from "../args";
 import { BUILD_CHANNEL, CLI_VERSION } from "../build";
-import { readAll, type Ctx } from "../context";
+import type { Ctx } from "../context";
 import { CliError, EXIT, usageError } from "../exit";
 import { ago, oneLine, shortId, table, truncate, usd } from "../format";
 import { allThreadIds, isFullId, matchPrefix, resolveRun, resolveTask, resolveThread } from "../ids";
 import { cliAnswers, EventRenderer, promptLines } from "../render";
+import { readSpec } from "./scheduling";
 
 export async function status(x: Ctx, socketPath: string): Promise<number> {
   const { c, o } = x;
@@ -160,6 +159,7 @@ function printRun(x: Ctx, run: Run): void {
     ["thread", run.thread_id],
     ["task", run.task_id ? `${run.task_id} v${run.task_version}` : ""],
     ["trigger", run.trigger + (run.attempt ? ` (attempt ${run.attempt + 1})` : "")],
+    ["slot", when(run.scheduled_for)],
     ["authority", run.authority],
     ["started", when(run.started_at)],
     ["ended", when(run.ended_at)],
@@ -168,6 +168,12 @@ function printRun(x: Ctx, run: Run): void {
     ["cost", usd(run.cost_usd)],
   ];
   for (const [key, v] of rows) if (v) o.line(`${k.dim(key.padEnd(10))}${v}`);
+  // A monitor's check result is its evidence (§8.3): what it saw, and whether that was a change.
+  const check = run.check_result;
+  if (check) {
+    o.line(`${k.dim("check".padEnd(10))}${check.changed ? k.cyan("changed") : "no change"}`);
+    for (const line of check.evidence.split("\n")) o.line(`${" ".repeat(10)}${line}`);
+  }
 }
 
 /** Stop a run by id, or the active run on a thread. */
@@ -242,23 +248,8 @@ export async function tasksShow(x: Ctx): Promise<number> {
 }
 
 export async function tasksCreate(x: Ctx): Promise<number> {
-  const { c, o, values, io } = x;
-  const file = values.spec as string | undefined;
-  if (!file) throw usageError("give the spec with --spec FILE, or --spec - to read stdin");
-  let text: string;
-  try {
-    text = file === "-" ? await readAll(io.stdin) : await Bun.file(file).text();
-  } catch (e) {
-    throw usageError(`cannot read ${file}: ${(e as Error).message}`);
-  }
-  let spec: TaskSpec;
-  try {
-    spec = upgradeSpec(JSON.parse(text));
-  } catch (e) {
-    const issues = (e as { issues?: { path: PropertyKey[]; message: string }[] }).issues;
-    const why = issues ? issues.slice(0, 5).map((i) => `${i.path.join(".") || "(spec)"}: ${i.message}`).join("; ") : (e as Error).message;
-    throw usageError(`the task spec is not valid: ${why}`);
-  }
+  const { c, o } = x;
+  const spec = await readSpec(x);
   const r = await c.call("tasks.create", { spec });
   if (o.json) return o.value(r), EXIT.OK;
   o.line(r.task.task_id);

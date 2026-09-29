@@ -20,6 +20,7 @@ import { MonitorState, Run, RunState, Task, TaskKind, TaskVersion, Thread, Threa
 import { GrantProposal, ToolGrant } from "../grants";
 import { AnswerVia, InputRequest, InputRequestState, InputResponse } from "../input";
 import { ScheduleCoverage, ScheduleState } from "../schedule";
+import { HEALTH_DIGEST_MAX_MS, HealthDigest, HealthSettings } from "../health";
 import { TaskSpec } from "../task-spec";
 import { PersistedThreadEvent, ThreadEvent } from "../events";
 import { CallerRole, ClientInfo, CliToken, HelloParams, HelloResult } from "./handshake";
@@ -194,6 +195,29 @@ export const METHODS = {
     result: z.object({ days: z.array(ScheduleCoverage) }),
     callers: EVERYONE,
     description: "Per-day ran / missed counts for the coverage display (§8.4).",
+  }),
+
+  // ---- health digest (§8.3)
+  "health.digest": def("health.digest", {
+    params: z
+      .object({ from: TimestampMs, to: TimestampMs })
+      .refine((p) => p.to > p.from, "to must be after from")
+      .refine((p) => p.to - p.from <= HEALTH_DIGEST_MAX_MS, "at most 31 days"),
+    result: z.object({ digest: HealthDigest }),
+    callers: EVERYONE,
+    description: "Summarise every monitor over a period: runs, changes, failures, misses by cause, and cost.",
+  }),
+  "health.settings.get": def("health.settings.get", {
+    params: Empty,
+    result: z.object({ settings: HealthSettings }),
+    callers: EVERYONE,
+    description: "When the daily digest is generated, or whether it is off.",
+  }),
+  "health.settings.set": def("health.settings.set", {
+    params: z.object({ settings: HealthSettings }),
+    result: z.object({ settings: HealthSettings }),
+    callers: NOT_WEB,
+    description: "Change or turn off the daily digest.",
   }),
 
   // ---- grants (§5.6)
@@ -460,6 +484,12 @@ export const NOTIFICATIONS = {
     params: z.object({ request_id: Uuid, client: ClientInfo, hostname: z.string().min(1).max(255), requested_at: TimestampMs }),
     recipients: SHELL,
     description: "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`.",
+  }),
+  "health.digest_ready": note("health.digest_ready", {
+    direction: "runtime_to_client",
+    params: z.object({ digest: HealthDigest }),
+    recipients: EVERYONE,
+    description: "The daily digest (§8.3) was generated. Also stored; `health.digest` recomputes any period.",
   }),
   "power.will_sleep": note("power.will_sleep", {
     direction: "shell_to_runtime",

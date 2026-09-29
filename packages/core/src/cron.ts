@@ -1,7 +1,7 @@
 /**
  * Strict validator for 5-field cron expressions (minute hour day-of-month month day-of-week).
- * Validation only; computing fire times, including the DST rules of §8, is the scheduler's job
- * (milestone 5).
+ * Validation only; computing fire times, including the DST rules of §8, is the runtime
+ * scheduler's job (`apps/homerund/src/schedule/cron-next.ts`).
  *
  * Accepted: `*`, numbers, ranges `a-b`, steps `*\/n`, `a-b/n` and `a/n`, comma lists, month
  * names JAN–DEC and weekday names SUN–SAT (case-insensitive), day-of-week 0–7 (0 and 7 are

@@ -939,3 +939,4 @@ Each entry: what the spike showed, the section of `design.md` to revise, and the
 | Item 9 launch at login | a logout/login | manual steps in item 9 |
 | Item 10 with quarantine kept | same as item 6 on the VM | phase 1 of the same run; phase 2 (quarantine removed) already passes with the Developer ID build |
 | Entry 27 fix | milestone 1 (entry 26 was fixed in milestone 2) | add the `install_name_tool` shim and curated `PATH`; rerun `tart-clean-vm.sh` and expect `clt-prompt after run: none` |
+| Keeping awake from the packaged app (§8.1) | the next clean-VM run | while a run is in progress, `pmset -g assertions` on the VM lists `PreventUserIdleSystemSleep` held by `caffeinate`, a child of `homerund`; it is gone once the run ends and after `homerund` is killed. If caffeinate is missing, `homerund.log` has one "cannot keep the computer awake" warning and runs still finish |

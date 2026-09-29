@@ -134,6 +134,9 @@ export class RunDriver {
   private launch(row: RunRow): void {
     const cfg = this.ctx.config;
     this.spec = specForRun(this.store, cfg, row);
+    if (row.monitor_phase && this.spec.budget.max_run_usd <= (row.cost_usd ?? 0)) {
+      throw new RunSetupError("error_max_budget_usd", "The check used this run's whole budget, so the act step could not start.");
+    }
     const spec = this.spec;
     this.policySpec = {
       builtin: spec.tools.builtin,
@@ -157,10 +160,11 @@ export class RunDriver {
     // Resume this run's own session after a restart, or the thread's last session for a follow-up.
     // Only a session with a stored conversation: after a crash early in a session's first turn
     // nothing may be stored yet, and `claude` cannot resume that. The run then continues from the
-    // thread's previous session, or a new one, and gets its messages again.
+    // thread's previous session, or a new one, and gets its messages again. A monitor's act step
+    // never continues the thread's previous session (§8.3).
     const usable = (sid: string) => hasConversation(this.store, sid);
     const own = row.sdk_session_id !== null && usable(row.sdk_session_id);
-    const prev = own ? null : lastSessionRun(this.store, this.threadId, usable);
+    const prev = own || row.monitor_phase ? null : lastSessionRun(this.store, this.threadId, usable);
     const resume = own ? row.sdk_session_id : (prev?.sdk_session_id ?? null);
     this.costBefore = row.cost_usd ?? 0;
     this.costBaseline = own ? (row.sdk_cost_total ?? 0) : (prev?.sdk_cost_total ?? 0);
@@ -205,7 +209,8 @@ export class RunDriver {
       appendSystemPrompt: spec.prompt,
       model,
       fallbackModel: fallback,
-      maxBudgetUsd: spec.budget.max_run_usd,
+      // A monitor's check and act step share one run budget (§7.4).
+      maxBudgetUsd: row.monitor_phase ? round6(spec.budget.max_run_usd - (row.cost_usd ?? 0)) : spec.budget.max_run_usd,
       builtinTools: spec.tools.builtin,
       mcpServers,
       resume,
@@ -586,7 +591,7 @@ export function isolationViolation(spec: SessionSpec, e: Extract<EngineEvent, { 
   return null;
 }
 
-function expandHome(p: string, home: string): string {
+export function expandHome(p: string, home: string): string {
   if (p === "~") return home || homedir();
   if (p.startsWith("~/")) return join(home || homedir(), p.slice(2));
   return p;

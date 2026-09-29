@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FakeScript } from "../../../homerund/src/agent/fake-engine";
-import { sessionSpec, until, type SocketRuntime } from "../../../homerund/test/helpers";
+import { monitorSpec, sessionSpec, until, type SocketRuntime } from "../../../homerund/test/helpers";
 import { cli, devToken, events, runtime, spawnCli } from "./support";
 
 /**
@@ -394,5 +394,109 @@ describe("tasks and ids", () => {
     expect(short.stderr).toContain("at least 4 characters");
     const full = await cli(srt.dir, ["threads", "show", crypto.randomUUID()]);
     expect(full.code).toBe(1);
+  });
+});
+
+describe("monitors, schedules and health", () => {
+  async function monitor(): Promise<string> {
+    mkdirSync(join(srt.dir, "w"), { recursive: true });
+    writeFileSync(join(srt.dir, "w", "f.txt"), "one");
+    const spec = monitorSpec({
+      name: "watch f",
+      roots: ["~/w"],
+      schedule: { kind: "cron", cron: "0 0 1 1 *", timezone: "UTC", catchup: "run_once", max_catchup: 1 },
+      check: { kind: "rule", source: { type: "file_hash", path: "~/w/f.txt" }, comparator: { op: "changed" } },
+    });
+    const r = await cli(srt.dir, ["tasks", "create", "--spec", "-"], { stdin: JSON.stringify(spec) });
+    expect(r.code).toBe(0);
+    return r.stdout.trim();
+  }
+
+  test("run-now, the check's evidence, and monitor state by hand", async () => {
+    srt = await runtime();
+    const taskId = await monitor();
+    const dev = await srt.dev();
+
+    const run = await cli(srt.dir, ["tasks", "run-now", taskId.slice(0, 8)]);
+    expect(run.code).toBe(0);
+    const runId = run.stdout.trim();
+    expect(run.stderr).toContain("homerun watch");
+    let state = "";
+    await until(() => {
+      void dev.call("runs.get", { run_id: runId as never }).then((r) => (state = r.run.state));
+      return state === "succeeded";
+    }, 5000, "the check");
+    const shown = await cli(srt.dir, ["runs", "show", runId.slice(0, 8)]);
+    expect(shown.stdout).toMatch(/check\s+no change/);
+    expect(shown.stdout).toContain("Baseline recorded");
+
+    const st = await cli(srt.dir, ["monitors", "state", taskId.slice(0, 8)]);
+    expect(st.code).toBe(0);
+    expect(st.stderr).toContain("version 1");
+    const set = await cli(srt.dir, ["monitors", "set-state", taskId.slice(0, 8), "--state", "-"], { stdin: '{"hash": "by hand"}' });
+    expect(set.code).toBe(0);
+    expect((await dev.call("monitors.state.get", { task_id: taskId as never })).state).toMatchObject({ version: 2, state: { hash: "by hand" } });
+    const stale = await cli(srt.dir, ["monitors", "set-state", taskId.slice(0, 8), "--state", "-", "--expected-version", "1"], { stdin: "{}" });
+    expect(stale.code).toBe(1);
+    expect(stale.stderr).toContain("changed since you read it");
+    const notJson = await cli(srt.dir, ["monitors", "set-state", taskId.slice(0, 8), "--state", "-"], { stdin: "{" });
+    expect(notJson.code).toBe(64);
+    expect((await cli(srt.dir, ["monitors", "reset-state", taskId.slice(0, 8)])).code).toBe(0);
+    expect((await dev.call("monitors.state.get", { task_id: taskId as never })).state).toMatchObject({ version: 3, state: null });
+
+    const list = await cli(srt.dir, ["monitors"]);
+    expect(list.stdout).toContain("watch f");
+    expect(list.stdout).toContain("no_change");
+  });
+
+  test("schedules: list, pause and resume by task prefix, coverage; update and archive", async () => {
+    srt = await runtime();
+    const taskId = await monitor();
+    const list = await cli(srt.dir, ["schedules"]);
+    expect(list.code).toBe(0);
+    expect(list.stdout).toContain("0 0 1 1 * UTC");
+    expect(list.stdout).toMatch(/\son\s/);
+
+    expect((await cli(srt.dir, ["schedules", "disable", taskId.slice(0, 8)])).stderr).toContain("is paused");
+    expect((await cli(srt.dir, ["schedules", "list", "--task", taskId.slice(0, 8)])).stdout).toContain("paused");
+    const on = await cli(srt.dir, ["schedules", "enable", taskId.slice(0, 8), "--json"]);
+    expect(JSON.parse(on.stdout).schedule).toMatchObject({ enabled: true, paused_reason: null });
+
+    const cov = await cli(srt.dir, ["schedules", "coverage", taskId.slice(0, 8), "--days", "3"]);
+    expect(cov.code).toBe(0);
+    const covJson = JSON.parse((await cli(srt.dir, ["schedules", "coverage", taskId.slice(0, 8), "--json"])).stdout);
+    expect(Array.isArray(covJson.days)).toBe(true);
+
+    const dev = await srt.dev();
+    const spec = { ...(await dev.call("tasks.get", { task_id: taskId as never })).task.spec, name: "watch f2" };
+    const upd = await cli(srt.dir, ["tasks", "update", taskId.slice(0, 8), "--spec", "-"], { stdin: JSON.stringify(spec) });
+    expect(upd.code).toBe(0);
+    expect(upd.stderr).toContain("to v2");
+    const stale = await cli(srt.dir, ["tasks", "update", taskId.slice(0, 8), "--spec", "-", "--expected-version", "1"], { stdin: JSON.stringify(spec) });
+    expect(stale.code).toBe(1);
+
+    expect((await cli(srt.dir, ["tasks", "archive", taskId.slice(0, 8)])).code).toBe(0);
+    expect((await cli(srt.dir, ["schedules"])).stdout).toContain("archived");
+    const run = await cli(srt.dir, ["tasks", "run-now", taskId.slice(0, 8)]);
+    expect(run.code).toBe(1);
+  });
+
+  test("health: the digest, and its settings", async () => {
+    srt = await runtime();
+    await monitor();
+    const d = await cli(srt.dir, ["health"]);
+    expect(d.code).toBe(0);
+    expect(d.stdout).toContain("Monitor health");
+    expect(d.stdout).toContain("watch f");
+    const j = JSON.parse((await cli(srt.dir, ["health", "digest", "--days", "7", "--json"])).stdout);
+    expect(j.digest.monitors).toHaveLength(1);
+    expect(j.digest.to - j.digest.from).toBe(7 * 86_400_000);
+
+    const set = await cli(srt.dir, ["health", "settings", "--time", "07:30", "--timezone", "Europe/Paris"]);
+    expect(set.stdout).toBe("daily digest at 07:30 Europe/Paris\n");
+    expect((await cli(srt.dir, ["health", "settings", "--off"])).stdout).toBe("daily digest off\n");
+    expect((await cli(srt.dir, ["health", "settings", "--time", "7:30"])).code).toBe(64);
+    const bad = await cli(srt.dir, ["health", "settings", "--timezone", "Mars/Olympus"]);
+    expect(bad.code).toBe(64);
   });
 });
