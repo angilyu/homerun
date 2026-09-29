@@ -27,7 +27,7 @@ function KeySection() {
     await app.refreshKey();
   });
   return (
-    <section>
+    <section aria-label="Anthropic API key">
       <h2>Anthropic API key</h2>
       {key?.present ? (
         <p>
@@ -75,7 +75,7 @@ function DigestSection() {
     }
   };
   return (
-    <section>
+    <section aria-label="Daily summary">
       <h2>Daily summary</h2>
       <label className="check">
         <input type="checkbox" checked={draft.enabled} onChange={(e) => void save({ ...draft, enabled: e.target.checked })} />
@@ -101,7 +101,7 @@ function CliSection() {
     t.reload();
   });
   return (
-    <section>
+    <section aria-label="Command-line access">
       <h2>Command-line access</h2>
       <ErrorText error={t.error ?? revoke.error} />
       {t.data && t.data.length === 0 && <Empty>No command-line clients are signed in.</Empty>}
@@ -132,7 +132,7 @@ function RuntimeSection() {
   const restart = useAction(() => app.shell.restartRuntime());
   const logs = useAction(() => app.shell.revealLogs());
   return (
-    <section>
+    <section aria-label="Homerun">
       <h2>Homerun</h2>
       <p>{s.state === "ready" ? `Running (runtime ${s.runtime_version}).` : runtimeText(s, Date.now())}</p>
       <div className="row">

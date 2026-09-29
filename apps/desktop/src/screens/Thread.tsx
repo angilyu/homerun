@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
+  chatTitle,
   contentText,
   duration,
   errorMessage,
@@ -35,7 +36,7 @@ export function NewChat({ task_id }: { task_id?: string }) {
   const send = async (text: string) => {
     setError(null);
     try {
-      const thread_id = await app.client.createThread(task_id);
+      const thread_id = await app.client.createThread(task_id, chatTitle(text));
       const { sync, release } = app.client.retainThread(thread_id);
       void sync.send(text).finally(release);
       app.go({ name: "thread", thread_id });

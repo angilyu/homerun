@@ -55,7 +55,7 @@ export function TaskPage({ task_id }: { task_id: string }) {
       <ErrorText error={task.error} />
       {monitor && <MonitorSection task={t} />}
       {!monitor && (
-        <section>
+        <section aria-label="Instructions">
           <h2>Instructions</h2>
           <Fold text={t.spec.prompt} lines={6} className="prose" />
         </section>
@@ -81,7 +81,7 @@ function MonitorSection({ task }: { task: Task }) {
   });
   useLoad(() => app.client.tasks.refresh(), [task.task_id], 30_000);
   return (
-    <section>
+    <section aria-label="Schedule">
       <h2>Schedule</h2>
       {s ? (
         <div className="kv">
@@ -173,7 +173,7 @@ function TaskThreads({ task_id }: { task_id: string }) {
   const list = useStore(app.client.threads.store);
   const threads = list.threads.filter((t) => t.task_id === task_id);
   return (
-    <section>
+    <section aria-label="Chats">
       <h2>Chats</h2>
       {threads.length === 0 ? (
         <Empty>No chats yet.</Empty>
@@ -199,7 +199,7 @@ function Runs({ task_id, monitor }: { task_id: string; monitor: boolean }) {
   const app = useApp();
   const runs = useLoad(() => app.client.rpc.call("runs.list", { task_id, limit: 20 }).then((r) => r.runs), [task_id], 30_000);
   return (
-    <section>
+    <section aria-label="Recent runs">
       <h2>Recent runs</h2>
       <ErrorText error={runs.error} />
       {runs.data && runs.data.length === 0 && <Empty>No runs yet.</Empty>}
@@ -245,7 +245,7 @@ function Grants({ task_id }: { task_id: string }) {
   });
   const list = grants.data ? activeGrants(grants.data) : [];
   return (
-    <section>
+    <section aria-label="Always allowed">
       <h2>Always allowed</h2>
       <ErrorText error={grants.error ?? revoke.error} />
       {grants.data && list.length === 0 && <Empty>Nothing yet. Choosing “Always allow” on an approval adds it here.</Empty>}
@@ -273,7 +273,7 @@ function StateSection({ task_id }: { task_id: string }) {
   const s: MonitorState | null = st.data ?? null;
   const onErr = (e: unknown) => setError(isConflict(e) ? "It changed while you were editing (a check ran). Reload and try again." : errorMessage(e));
   return (
-    <section>
+    <section aria-label="Remembered state">
       <h2>Remembered state</h2>
       <ErrorText error={st.error ?? error} />
       {!s && st.data === null && <Empty>Nothing yet: the first check records it.</Empty>}
