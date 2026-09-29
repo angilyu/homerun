@@ -7,7 +7,7 @@ describe("runtime banner (§5.1)", () => {
     const h = await renderApp();
     expect(screen.queryByRole("status")).toBeNull();
     act(() => h.t.setStatus({ state: "restarting", retry_at: Date.now() + 4000, last_error: "exit 1" }));
-    expect((await screen.findByText(/stopped unexpectedly and is restarting/)).textContent).toMatch(/Retrying in [45] s/);
+    expect((await screen.findByText(/stopped unexpectedly and is restarting/)).textContent).toMatch(/Retrying in 4 s/);
     act(() => h.t.setStatus({ state: "crash_loop", retry_at: null, last_error: "database is locked" }));
     await screen.findByText(/keeps stopping: database is locked/);
     fireEvent.click(screen.getByRole("button", { name: "Show logs" }));
@@ -17,6 +17,14 @@ describe("runtime banner (§5.1)", () => {
     await screen.findByText("Another copy of Homerun is running.");
     act(() => h.t.ready());
     await waitFor(() => expect(screen.queryByText(/Another copy/)).toBeNull());
+  });
+
+  test("the retry countdown is counted from the status change, not the last clock tick", async () => {
+    const h = await renderApp();
+    // The banner's clock ticks once a second; a restart late in a tick must not add a second.
+    await Bun.sleep(700);
+    act(() => h.t.setStatus({ state: "restarting", retry_at: Date.now() + 1000, last_error: "killed" }));
+    expect((await screen.findByText(/stopped unexpectedly and is restarting/)).textContent).toMatch(/Retrying in 1 s\./);
   });
 
   test("a reconnect reloads the thread list (§5.2)", async () => {

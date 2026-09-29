@@ -131,8 +131,10 @@ export function threadTitle(t: ThreadSummary | undefined, taskName?: Map<string,
 export function RuntimeBanner() {
   const app = useApp();
   const s = useStore(app.client.runtime);
-  const now = useNow(1000);
-  const text = runtimeText(s, now);
+  // The tick re-renders the countdown; a status change renders at once, so count from now,
+  // not from the last tick, which can be up to a second old.
+  useNow(1000);
+  const text = runtimeText(s, Date.now());
   if (!text) return null;
   const canRestart = s.state === "crash_loop" || s.state === "blocked" || s.state === "restarting";
   return (
