@@ -3,7 +3,7 @@
  * with the simulated `claude`, make sure the scenario's message was sent (as a client retrying
  * after a crash would), answer "Did this happen?" truthfully from the ledger, and wait for the
  * thread to settle. `killAt` SIGKILLs this process at that boundary; `dieAt` kills `claude` alone.
- * Prints `{"points": n}` when it ends on its own.
+ * Prints `{"points": n}` when it ends on its own, with each boundary's kind when `label` is set.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ import { pendingInputRequests } from "../../src/store/rows";
 import { Store } from "../../src/store/store";
 import { MOCK_KEY } from "../helpers";
 import { SCENARIOS, type ChildArgs, CLIENT_MSG_ID, HELD_MSG_ID, TOKEN } from "./scenarios";
+import { BoundaryKinds } from "./boundaries";
 import { SimEngine } from "./sim-claude";
 
 const args = JSON.parse(process.argv[2]!) as ChildArgs;
@@ -25,12 +26,16 @@ const ledger = join(args.dir, "ledger");
 
 let points = 0;
 let dying = false;
+const kinds = args.label ? new BoundaryKinds(args.dir) : null;
 const point = () => {
   points++;
   if (args.killAt === points) process.kill(process.pid, "SIGKILL");
   if (args.dieAt === points) dying = true;
 };
-Store.commitObserver = point;
+Store.commitObserver = () => {
+  kinds?.commit();
+  point();
+};
 setLogSink(() => {}, "error");
 
 const config = loadConfig({
@@ -48,7 +53,10 @@ const rt = await startRuntime({
   launchToken: TOKEN,
   engine: (store) =>
     new SimEngine(store, scenario.plan, ledger, {
-      point,
+      point: (where) => {
+        kinds?.tool(where);
+        point();
+      },
       dead: () => {
         if (dying && !engineDied) {
           engineDied = true;
@@ -92,5 +100,5 @@ for (;;) {
 }
 shell.close();
 await rt.shutdown();
-console.log(JSON.stringify({ points }));
+console.log(JSON.stringify({ points, ...(kinds ? { kinds: kinds.kinds } : {}) }));
 process.exit(0);

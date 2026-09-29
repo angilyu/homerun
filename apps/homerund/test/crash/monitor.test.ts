@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 import { isTerminal, type RunState } from "@homerun/core";
 import type { MonitorChildArgs } from "./monitor-child";
+import { crashSeed, sampleBoundaries, sweepMode } from "./sampler";
 
 /**
  * Kill the scheduler at every boundary (design §8.2, §8.4, §16 row 5). A monitor was last checked
@@ -15,16 +16,23 @@ import type { MonitorChildArgs } from "./monitor-child";
  * commit and every point around the act's side effect; later lives on the same data dir recover
  * and finish. However the crash fell, each slot is claimed once and runs once, the missed slots
  * are reported once, the act's side effect happens once, and the state advances to the new file.
+ * `HOMERUN_CRASH_SWEEP=sample` kills at a seeded sample that covers every kind of boundary
+ * (`sampler.ts`).
  */
 
 const CHILD = resolve(import.meta.dir, "monitor-child.ts");
 const POOL = Math.max(2, Math.min(8, availableParallelism()));
 const TIMEOUT = 600_000;
+const MODE = sweepMode();
+const SEED = crashSeed();
+/** Boundaries per sweep in `sample` mode. */
+const BUDGET = 20;
 
 interface Result {
   code: number | null;
   signal: string | null;
   points: number | null;
+  kinds: string[] | null;
   stderr: string;
 }
 
@@ -32,8 +40,9 @@ async function life(a: MonitorChildArgs): Promise<Result> {
   const p = Bun.spawn([process.execPath, CHILD, JSON.stringify(a)], { stdout: "pipe", stderr: "pipe", cwd: resolve(import.meta.dir, "..", "..") });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   await p.exited;
-  const m = /\{"points":(\d+)\}/.exec(out);
-  return { code: p.exitCode, signal: p.signalCode, points: m ? Number(m[1]) : null, stderr: err };
+  const m = /^\{"points":.*\}$/m.exec(out);
+  const r = m ? (JSON.parse(m[0]) as { points: number; kinds?: string[] }) : null;
+  return { code: p.exitCode, signal: p.signalCode, points: r?.points ?? null, kinds: r?.kinds ?? null, stderr: err };
 }
 
 async function pool<T>(items: readonly T[], fn: (t: T) => Promise<void>): Promise<void> {
@@ -106,11 +115,11 @@ function check(dir: string): string[] {
 }
 
 /** Run lives until one ends on its own; the first is killed at `killAt`. */
-async function trial(template: string, lagging: boolean, killAt?: number): Promise<{ dir: string; lives: Result[] }> {
+async function trial(template: string, lagging: boolean, killAt?: number, label = false): Promise<{ dir: string; lives: Result[] }> {
   const dir = copyDir(template);
   const lives: Result[] = [];
   for (let n = 1; n <= 4; n++) {
-    const r = await life({ dir, life: n, lagging, ...(n === 1 && killAt ? { killAt } : {}) });
+    const r = await life({ dir, life: n, lagging, ...(n === 1 && killAt ? { killAt } : {}), ...(n === 1 && label ? { label } : {}) });
     lives.push(r);
     if (r.signal === "SIGKILL") continue;
     break;
@@ -124,16 +133,20 @@ async function sweep(lagging: boolean): Promise<void> {
   expect(setup.stderr).toBe("");
   expect(setup.code).toBe(0);
 
-  const clean = await trial(template, lagging);
+  const clean = await trial(template, lagging, undefined, true);
   expect(clean.lives.map((l) => l.code)).toEqual([0]);
   expect(check(clean.dir)).toEqual([]);
-  const total = clean.lives[0]!.points!;
-  expect(total).toBeGreaterThan(20);
+  const kinds = clean.lives[0]!.kinds!;
+  expect(kinds.length).toBe(clean.lives[0]!.points!);
+  expect(kinds.length).toBeGreaterThan(20);
   rmSync(clean.dir, { recursive: true, force: true });
+  const name = lagging ? "monitor/lagging" : "monitor";
+  const kills = sampleBoundaries(kinds, { mode: MODE, seed: SEED, stream: name, budget: BUDGET });
+  console.error(MODE === "sample" ? `${name}: kills [${kills.join(",")}] of ${kinds.length} (HOMERUN_CRASH_SEED=${SEED})` : `${name}: ${kills.length} boundaries`);
 
   const failures: string[] = [];
   await pool(
-    Array.from({ length: total }, (_, i) => i + 1),
+    kills,
     async (k) => {
       const t = await trial(template, lagging, k);
       const last = t.lives.at(-1)!;

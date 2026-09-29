@@ -40,7 +40,7 @@ export interface Step {
 
 export interface SimHooks {
   /** A boundary inside the fake tool (before and after its side effect). */
-  point(): void;
+  point(where: "before_effect" | "after_effect"): void;
   /** True once `claude` should die (the agent_exited path). */
   dead(): boolean;
 }
@@ -141,7 +141,7 @@ export class SimEngine implements AgentEngine {
           write({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: c.id, content: d.reason, is_error: true }] } });
           continue;
         }
-        hooks.point();
+        hooks.point("before_effect");
         alive();
         if (c.s.tool !== "Read") {
           const fd = openSync(ledger, "a");
@@ -149,7 +149,7 @@ export class SimEngine implements AgentEngine {
           fsyncSync(fd);
           closeSync(fd);
         }
-        hooks.point();
+        hooks.point("after_effect");
         alive();
         if (c.s.name === mirrorAfter) flush();
         const output = `did ${c.s.name}`;
