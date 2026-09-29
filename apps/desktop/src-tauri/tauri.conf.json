@@ -4,15 +4,28 @@
   "version": "0.0.1",
   "identifier": "com.angilyu.homerun",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5178",
+    "beforeDevCommand": "pnpm run dev:tauri",
+    "beforeBuildCommand": "pnpm run build"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
-      { "title": "Homerun", "width": 720, "height": 560 }
+      {
+        "label": "main",
+        "title": "Homerun",
+        "width": 1120,
+        "height": 740,
+        "minWidth": 760,
+        "minHeight": 480,
+        "create": false
+      }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:5178; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
+      "freezePrototype": true
     }
   },
   "bundle": {
@@ -20,19 +33,11 @@
     "targets": ["app"],
     "createUpdaterArtifacts": false,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
-    "externalBin": ["binaries/homerund", "binaries/claude", "binaries/node", "binaries/uv"],
-    "resources": { "binaries/npm/": "npm/" },
+    "externalBin": ["binaries/homerund", "binaries/claude"],
     "macOS": {
       "minimumSystemVersion": "13.0",
       "signingIdentity": null,
       "hardenedRuntime": true
-    }
-  },
-  "plugins": {
-    "updater": {
-      "endpoints": ["http://127.0.0.1:8799/latest.json"],
-      "pubkey": "REPLACED_BY_PACKAGE_SH",
-      "dangerousInsecureTransportProtocol": true
     }
   }
 }
