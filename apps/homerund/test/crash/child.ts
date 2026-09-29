@@ -55,7 +55,7 @@ const rt = await startRuntime({
         }
         return false;
       },
-    }),
+    }, scenario.mirrorAfter),
   setTmpdir: false,
 });
 rt.secrets.set("anthropic_api_key", MOCK_KEY);
