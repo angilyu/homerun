@@ -391,7 +391,7 @@ describe('answering "Did this happen?" (milestone 4)', () => {
     expect(undeliveredMessages(events).map((e) => e.payload.text)).toEqual(["did it?"]);
   }, 10_000);
 
-  test("stopping a parked run leaves its held messages visibly undelivered; nothing sends them later (Q9)", async () => {
+  test("stopping a parked run leaves its held messages visibly undelivered; nothing sends them later (§5.7)", async () => {
     const { a, b, thread_id, run_id } = await crashAndRestart(
       async (s) => {
         await s.nextInput();

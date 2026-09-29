@@ -137,7 +137,7 @@ function newRun(threadId: string, deviceId: string): NewRun {
 }
 
 describe("runs", () => {
-  test("one active run per thread: the partial unique index refuses a second (R8)", () => {
+  test("one active run per thread: the partial unique index refuses a second (§5.7)", () => {
     const { store } = fresh();
     const dev = ensureDevice(store);
     const t = createThread(store);

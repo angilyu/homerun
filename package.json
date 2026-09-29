@@ -11,7 +11,8 @@
     "homerun": "bun apps/cli/src/main.ts",
     "typecheck": "pnpm -r typecheck",
     "test:core": "pnpm --filter @homerun/core test",
-    "gen:core": "pnpm --filter @homerun/core gen"
+    "gen:core": "pnpm --filter @homerun/core gen",
+    "check:doc-links": "bun scripts/check-doc-links.ts"
   },
   "devDependencies": {
     "bun": "1.4.2"

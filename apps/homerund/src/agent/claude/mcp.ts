@@ -21,7 +21,7 @@ export interface ResolvedMcpServer {
  * Turns a task's MCP server spec into a process to launch (§5.5). Production launches
  * `npx`/`uvx` from Homerun's own Node and uv components, which arrive in a later milestone; until
  * then a run that needs them fails with `component_missing`. Development builds may map a
- * `package@version` to a local command (`--dev-mcp-overrides`, plan Q3); the tests use this for
+ * `package@version` to a local command (`--dev-mcp-overrides`); the tests use this for
  * their stdio fixture.
  */
 export class McpLauncher {

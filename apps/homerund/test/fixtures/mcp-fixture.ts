@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * A tiny stdio MCP server for tests and replay scenarios (plan Q3): newline-delimited JSON-RPC,
+ * A tiny stdio MCP server for tests and replay scenarios: newline-delimited JSON-RPC,
  * the subset of MCP `claude` uses (initialize, tools/list, tools/call, ping). Hand-rolled so the
  * tests need no MCP SDK dependency.
  *

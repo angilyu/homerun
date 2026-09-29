@@ -277,7 +277,7 @@ describe(`replay (${MODE})`, () => {
   );
 
   test(
-    "steering: a second message during a run is pushed into it (R8)",
+    "steering: a second message during a run is pushed into it (§5.7)",
     () =>
       scene("steering", { note: "A second message sent while the first turn's Bash command runs." }, async (s) => {
         const threadId = await task(s, { builtin: ["Bash"] });

@@ -33,6 +33,8 @@ jobs:
         run: pnpm --filter @homerun/core --filter @homerun/client test
       - name: Generated JSON Schema and vectors are up to date
         run: pnpm --filter @homerun/core schema:check
+      - name: Markdown links and anchors resolve
+        run: pnpm check:doc-links
 
   homerund:
     name: apps/homerund

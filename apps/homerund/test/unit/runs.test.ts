@@ -80,7 +80,7 @@ describe("a text-only turn", () => {
   });
 });
 
-describe("steering (R8)", () => {
+describe("steering (§5.7)", () => {
   test("a second message steers the running run instead of starting another", async () => {
     let gate!: () => void;
     const opened = new Promise<void>((r) => (gate = r));
@@ -291,7 +291,7 @@ describe("concurrency (§5.3)", () => {
   });
 });
 
-describe("the agent dies while the runtime keeps running (Q11)", () => {
+describe("the agent dies while the runtime keeps running (§5.1)", () => {
   test("a clean interruption resumes the same run from the stored session", async () => {
     const { rt, thread, send, run } = setup(async (s) => {
       const first = (await s.nextInput())!;

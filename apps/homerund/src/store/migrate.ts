@@ -77,7 +77,7 @@ export function listBackups(backupDir: string): string[] {
     .map((f) => join(backupDir, f));
 }
 
-/** Consistent copy of a live database (plan Q7: bun:sqlite has no online-backup API; VACUUM INTO is equivalent here). */
+/** Consistent copy of a live database (bun:sqlite has no online-backup API; VACUUM INTO is equivalent here). */
 function backup(db: Database, backupDir: string, fromVersion: number, now: number): string {
   mkdirSync(backupDir, { recursive: true, mode: 0o700 });
   let path = join(backupDir, `homerun-v${fromVersion}-${now}.db`);

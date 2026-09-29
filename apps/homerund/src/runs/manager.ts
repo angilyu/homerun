@@ -68,7 +68,7 @@ export class RunManager {
   }
 
   /**
-   * One transaction (R8): an idempotent replay returns the stored answer; otherwise the message
+   * One transaction (§5.7): an idempotent replay returns the stored answer; otherwise the message
    * starts a run if the thread has none active (the partial unique index decides), steers the
    * running or queued one, or is held while the run waits for input.
    */

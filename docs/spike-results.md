@@ -1,5 +1,8 @@
 # Milestone 0 spike results
 
+> **Historical test record.** This is the milestone 0 evidence as it was captured. The current
+> design is [`design.md`](design.md), which is authoritative where the two differ.
+
 Pass/fail evidence for the ten checks in [`design.md` §16.1](design.md#161-milestone-0-prove-the-risky-parts-first),
 the measurements it asks for, and the design changes the results imply. `design.md` itself is
 **not** edited here; every proposed change is listed in [Design impact](#design-impact) with the
@@ -7,7 +10,7 @@ section it touches.
 
 > **Identifier renamed.** These results were recorded under the bundle identifier `dev.homerun.app`
 > (keychain group `TEAMID.dev.homerun.shared`, data dir `~/Library/Application Support/dev.homerun.app`).
-> It is now `com.angilyu.homerun` (see the "Changes from milestone 2" note in `design.md`). The old
+> It is now `com.angilyu.homerun`, and the data dir is `~/Library/Application Support/Homerun` (see `design.md` [§11](design.md#11-distribution) and [§6](design.md#6-data-model)). The old
 > identifier is left as-is below because it is what the evidence was captured with.
 
 > **Developer ID pass (later).** Items 6, 7 and 8 were rerun with the real identity

@@ -32,7 +32,7 @@ export interface Limits {
   monitor: number;
 }
 
-/** A development-only replacement for how a stdio MCP package is launched (plan Q3). */
+/** A development-only replacement for how a stdio MCP package is launched. */
 export interface McpOverride {
   command: string;
   args?: string[];
@@ -50,7 +50,7 @@ export interface Config {
   claudeConfigDir: string;
   /** HOME for the Bash tool's clean shell (§5.3, F9). */
   shellHome: string;
-  /** Scratch working directories for chats (plan Q16). */
+  /** Scratch working directories for chats (§2.1). */
   workspacesDir: string;
   /** TMPDIR for homerund itself: the SDK puts its `claude-resume-*` dirs here (F5). */
   tmpDir: string;
@@ -61,7 +61,7 @@ export interface Config {
   userHome: string;
   /** Development only: point `claude` at a replay or recording server. */
   anthropicBaseUrl: string | null;
-  /** Development only: auto-allow calls that need approval (plan Q2). */
+  /** Development only: auto-allow calls that need approval. */
   devAutoApprove: boolean;
   /**
    * Development only: how a "Did this happen?" answer reaches the transcript (§5.4). `inject`
@@ -69,9 +69,9 @@ export interface Config {
    * before the call, so tests can exercise it.
    */
   devAmbiguityMode: "inject" | "truncate";
-  /** Development only: `package@version` → command, for local MCP fixtures (plan Q3). */
+  /** Development only: `package@version` → command, for local MCP fixtures. */
   devMcpOverrides: Record<string, McpOverride>;
-  /** Default model for one-off chats (plan Q4). */
+  /** Default model for one-off chats (§7.3). */
   chatModel: string;
   chatFallbackModel: string | null;
   chatMaxBudgetUsd: number;

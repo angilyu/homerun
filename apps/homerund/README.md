@@ -102,8 +102,8 @@ its run follows it. So `run.resumed` is written only once a resume can start. A 
 fails its setup (its folder is gone, say) ends without one, and its held messages show as
 not delivered too.
 
-`HOMERUN_DEV_AMBIGUITY_MODE=truncate` (development only) applies the design's fallback
-instead. The resume starts with `resumeSessionAt` at the entry before the assistant message
+`HOMERUN_DEV_AMBIGUITY_MODE=truncate` (development only) applies the §5.4 truncation
+fallback instead. The resume starts with `resumeSessionAt` at the entry before the assistant message
 that made the first answered call, and the note says what happened to each call it hides.
 The point is stored in `runs.resume_at` (migration 0002) until `claude` writes the new
 branch, so a crash in between truncates again. Known limit: messages the model had already
@@ -224,16 +224,15 @@ The scenarios:
   no tool process survives; a lock-screen answer is refused; stopping the run gives the
   call an "outcome unknown" result;
 - stop during a tool call;
-- isolation.
-
-Four milestone 4 scenarios are written but wait for their cassettes. Replay skips a scenario
-whose cassette is missing:
+- isolation;
 - `ambiguity-completed`: the user answers "completed". The run resumes with the injected
-  result and a held message, and the call is not run again.
+  result and a held message, and the call is not run again;
 - `kill-claude-mid-tool`: `claude` alone is killed, and its orphaned shell with it. The user
-  answers "not run", and the call runs again exactly once.
-- `ambiguity-truncate`: the truncate fallback.
+  answers "not run", and the call runs again exactly once;
+- `ambiguity-truncate`: the truncate fallback;
 - `cancel-parked`: a parked run is stopped, and the thread's next turn resumes cleanly.
+
+Replay skips a scenario whose cassette is missing.
 
 Every scenario also checks generic invariants:
 - every `tool.call` of a finished run has exactly one `tool.result`;
@@ -250,7 +249,7 @@ that behaves like `claude` where recovery depends on it:
 - its hooks write `tool.call` and `tool.result`;
 - it resumes from the stored chain (and `resumeSessionAt`);
 - when it resumes a `tool_use` with no result, it writes its own "interrupted" result and
-  runs the call again, as F7 found real `claude` does.
+  runs the call again, as real `claude` does.
 
 Its tools append to a ledger file, which is the ground truth for "did this happen?".
 
