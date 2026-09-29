@@ -17,7 +17,7 @@ They are not redefined here.
 | `src/runtime.ts` | Startup sequence: open and migrate the DB, kill stale process groups and escaped tool processes, sweep caches, recover runs, serve |
 | `src/config.ts` | Data dir layout, the bundled `claude`, limits, development-only switches |
 | `src/store/` | SQLite (`db.ts`), forward-only migrations with a `VACUUM INTO` backup (`migrate.ts`, `migrations/`), rows, `thread_events`, blobs over 4 KB, the SDK `SessionStore` mirror |
-| `src/agent/` | `AgentEngine` seam. `claude/` holds the real engine: query options, clean env, process-group spawn, process-tree kill, SDK message → event translation. `fake-engine.ts` is for unit tests. `policy.ts` holds tool classes and permissions |
+| `src/agent/` | `AgentEngine` seam. `claude/` holds the real engine: query options, clean env, process-group spawn, process-tree kill, SDK message → event translation. `fake-engine.ts` is for unit tests. `policy.ts` holds tool classes and permissions, `denylist.ts` the hard denylist, `paths.ts` canonical paths |
 | `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run, and the tool gate), `gate` (approval and question prompts), `answers` (applying answers, with or without a process), `input-timeouts` (§5.6), `recovery` (§5.4), `ambiguity` (the answer to "Did this happen?"), `resume` (results for open calls before a resume), `process-groups` |
 | `src/schedule/` | The scheduler (§8): `clock` (wall time and timers; `FakeClock` for tests), `cron-next` and `zone` (next fire in a timezone, with the DST rules), `fire-scheduler` (claims fires, catch-up, downtime, retries, pauses) |
 | `src/monitors/` | Monitor runs (§8.3): `sources` and `feed` (what a rule check observes), `rules` (comparators), `check-runner` (the check step), `model-check`, `complete` (the check result, monitor state, act), `digest` (the health digest) |
@@ -143,6 +143,12 @@ run's taint (`runs.tainted_at`, written before the call that brings untrusted co
 inherited by a run that resumes the session); and the run's authority. In a `web_read_only`
 run (§9.9) only `read` calls run without asking. The pattern rules themselves are shared code
 in `@homerun/core` (`patterns.ts`).
+
+Before any of that, `agent/denylist.ts` applies the hard denylist (§5.5, §13): `Read`, `Glob`,
+`Grep`, `Write`, `Edit` and `NotebookEdit` on `~/.ssh`, keychains, browser profiles, `.env`
+files, credential files or the data dir (except `workspaces/` and the session's own `claude`
+scratch, read only) are `denied`, even inside a root, and no answer, grant or
+`--dev-auto-approve` changes that. The same paths go to `claude` as SDK deny rules.
 
 A call that needs the user, and every `AskUserQuestion`, gets an `input_requests` row, a
 `tool.call`, an `input.requested` event and `waiting_input` in one transaction. Then:

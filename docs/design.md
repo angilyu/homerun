@@ -721,7 +721,19 @@ send data out. The taint rule cuts the last link.
 
 **Enforcement.** Every rule above runs in the runtime's `PreToolUse` hook, which
 the SDK calls before every tool call whatever the permission mode. The hard
-denylist is additionally expressed as SDK deny rules, as a second layer.
+denylist (§13) is decided first: a hit is a plain `denied`, never an input
+request, and no answer, grant or `--dev-auto-approve` overrides it. It covers
+`Read`, `Glob`, `Grep`, `Write`, `Edit` and `NotebookEdit`, even inside a
+declared root; `Glob` and `Grep` are checked on their search path, and their
+results are not filtered. Paths are compared as given and after realpath (of
+the nearest existing ancestor, for a new file), case-insensitively on macOS.
+Inside Homerun's data dir, only the workspaces are open, plus, for reading,
+`claude`'s own saved tool results and task output for the run's session, which
+`claude` tells the model to `Read`. The hard denylist is additionally expressed
+as SDK deny rules (`Read(//path/**)`, `Edit(//path/**)`, in flag settings), as a
+second layer: `claude` applies them even when the hook allows a call (checked
+with `claude` 2.1.278). They can't express the per-session exception, so inside
+the data dir they name the parts other than the workspaces and that scratch.
 
 ### 5.6 Input requests: approvals and questions
 
@@ -2011,7 +2023,12 @@ true sandbox**):
 
 - **Path scoping.** Filesystem and shell tools are restricted to declared roots.
   Hard denylist regardless of scope: `~/.ssh`, keychain paths, browser profile
-  directories, `.env` and credential files.
+  directories (Safari, Chrome, Edge, Brave, Arc, Firefox), any `.env` or
+  `.env.*` file, credential files (`~/.aws/credentials`, `~/.netrc`,
+  `~/.config/gh/hosts.yml`, `~/.docker/config.json`, `~/.npmrc`, `~/.pypirc`,
+  `~/.kube/config`, `~/.gnupg`), and Homerun's own data dir, including the
+  `claude` config snapshot (§5.5 for its details). It binds the file tools;
+  `Bash` is not path-checked, and is gated as `destructive` instead.
 - **Tool classification + approval gates** (§5.5). `destructive` tools are
   never auto-approved inside an unattended run. A scheduled run that wants to
   delete something pauses and notifies.
@@ -2285,3 +2302,5 @@ One line per major decision: what was chosen, and why.
 | 31 | **One open input request per run** (§5.6) | The parallel-call rule without batch boundaries, which the hook cannot see: while one call waits, every other gated call is denied and re-issued after the answer |
 | 32 | **Unclassified calls may be granted "Always allow"** (§5.5, §5.6) | An unmatched `Bash` command and an untrusted MCP tool are `destructive` only by default; otherwise no `Bash` grant or *"Trust this tool"* could exist. The grant must name a non-destructive class |
 | 33 | **A crash during a short wait turns an approval into a one-shot approval** (§5.6) | The resumed `claude` does not ask about a call that was never deferred. The call is reported as not run, and the identical re-issued call runs without asking twice |
+| 34 | **The hard denylist is decided before grants, approvals and `--dev-auto-approve`, and repeated as SDK deny rules** (§5.5, §13) | Keys, keychains, browser profiles, `.env` and credential files, and Homerun's own data are never a question to answer: a hit is `denied`, even inside a declared root. Realpath and case folding close symlink, `..` and case tricks; the SDK rules are a second layer if the hook is ever wrong |
+| 35 | **Grants are per task, never global** (§5.6) | As designed; confirmed in milestone 6 |
