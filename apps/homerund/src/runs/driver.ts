@@ -19,8 +19,11 @@ import {
   getRunRow,
   insertInputRequest,
   lastInputRequestAt,
+  lastReplySessionRun,
+  lastSeqOfRun,
   lastSessionRun,
   markInputsConsumed,
+  monitorReports,
   markRequestApplied,
   markRequestDeferred,
   pendingInputRequests,
@@ -37,7 +40,7 @@ import { now, type RunContext } from "./context";
 import { finishRun } from "./finish";
 import { recoverRun } from "./recovery";
 import { prepareResume } from "./resume";
-import { specForRun } from "./specs";
+import { isMonitorReply, specForRun } from "./specs";
 import { oneShotApproval, requeueIfReady, settleWithoutProcess, type LiveGate } from "./answers";
 import { approvalPrompt, BAD_QUESTION_TEXT, DENIED_TEXT, EXPIRED_TEXT, expiresAt, questionPrompt, SIBLING_TEXT, sdkAnswers } from "./gate";
 
@@ -46,6 +49,9 @@ export const DELTA_COALESCE_MS = 75;
 /** After interrupt, how long `claude` gets to exit before its group is killed (§5.7). */
 export const STOP_GRACE_MS = 2000;
 const MAX_DELTA_CHARS = 100_000;
+/** How many of a monitor's recent reports a reply on its thread starts with (§5.7). */
+export const REPLY_REPORTS = 3;
+const REPORT_CHARS = 4000;
 
 export const STOPPED_REASON = "The run was stopped, so this call was not run.";
 export const NO_RESULT = "no result reported";
@@ -225,15 +231,23 @@ export class RunDriver {
     // never continues the thread's previous session (§8.3).
     const usable = (sid: string) => hasConversation(this.store, sid);
     const own = row.sdk_session_id !== null && usable(row.sdk_session_id);
-    const prev = own || row.monitor_phase ? null : lastSessionRun(this.store, this.threadId, usable);
+    // A reply on a monitor's thread (§5.7) continues the last reply, never a check or act step.
+    const reply = isMonitorReply(this.store, row);
+    const prev = own || row.monitor_phase ? null : reply ? lastReplySessionRun(this.store, this.threadId, usable) : lastSessionRun(this.store, this.threadId, usable);
+    const reports = reply && !own ? monitorReports(this.store, this.threadId, prev ? lastSeqOfRun(this.store, prev.run_id) : 0, REPLY_REPORTS) : [];
+    const reportTaint = reports.reduce<number | null>((t, r) => (r.tainted_at !== null && (t === null || r.tainted_at < t) ? r.tainted_at : t), null);
     const resume = own ? row.sdk_session_id : (prev?.sdk_session_id ?? null);
     this.costBefore = row.cost_usd ?? 0;
-    this.costBaseline = own ? (row.sdk_cost_total ?? 0) : (prev?.sdk_cost_total ?? 0);
+    // claude restores a resumed session's running total_cost_usd, so a run pays only what the
+    // session added after it began. A run resumed before its first result keeps the baseline it
+    // started with; 0 would charge it the whole thread's earlier runs (§5.4).
+    this.costBaseline = own ? (row.sdk_cost_total ?? row.sdk_cost_baseline ?? 0) : (prev?.sdk_cost_total ?? 0);
     updateRun(this.store, this.runId, {
       sdk_cost_baseline: this.costBaseline,
       ...(resume !== row.sdk_session_id ? { sdk_session_id: resume } : {}),
-      // Untrusted content in the resumed conversation is still in the context (§5.5).
-      ...(prev?.tainted_at && row.tainted_at === null ? { tainted_at: prev.tainted_at } : {}),
+      // Untrusted content in the resumed conversation, or in the reports a reply is given, is
+      // still in the context (§5.5).
+      ...(row.tainted_at === null && (prev?.tainted_at ?? reportTaint) !== null ? { tainted_at: prev?.tainted_at ?? reportTaint } : {}),
     });
 
     // Give every call the transcript left open the result Homerun recorded, or truncate before
@@ -260,6 +274,9 @@ export class RunDriver {
       if (row.resume_reason === "ambiguity_resolved") inputs.splice(beforePark, 0, { uuid: this.noteUuid, text: row.resume_note });
       else inputs.push({ uuid: this.noteUuid, text: row.resume_note });
     }
+    // A reply starts from what the monitor reported since the last reply, as context before
+    // the user's message (§5.7): each check-and-act run is its own session (§8.3).
+    if (reports.length && inputs.length) inputs.unshift({ uuid: randomUUID(), text: reportContext(this.spec.name, reports) });
     // A deferred call resumes on an empty input stream (§5.6, spike 3); what else the run was
     // given follows once the call has its answer.
     this.resumeCall = own ? this.deferredCall(row) : null;
@@ -918,3 +935,12 @@ function contentText(c: unknown): string {
 }
 
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+
+/** The context message a reply on a monitor's thread starts with (§5.7). */
+export function reportContext(name: string, reports: Array<{ ts: number; text: string }>): string {
+  const parts = reports.map((r) => {
+    const text = r.text.length > REPORT_CHARS ? `${r.text.slice(0, REPORT_CHARS)}…` : r.text;
+    return `Report from ${new Date(r.ts).toISOString()}:\n${text}`;
+  });
+  return [`[Homerun] Context: the most recent reports of the monitor "${name}", oldest first. The user's message follows.`, ...parts].join("\n\n");
+}

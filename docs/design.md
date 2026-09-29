@@ -3,9 +3,9 @@
 *A local-first agent that runs your tasks at home, on your own machine — and
 that you control from anywhere.*
 
-**Status:** v1 architecture. Milestones 0–4 are done; milestone 5 (scheduler and
-monitors) is next (§16).
-**Updated:** 2026-09-28
+**Status:** v1 architecture. Milestones 0–7 are done; milestone 8 (menu bar,
+login item, signed updater) is next (§16).
+**Updated:** 2026-09-29
 **Scope:** v1 architecture and build plan. This document describes the current
 design. Test evidence from the milestone 0 spike is in
 [spike-results.md](spike-results.md). Major decisions are summarised in the
@@ -316,8 +316,25 @@ Homerun.app (shell)         owns the keychain (§11)
 | Runtime crash | Shell restarts it with backoff; orphaned `claude` processes and their tools are killed, then runs resume from checkpoint (§5.4). |
 | Shell crash | Runtime detects parent exit (its stdin pipe closes), checkpoints, and exits. Next launch resumes. |
 
+**Supervision.** The shell treats the runtime as started once it prints its
+`ready` line and both of the shell's connections (its own and the webview's,
+§5.2) complete `hello`, within a minute. It pings every 15 s; three missed pings
+in a row are a hang, and a wake resets the count, because nothing answers while
+the Mac sleeps.
+
+- **Crash:** an unexpected exit restarts with backoff (1, 2, 4, 8, 16, 30 s),
+  which resets after two healthy minutes.
+- **Crash loop:** five exits within three minutes. Fast restarts stop, the window
+  says so with a *Restart* button, and the shell still retries every ten
+  minutes, so monitors don't die silently (§8.2).
+- **Exits that retrying can't fix** wait for the user: another runtime owns the
+  data folder, or the database was written by a newer version (§6.3).
+- **Quit** closes the runtime's stdin (it checkpoints and exits), sends SIGTERM
+  after 10 s, and SIGKILL 5 s later.
+
 - **macOS:** menu-bar app; the Dock icon is shown only while a window is open.
-  Permissions (Full Disk Access, Automation) attach to **Homerun.app** as the
+  Until the menu-bar item arrives (§16 row 8), the Dock icon stays and reopens
+  the window. Permissions (Full Disk Access, Automation) attach to **Homerun.app** as the
   responsible process, so users see one entry in System Settings rather than an
   unfamiliar helper binary.
 - **Windows:** tray app, per-user install, started at login (§11).
@@ -364,8 +381,10 @@ do not stop same-user processes. Every local connection therefore authenticates.
   `secrets.clear`) on its authenticated connection. The runtime accepts these
   only from the shell's launch-token connection, never from the CLI or from
   forwarded webview calls. It holds secrets in memory only and never writes
-  them to disk or logs. The shell runs whenever the runtime does (§5.1), so the
-  key is normally present. A headless runtime (§5.1) has no shell; there, runs
+  them to disk or logs. Before storing a new API key, the shell asks the runtime
+  to check it with the provider (`secrets.verify`, shell-only; §7.2); the runtime
+  neither keeps nor uses that value. The shell runs whenever the runtime does
+  (§5.1), so the key is normally present. A headless runtime (§5.1) has no shell; there, runs
   that need the key wait in `waiting_input` with *"Open Homerun to unlock"*.
 - **The runtime writes secrets back through the shell.** Some secrets are
   created or changed by the runtime: the device keypair (§9.6) and rotated
@@ -383,9 +402,11 @@ do not stop same-user processes. Every local connection therefore authenticates.
   - A device keypair is never used for pairing until the shell has confirmed
     storing it.
 - **The webview has no socket access.** It calls Tauri commands; the shell
-  forwards an allowlisted set of methods to the runtime. A compromised webview
-  can do only what the UI can do, and approvals are still enforced by the
-  runtime.
+  forwards an allowlisted set of methods to the runtime, on a second connection
+  that presents the launch token with the caller role `webview`. The runtime
+  checks the same allowlist again (`callers.json` in `@homerun/core`). A
+  compromised webview can do only what the UI can do, and approvals are still
+  enforced by the runtime.
 - **The CLI is approved once.** On first use, `homerun` asks the app for
   access. The app shows *"Allow the Homerun CLI to control your agents?"*. On
   approval, the runtime issues a CLI token. The **CLI** stores it in its own
@@ -858,8 +879,16 @@ A **session is a conversation thread**. Each user message starts a run on that
 thread; the run proceeds until the agent yields back to the user. Monitors write
 to a thread too — but only when something changed, failed, or was missed
 (§8.3) — so a user can reply to a monitor's report ("why did you flag this?")
-and carry on from there. Replies on a monitor's thread arrive with the desktop
-app (§16 row 7); until then the runtime refuses them.
+and carry on from there.
+
+- **Replies on a monitor's thread** start a run under the monitor's tools,
+  policy and budget, on its act model.
+  - It continues the previous reply's session.
+  - It is seeded with up to three reports written since then, and carries their
+    taint.
+  - It never touches the monitor's state, coverage or fires.
+  - It is refused while a check runs. A fire that comes due during a reply is
+    handled like one for a busy monitor (§8.3).
 
 - **One writer.** The runtime owns every thread and assigns a monotonic `seq` to
   each event. Messages sent from desktop, iPhone, and web at the same moment are
@@ -1151,6 +1180,11 @@ model families are v2 (§7.5).
 The runtime calls the provider **directly over HTTPS**. Model traffic never
 touches our relay.
 
+**Connecting a key.** Onboarding checks a pasted key with Anthropic before
+saving it (`GET /v1/models`, which costs nothing; `secrets.verify`, §5.2). A
+refused key is not stored. If Anthropic can't be reached, the key is saved
+unverified and the app says so.
+
 **Onboarding cost.** Asking a consumer to create a Console account and paste an
 API key is the largest onboarding hurdle in v1. Managed model billing ("we sell
 credits") would remove it, but needs a model proxy and is deferred (§10.11).
@@ -1310,7 +1344,8 @@ memory, so it can be shown to the user, edited, reset, and tested.
 fresh `query()` on the act model, with the check's findings and the saved state.
 
 - **Each monitor run is a fresh SDK session.** It never replays the monitor's
-  thread, so context stays small forever. After a crash the act step resumes its
+  thread, so context stays small forever. Replies from the user run apart from
+  the monitor's own runs (§5.7). After a crash the act step resumes its
   own session if the store holds a conversation for it, and otherwise starts a new
   one; it never falls back to the thread's previous session (§5.4).
 - The act step runs under monitor tool policy: no `Bash`, and destructive actions
@@ -1616,7 +1651,8 @@ The iOS app is **not** a thin remote. It must let the user:
 the phone holds a cache.
 
 - **Thread list:** the runtime sends summaries — title, last message, unread
-  count, and whether input is pending.
+  count, and whether input is pending. A new chat is titled from its first
+  message, so its name doesn't change as replies arrive.
 - **History:** paged backwards from the newest event, so a thread opens instantly
   however long it is. History is sent as `message.final` events, not the
   thousands of token deltas that produced them.
@@ -1638,9 +1674,12 @@ the phone holds a cache.
 Data Protection class *Complete*, with its key in the Keychain marked
 `ThisDeviceOnly` (never synced to iCloud). Optional Face ID lock on open.
 
-**Code sharing.** `packages/chat` holds the thread store, sync engine, event
-reducer, and markdown parsing, all framework-agnostic and used by desktop, web,
-and iOS. Only the view layer differs (React DOM vs React Native).
+**Code sharing.** [`packages/app-state`](../packages/app-state/README.md)
+(`@homerun/app-state`) holds the protocol client, the thread store and sync
+engine, the event reducer and timeline view model, the thread list and inbox,
+tasks and monitors, input drafts, and markdown parsing. It has no DOM, React,
+Tauri or Bun dependency and is used by desktop, web, and iOS. Only the view
+layer differs (React DOM vs React Native).
 
 ### 9.9 The web client
 
@@ -1930,6 +1969,10 @@ accounts.**
     build, the legacy keychain's `teamid:` partition also prevents the prompt
     after an update. The update test (§16.1 item 8) runs in CI for every
     release.
+  - **Builds without a profile.** Ad-hoc and self-signed builds get
+    `errSecMissingEntitlement` (-34018) from the data-protection keychain, so
+    the shell uses the legacy keychain, and each rebuild may prompt once.
+    Debug builds keep the key in memory unless told to use the keychain.
 - **Release pipeline facts.**
   - Signing and notarizing need an unlocked, awake Mac, or a pre-authorised key:
     `codesign` fails with `errSecInternalComponent` when securityd would have to
@@ -2053,6 +2096,11 @@ true sandbox**):
   `bypassPermissions` is never used.
 - **No inherited configuration.** Runs never load the user's `~/.claude`
   settings, hooks, skills, or MCP servers (§5.3).
+- **Model output is displayed as data.** The UI parses markdown into a neutral
+  tree and never renders HTML from it. Remote images are shown as links, never
+  fetched, because fetching an attacker-chosen URL is itself an exfiltration
+  channel. Links open in the default browser, never in the webview, and the
+  webview's content security policy admits no remote origin.
 
 **Secondary threat: the remote access path.** Internet reachability means a
 compromised relay or a stolen phone becomes a path to a machine that can run
@@ -2154,8 +2202,9 @@ UI last: the runtime is the risky part.
 | 4 | **Crash resume** | Kill at every event boundary (§16.2); resume correctly, including ambiguous tool calls | **Done** |
 | 5 | Scheduler + monitors | Cron + timezone + catch-up-on-wake + power assertions; rule-based and model-based checks; state advances only on success; health digest; fake-clock suite including DST and sleep | **Done** |
 | 6 | Approvals + questions | Destructive tool pauses a run; `AskUserQuestion` pauses for an answer; long waits `defer` and resume; answer from CLI; first answer wins | **Done** |
-| 7 | Desktop app | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | Next |
-| 8 | Packaging | Menu-bar / tray residency, login item, signed updater, quit confirmation | — |
+| 7 | [Desktop app](../apps/desktop/README.md) | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | **Done** |
+| 8 | Packaging | Menu-bar / tray residency, login item, signed updater, quit confirmation | Next |
+| 8b | Windows | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | — |
 | 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | — |
 | 10 | iOS + web | Sign-in and device linking; history sync, live chat, steering, questions, approvals, rich push; web client with reduced authority | — |
 | 11 | Distribution | Signed and notarized builds, installers, crash reporting, version gate | — |
@@ -2202,7 +2251,7 @@ concurrency defaults (§5.3).
 
 ### 16.2 Testing strategy
 
-The hardest properties in this design cannot be tested by hand. Four harnesses
+The hardest properties in this design cannot be tested by hand. Five harnesses
 are built alongside the milestones that need them, plus one gate on SDK
 upgrades.
 
@@ -2211,6 +2260,7 @@ upgrades.
 | **Replay Claude** | Runs behave deterministically in CI, at no API cost | A local server behind `ANTHROPIC_BASE_URL` that records real API exchanges once and replays them, with the real `claude`. Scenarios: tool loops, approvals, questions, errors, rate limits, and the real-`claude` crash-resume paths |
 | **Crash at every boundary** | Crash resume is correct, not just usually correct | Run a scripted scenario; kill the runtime (and separately the `claude` process) after event *k*, for every *k*; resume; assert on the final state. Invariants: no duplicate side effects from non-idempotent tools, no lost messages, `seq` has no gaps, and ambiguous calls always ask the user. It runs against a simulated `claude` that behaves like the real one where recovery depends on it, because a real `claude` would need a cassette per boundary. A nightly build crashes at every *k*; each pull request crashes at a seeded sample that includes every kind of boundary |
 | **Fake clock** | Scheduling is correct across time | An injected clock and injected sleep and wake events. Cases: DST gaps and overlaps, timezone changes, week-long sleep, every catch-up policy, `UNIQUE(dedupe_key)` under a race between catch-up and a normal fire |
+| **Desktop UI end to end** | The app's views work against a real runtime | Playwright drives the production web bundle in Chrome, through a stand-in for the Rust shell that applies the same `webview` allowlist, against a real runtime with a scripted engine or replay cassettes. The Rust shell has its own tests; WKWebView and the keychain are checked by hand on macOS |
 | **Protocol test vectors** | Desktop, iOS, and web interoperate | Shared files of known keys, messages, and expected ciphertext, for Noise live sessions, sealed messages, expiry, and replay rejection. The TypeScript runtime and the React Native client must both pass the same files |
 
 **SDK upgrade gate (eval suite).** Because the SDK tracks Claude Code, an
@@ -2246,8 +2296,8 @@ upgrade can change agent behaviour without any change to our code.
 
 ## 17. Open questions
 
-1. **Windows parity timing** — build both from milestone 1, or macOS first and
-   port at milestone 7? The runtime is portable; the packaging is not.
+1. **Windows parity timing** — *decided in milestone 7* (§18 row 40): macOS
+   first; Windows is its own milestone, 8b, right after milestone 8 (§16).
 2. **Browser tooling** — bundle Playwright (heavy, reliable, own browser) or
    drive the user's existing Chrome via CDP (light, reuses logged-in sessions,
    more fragile)? This materially affects what monitors can do.
@@ -2304,3 +2354,9 @@ One line per major decision: what was chosen, and why.
 | 33 | **A crash during a short wait turns an approval into a one-shot approval** (§5.6) | The resumed `claude` does not ask about a call that was never deferred. The call is reported as not run, and the identical re-issued call runs without asking twice |
 | 34 | **The hard denylist is decided before grants, approvals and `--dev-auto-approve`, and repeated as SDK deny rules** (§5.5, §13) | Keys, keychains, browser profiles, `.env` and credential files, and Homerun's own data are never a question to answer: a hit is `denied`, even inside a declared root. Realpath and case folding close symlink, `..` and case tricks; the SDK rules are a second layer if the hook is ever wrong |
 | 35 | **Grants are per task, never global** (§5.6) | As designed; confirmed in milestone 6 |
+| 36 | **A platform-neutral client state layer, `@homerun/app-state`** (§9.8) | The protocol client, the reducer over `thread_events`, sync and view models have no DOM, React or Tauri dependency, so the web and iOS clients reuse them and only the views differ |
+| 37 | **A crash loop stops fast restarts but keeps a slow retry** (§5.1) | Restarting every few seconds won't help, but a runtime that never comes back silently stops every monitor (§8.2). The window shows the loop, and the shell tries again every ten minutes |
+| 38 | **Replies on a monitor's thread run apart from the monitor** (§5.7, §8.3) | The monitor's own sessions stay fresh and small. A reply gets the monitor's tool policy and its recent reports, and never moves its state or coverage |
+| 39 | **Onboarding checks the API key before storing it** (§7.2) | A mistyped key is caught at once, not on the first run. `GET /v1/models` costs nothing, and the runtime neither keeps nor uses the candidate |
+| 40 | **macOS first; Windows as milestone 8b** (§16, §17) | The runtime's sockets, process groups and `ps` are POSIX, so a Windows shell would have nothing to supervise. The shell's core (`shell-core`) is platform-neutral, so a port adds a named pipe, job objects and Credential Manager |
+| 41 | **The UI's end-to-end test runs in a browser against a stand-in shell** (§16.2) | A Tauri build with WebKitGTK on every pull request doesn't fit CI's time budget. The stand-in applies the same `webview` allowlist from `callers.json`, and the Rust shell has its own tests |

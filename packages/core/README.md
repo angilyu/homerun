@@ -78,10 +78,11 @@ last persisted `seq` they follow) instead of `seq`.
 |---|---|
 | `user.message` `message.final` `tool.call` `tool.result` `input.requested` `input.resolved` `run.started` `run.resumed` `run.cancelled` `run.end` `schedule.missed` `schedule.paused` | `message.delta` `run.status` |
 
-**IPC methods.** `schema/manifest.json` lists all 43 methods and 7 notifications with their
-callers. Shell-only: `secrets.set`, `secrets.clear`, `cli.approve`, `cli.deny`. Runtime → shell:
-`secrets.persist`. Allowed before `hello` (preauth): `hello`, `cli.request_access`. Everything
-except `hello` and `cli.request_access` is **provisional until milestone 7** (D8).
+**IPC methods.** `schema/manifest.json` lists all 44 methods and 7 notifications with their
+callers. Shell-only: `secrets.set`, `secrets.clear`, `secrets.verify`, `cli.approve`, `cli.deny`.
+Runtime → shell: `secrets.persist`. Allowed before `hello` (preauth): `hello`,
+`cli.request_access`. The surface was provisional until milestone 7 (D8), which added
+`threads.create` with a `task_id` and `secrets.verify`.
 
 ## Versioning
 
@@ -223,7 +224,11 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
   `hello` declares `role: "webview"`. The runtime pins that connection to the webview allowlist,
   so "never from forwarded webview calls" (§5.2) is enforced by the runtime as well as by the
   shell.
-- **D8. Full v1 method surface**, provisional until milestone 7 (see *IPC methods* above).
+- **D8. Full v1 method surface**, provisional until milestone 7 (see *IPC methods* above). The
+  desktop app (M7) added two things: `threads.create` takes an optional `task_id` for a new chat
+  on a session task (§2.1), and the shell-only `secrets.verify` checks a candidate API key with
+  the provider before the shell stores it (§7.2). `threads.changed` goes to every authenticated
+  connection whenever a thread's summary changes.
 
 ### Schedules and runs
 
@@ -324,4 +329,5 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
 - Bash pattern matching: milestone 6.
 - SQL and migrations: `apps/homerund` (`src/store/migrations/`).
 - Crypto and ciphertext test vectors: milestone 9.
-- The Rust shell's `RUNTIME_METHODS` moves to `schema/callers.json` in milestone 7.
+- The Rust shell reads its webview allowlist from `schema/callers.json` at build time
+  (`apps/desktop/src-tauri/shell-core/src/allowlist.rs`).

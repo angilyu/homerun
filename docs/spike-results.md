@@ -178,6 +178,11 @@ scripts/macos/            fetch-toolchain, package, sign (inside-out), verify, n
 
 ### One-time setup
 
+Milestone 7 replaced the spike shell in `apps/desktop` with the real app. It also cut
+`fetch-toolchain.sh` and `package.sh` down to the shipping bundle: the real `homerund` and `claude`,
+with no node, uv or updater artifacts. To rerun items 6–10 as recorded here, check out commit
+`44376c8` (the last one with the spike shell); the harnesses under `spikes/packaging/` say the same.
+
 ```sh
 pnpm install
 scripts/macos/fetch-toolchain.sh                 # stage claude, node(+npm), uv, homerund (sha256-pinned)

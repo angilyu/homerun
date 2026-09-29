@@ -1,0 +1,10 @@
+[package]
+name = "homerun-shell-core"
+version = "0.0.1"
+edition = "2021"
+description = "The platform-independent part of the Homerun shell (§5.1, §5.2): the runtime supervisor, the JSON-RPC connection, the webview allowlist and the key flow. std, serde and serde_json only, so it builds and tests on any CI runner without a webview."
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

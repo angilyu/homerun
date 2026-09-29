@@ -1,0 +1,141 @@
+//! Everything the webview can ask of the shell (§5.1, §5.2). Runtime methods go through
+//! `rpc_call`, which forwards only the webview allowlist on the webview-role connection; the
+//! launch token, the socket and the keychain stay here. Blocking work runs off the main thread.
+
+use crate::shell::Shell;
+use homerun_shell_core::allowlist::{forward, ShellError};
+use homerun_shell_core::keys::{self, KeyError, KeyStatus, SetOutcome, ShellCalls};
+use homerun_shell_core::RuntimeStatus;
+use serde_json::{json, Value};
+use std::process::Command;
+use std::sync::Arc;
+use tauri::ipc::Channel;
+use tauri::State;
+
+type Res<T> = Result<T, ShellError>;
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Res<T> + Send + 'static) -> Res<T> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| ShellError::shell(e.to_string()))?
+}
+
+fn key_error(e: KeyError) -> ShellError {
+    match e {
+        KeyError::NeedsApproval => ShellError { kind: "keychain_approval", code: None, message: e.to_string(), data: None },
+        KeyError::Other(m) => ShellError::shell(m),
+    }
+}
+
+#[tauri::command]
+pub async fn rpc_call(shell: State<'_, Arc<Shell>>, method: String, params: Option<Value>) -> Res<Value> {
+    let s = shell.inner().clone();
+    blocking(move || forward(s.rt.webview().as_deref(), &method, params.unwrap_or_else(|| json!({})))).await
+}
+
+#[tauri::command]
+pub fn rpc_attach(shell: State<'_, Arc<Shell>>, channel: Channel<Value>) {
+    shell.host.attach(channel);
+}
+
+#[tauri::command]
+pub async fn key_status(shell: State<'_, Arc<Shell>>) -> Res<KeyStatus> {
+    let s = shell.inner().clone();
+    blocking(move || keys::status(s.host.keys_ref()).map_err(key_error)).await
+}
+
+/// Onboarding and Settings (§7.2): check with Anthropic, then store and hand over.
+#[tauri::command]
+pub async fn key_set(shell: State<'_, Arc<Shell>>, value: String) -> Res<SetOutcome> {
+    let s = shell.inner().clone();
+    blocking(move || {
+        let conn = s.rt.shell();
+        keys::set_key(s.host.keys_ref(), conn.as_deref().map(|c| c as &dyn ShellCalls), &value).map_err(ShellError::shell)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn key_clear(shell: State<'_, Arc<Shell>>) -> Res<()> {
+    let s = shell.inner().clone();
+    blocking(move || {
+        let conn = s.rt.shell();
+        keys::clear_key(s.host.keys_ref(), conn.as_deref().map(|c| c as &dyn ShellCalls)).map_err(ShellError::shell)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn runtime_status(shell: State<'_, Arc<Shell>>) -> RuntimeStatus {
+    shell.rt.status()
+}
+
+/// The banner's *Restart* (§5.1): also the way out of a crash loop or a blocked state.
+#[tauri::command]
+pub fn runtime_restart(shell: State<'_, Arc<Shell>>) {
+    shell.rt.restart();
+}
+
+/// Links in messages open in the default browser, never in the webview (plan §4).
+#[tauri::command]
+pub fn open_external(url: String) -> Res<()> {
+    if !external_ok(&url) {
+        return Err(ShellError::shell("Homerun only opens web and email links."));
+    }
+    open(&[&url])
+}
+
+pub fn external_ok(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:"))
+        && url.len() <= 8192
+        && !url.chars().any(|c| c.is_control() || c.is_whitespace())
+}
+
+/// Settings → *Show logs*: the runtime's log in Finder.
+#[tauri::command]
+pub fn reveal_logs(shell: State<'_, Arc<Shell>>) -> Res<()> {
+    let p = shell.rt.log_path();
+    let p = if p.exists() { p } else { shell.data_dir.join("logs") };
+    open(&["-R", &p.display().to_string()])
+}
+
+fn open(args: &[&str]) -> Res<()> {
+    let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let args: Vec<&str> = if cfg!(target_os = "macos") { args.to_vec() } else { args.iter().filter(|a| **a != "-R").copied().collect() };
+    Command::new(program).args(args).spawn().map(|_| ()).map_err(|e| ShellError::shell(format!("Couldn't open it: {e}")))
+}
+
+#[tauri::command]
+pub fn app_info(shell: State<'_, Arc<Shell>>) -> Value {
+    json!({
+        "version": shell.version,
+        "build": if cfg!(debug_assertions) { "debug" } else { "release" },
+        "platform": std::env::consts::OS,
+        "data_dir": shell.data_dir,
+        "log_path": shell.rt.log_path(),
+        "key_store": shell.host.keys_ref().kind(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_web_and_mail_links_open() {
+        for ok in ["https://example.com/a?b=c", "http://localhost:3000", "mailto:a@b.c", "HTTPS://X.COM"] {
+            assert!(external_ok(ok), "{ok}");
+        }
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "tauri://localhost",
+            "https://a b",
+            "https://a\nb",
+            "-R",
+            "/Applications/Calculator.app",
+            "x-apple.systempreferences:",
+        ] {
+            assert!(!external_ok(bad), "{bad}");
+        }
+    }
+}

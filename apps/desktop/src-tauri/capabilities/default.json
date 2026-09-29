@@ -1,7 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Webview gets only Homerun's own allowlisted commands; no shell, fs, or socket access.",
+  "description": "The webview gets Homerun's own commands and nothing else: no shell, fs, socket or keychain access (§5.1, §5.2). Runtime calls go through rpc_call, which forwards only the webview allowlist.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "allow-rpc-call",
+    "allow-rpc-attach",
+    "allow-key-status",
+    "allow-key-set",
+    "allow-key-clear",
+    "allow-runtime-status",
+    "allow-runtime-restart",
+    "allow-open-external",
+    "allow-reveal-logs",
+    "allow-app-info"
+  ]
 }

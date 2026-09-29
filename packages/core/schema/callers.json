@@ -42,7 +42,8 @@
       "cli.approve",
       "cli.deny",
       "secrets.set",
-      "secrets.clear"
+      "secrets.clear",
+      "secrets.verify"
     ],
     "webview": [
       "hello",
@@ -228,7 +229,8 @@
     "cli.approve",
     "cli.deny",
     "secrets.set",
-    "secrets.clear"
+    "secrets.clear",
+    "secrets.verify"
   ],
   "preauth": [
     "hello",

@@ -77,7 +77,7 @@ describe("allowlists", () => {
   });
 
   test("shell-only methods appear only in the shell's list (§5.2)", () => {
-    expect([...SHELL_ONLY_METHODS].sort()).toEqual(["cli.approve", "cli.deny", "secrets.clear", "secrets.set"]);
+    expect([...SHELL_ONLY_METHODS].sort()).toEqual(["cli.approve", "cli.deny", "secrets.clear", "secrets.set", "secrets.verify"]);
     for (const m of SHELL_ONLY_METHODS) expect(only(m)).toEqual(["shell"]);
     for (const m of METHOD_NAMES.filter((m) => m.startsWith("secrets."))) {
       expect(ALLOWLISTS.webview).not.toContain(m);

@@ -254,10 +254,11 @@ export const METHODS = {
     description: "Summaries, most recently updated first.",
   }),
   "threads.create": def("threads.create", {
-    params: z.object({ title: z.string().max(500).optional() }),
+    params: z.object({ title: z.string().max(500).optional(), task_id: TaskId.optional() }),
     result: z.object({ thread: Thread }),
     callers: EVERYONE,
-    description: "Start a one-off chat thread.",
+    description:
+      "Start a chat thread: a one-off chat, or with `task_id` a new chat on a session task (§2.1) that runs under that task's spec and grants.",
   }),
   "threads.history": def("threads.history", {
     params: z.object({ thread_id: ThreadId, before_seq: Seq.optional(), limit: Limit.optional() }),
@@ -420,6 +421,13 @@ export const METHODS = {
     callers: SHELL,
     description: "Forget a secret, e.g. after sign-out.",
   }),
+  "secrets.verify": def("secrets.verify", {
+    params: z.object({ name: z.literal("anthropic_api_key"), value: z.string().min(1).max(16_384) }),
+    result: z.object({ outcome: z.enum(["valid", "invalid", "unreachable"]), detail: z.string().max(500).optional() }),
+    callers: SHELL,
+    description:
+      "Check a candidate API key with the provider before the shell stores it (§7.2). Does not keep or use the value. `unreachable`: no answer, so the key may still be fine.",
+  }),
 
   // ---- runtime → shell (§5.2)
   "secrets.persist": def("secrets.persist", {
@@ -475,7 +483,8 @@ export const NOTIFICATIONS = {
     direction: "runtime_to_client",
     params: z.object({ summary: ThreadSummary }),
     recipients: EVERYONE,
-    description: "A thread's summary changed: new message, unread count, pending input, run state.",
+    description:
+      "A thread's summary changed: created, new message, title, unread count, pending input, run state. Sent to every authenticated connection.",
   }),
   "cli.access_decision": note("cli.access_decision", {
     direction: "runtime_to_client",

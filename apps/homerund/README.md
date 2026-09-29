@@ -47,11 +47,18 @@ run/dev-token       development builds only (0600)
 
 Params, results and callers are defined in `@homerun/core` (`src/protocol/methods.ts`).
 
-- `hello`, `ping`; `secrets.set`/`secrets.clear` (shell only).
-- `threads.create`, `threads.list`, `threads.history`, `threads.subscribe`/`unsubscribe`.
-  `threads.list` pages on `updated_before`, and a page never ends inside a group of threads
-  with the same `updated_at`, so paging can't skip one. Its `unread_count` is always 0 until
-  read markers arrive (milestone 7).
+- `hello`, `ping`; `secrets.set`/`secrets.clear` (shell only). `secrets.verify` (shell only,
+  §7.2) sends one `GET /v1/models` with a candidate key (no token cost) and answers `valid`,
+  `invalid` (401/403) or `unreachable`; the key is neither kept nor logged.
+- `threads.create`, `threads.list`, `threads.history`, `threads.subscribe`/`unsubscribe`,
+  `threads.mark_read`.
+  - `threads.create` with a `task_id` starts a new chat on a session task (§2.1). A monitor has
+    one thread, so it is refused there.
+  - `threads.list` pages on `updated_before`, and a page never ends inside a group of threads
+    with the same `updated_at`, so paging can't skip one.
+  - `unread_count` counts `message.final`, `input.requested` and `schedule.paused` after the
+    device's read marker (`read_markers`, migration 5). `threads.mark_read` moves it forward
+    only, clamped to the last event. Threads from before the upgrade start read.
 - `messages.send`: starts a run, steers the active one, or is held while the run waits for input.
 - `runs.get`, `runs.list`, `runs.stop`.
 - `tasks.create`, `tasks.get`, `tasks.list`, `tasks.update`, `tasks.archive`; `tasks.run_now`
@@ -60,8 +67,10 @@ Params, results and callers are defined in `@homerun/core` (`src/protocol/method
   `monitors.state.set`, `monitors.state.reset` (CONFLICT unless `expected_version` is current);
   `health.digest`, `health.settings.get`, `health.settings.set`. The web client may read these
   but not change a task, a schedule, monitor state or the digest settings (§9.9).
-- Notifications: `health.digest_ready` to every client; `power.will_sleep` and `power.did_wake`
-  from the shell.
+- Notifications: `threads.changed` and `health.digest_ready` to every client; `power.will_sleep`
+  and `power.did_wake` from the shell. `threads.changed` carries a thread's summary after any
+  persisted event, `run.status`, a new thread or a moved read marker, coalesced over 50 ms
+  (`src/threads/changes.ts`); deltas never trigger it.
 - `input.list_pending`; `input.answer` for approvals, questions and "Did this happen?"
   (below). `grants.list`, `grants.create`, `grants.revoke` (§5.6).
 - `blobs.get`: a stored tool input or output over 4 KB, in pages (`offset`, `length`).
@@ -247,6 +256,17 @@ change:
   user edited the state meanwhile (`monitors.state.set` bumps its version), the edit wins and
   the run's new state is dropped.
 
+**Replies on a monitor's thread** (§5.7, §8.3). `messages.send` on a monitor's thread starts a
+reply: a session run with the monitor's tools, policy and budget, the act model, and a system
+prompt that says it is replying on the thread.
+- It continues the previous reply's `claude` session, and its first input is a context message
+  with up to 3 of the monitor's reports (act-step `message.final`s) since that reply, capped at
+  4,000 characters. A report from a tainted run taints the reply (§7.1).
+- It is refused while a check or act step runs ("The monitor is checking right now"), and at
+  the monthly cap (BUDGET_EXCEEDED); its cost counts toward the cap.
+- While it runs, a due fire waits as it does behind a busy monitor, and `tasks.run_now` is
+  refused. It never touches fires, coverage, the schedule's failure count or monitor state.
+
 **Failures.** A failed fire is retried twice, after 1 and 5 minutes, as new attempts of the same
 fire. Three failed fires in a row pause the schedule (`paused_reason: failures`), and reaching
 the task's monthly cap pauses it too (`budget_cap`); each writes `schedule.paused` to the
@@ -284,7 +304,8 @@ bun run src/main.ts serve --no-launch-token --dev-auto-approve   # development
 
 ### Dev shell
 
-Until the desktop app exists, `scripts/dev-shell.ts` stands in for the shell:
+The desktop app ([`apps/desktop`](../desktop/README.md)) is the real shell. To work on the
+runtime alone, `scripts/dev-shell.ts` stands in for it:
 
 ```sh
 pnpm --filter @homerun/homerund dev [--no-key] [-- <serve switches>]

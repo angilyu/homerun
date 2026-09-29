@@ -211,17 +211,33 @@ export class Connection implements Conn {
     try {
       reply = handler(this, parsed.data);
     } catch (e) {
-      if (e instanceof RpcFail) return this.fail(req.id, e.code, e.message, e.data, e.close);
-      if (e instanceof NotFoundError) return this.fail(req.id, RPC_ERROR.NOT_FOUND, e.message);
-      if (e instanceof InvalidRequestError) return this.fail(req.id, RPC_ERROR.VALIDATION_FAILED, e.message);
-      if (e instanceof VersionConflictError) return this.fail(req.id, RPC_ERROR.CONFLICT, e.message, { current_version: e.currentVersion });
-      if (e instanceof StateConflictError) {
-        return e.current === null ? this.fail(req.id, RPC_ERROR.NOT_FOUND, e.message) : this.fail(req.id, RPC_ERROR.CONFLICT, e.message, { current_version: e.current });
-      }
-      if (e instanceof BudgetCapError) return this.fail(req.id, RPC_ERROR.BUDGET_EXCEEDED, e.message);
-      log.error("handler failed", { method, err: e instanceof Error ? e : String(e) });
-      return this.fail(req.id, RPC_ERROR.INTERNAL_ERROR, "Internal error.");
+      return this.failWith(req, method, e);
     }
+    // A handler that has to wait (secrets.verify asks the provider) returns a promise.
+    if (reply instanceof Promise) {
+      reply.then(
+        (r) => this.reply(req, method, r),
+        (e) => this.failWith(req, method, e),
+      );
+      return;
+    }
+    this.reply(req, method, reply);
+  }
+
+  private failWith(req: RpcRequest, method: MethodName, e: unknown): void {
+    if (e instanceof RpcFail) return this.fail(req.id, e.code, e.message, e.data, e.close);
+    if (e instanceof NotFoundError) return this.fail(req.id, RPC_ERROR.NOT_FOUND, e.message);
+    if (e instanceof InvalidRequestError) return this.fail(req.id, RPC_ERROR.VALIDATION_FAILED, e.message);
+    if (e instanceof VersionConflictError) return this.fail(req.id, RPC_ERROR.CONFLICT, e.message, { current_version: e.currentVersion });
+    if (e instanceof StateConflictError) {
+      return e.current === null ? this.fail(req.id, RPC_ERROR.NOT_FOUND, e.message) : this.fail(req.id, RPC_ERROR.CONFLICT, e.message, { current_version: e.current });
+    }
+    if (e instanceof BudgetCapError) return this.fail(req.id, RPC_ERROR.BUDGET_EXCEEDED, e.message);
+    log.error("handler failed", { method, err: e instanceof Error ? e : String(e) });
+    return this.fail(req.id, RPC_ERROR.INTERNAL_ERROR, "Internal error.");
+  }
+
+  private reply(req: RpcRequest, method: MethodName, reply: unknown): void {
     const { result, after } = isDeferred(reply) ? reply : { result: reply, after: null };
     if (this.opts.checkResults) {
       const r = METHODS[method].result.safeParse(result);

@@ -1738,11 +1738,28 @@
     },
     {
       "schema": "ThreadsCreateParams",
+      "name": "threads.create: on a session task",
+      "valid": true,
+      "value": {
+        "task_id": "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e01"
+      }
+    },
+    {
+      "schema": "ThreadsCreateParams",
       "name": "threads.create: numeric title",
       "valid": false,
       "layer": "json_schema",
       "value": {
         "title": 7
+      }
+    },
+    {
+      "schema": "ThreadsCreateParams",
+      "name": "threads.create: bad task id",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "task_id": "task-1"
       }
     },
     {
@@ -2609,6 +2626,69 @@
       "valid": true,
       "value": {
         "ok": true
+      }
+    },
+    {
+      "schema": "SecretsVerifyParams",
+      "name": "secrets.verify: api key",
+      "valid": true,
+      "value": {
+        "name": "anthropic_api_key",
+        "value": "sk-ant-TEST-not-a-real-key"
+      }
+    },
+    {
+      "schema": "SecretsVerifyParams",
+      "name": "secrets.verify: other secret",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "name": "refresh_token",
+        "value": "x"
+      }
+    },
+    {
+      "schema": "SecretsVerifyParams",
+      "name": "secrets.verify: empty value",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "name": "anthropic_api_key",
+        "value": ""
+      }
+    },
+    {
+      "schema": "SecretsVerifyResult",
+      "name": "secrets.verify: valid",
+      "valid": true,
+      "value": {
+        "outcome": "valid"
+      }
+    },
+    {
+      "schema": "SecretsVerifyResult",
+      "name": "secrets.verify: rejected",
+      "valid": true,
+      "value": {
+        "outcome": "invalid",
+        "detail": "authentication_error"
+      }
+    },
+    {
+      "schema": "SecretsVerifyResult",
+      "name": "secrets.verify: offline",
+      "valid": true,
+      "value": {
+        "outcome": "unreachable"
+      }
+    },
+    {
+      "schema": "SecretsVerifyResult",
+      "name": "secrets.verify: unknown outcome",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "outcome": "maybe"
       }
     },
     {

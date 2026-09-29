@@ -40,7 +40,7 @@ const helloParams = (role: string, auth: unknown) => ({
 function collect(c: RpcClient) {
   const events: ThreadEvent[] = [];
   c.onNotification((method, params) => {
-    expect(method).toBe("thread.event");
+    if (method !== "thread.event") return;
     const p = NOTIFICATIONS["thread.event"].params.parse(params);
     events.push(p.event);
   });
@@ -126,7 +126,7 @@ describe("framing and errors", () => {
     expect((await rejects(c.raw("ping", {}))).code).toBe(RPC_ERROR.INVALID_REQUEST);
 
     expect((await rejects(c.raw("no.such", {}))).code).toBe(RPC_ERROR.METHOD_NOT_FOUND);
-    const ni = await rejects(c.raw("threads.mark_read", { thread_id: uuid(), seq: 1 }));
+    const ni = await rejects(c.raw("runs.retry", { run_id: uuid() }));
     expect(ni.code).toBe(RPC_ERROR.METHOD_NOT_FOUND);
     expect(ni.data).toEqual({ not_implemented: true });
     expect((await rejects(c.raw("threads.history", { thread_id: "nope" }))).code).toBe(RPC_ERROR.INVALID_PARAMS);
@@ -284,7 +284,7 @@ describe("threads.list and blobs.get", () => {
     const list = await shell.call("threads.list", {});
     expect(list.has_more).toBe(false);
     const first = list.threads[0]!;
-    expect(first).toMatchObject({ thread_id: a.thread_id, title: "a", unread_count: 0, input_pending: false, active_run: null, last_seq: 4 });
+    expect(first).toMatchObject({ thread_id: a.thread_id, title: "a", unread_count: 1, input_pending: false, active_run: null, last_seq: 4 });
     expect(first.last_message).toMatchObject({ role: "assistant", preview: "echo: hello there", seq: 3 });
     expect(list.threads.find((x) => x.thread_id === b.thread_id)!.last_message).toBeNull();
     expect(list.threads.find((x) => x.thread_id === task.thread_id)).toMatchObject({ task_id: task.task.task_id, title: "task one" });

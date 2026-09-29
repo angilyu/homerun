@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Milestone 0 spike harness: it drives the spike shell's --autotest hooks and the spike runtime
+# (helpers.check, bundled node and uv), which the milestone 7 app no longer has. Rerun it from
+# commit 44376c8 (scripts/macos/ at that commit builds the matching bundle).
 # F4: how to ship the third-party pre-signed helpers (claude, node, uv).
 #   A = keep the vendor's Developer ID signature (nested code under other Team IDs)
 #   B = re-sign with our identity and our minimal entitlements

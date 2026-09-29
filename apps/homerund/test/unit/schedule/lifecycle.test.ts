@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { RPC_ERROR } from "@homerun/core";
 import type { FakeScript } from "../../../src/agent/fake-engine";
 import { every5, HOUR, MIN, rig, type Rig } from "./rig";
+import { until } from "../../helpers";
 
 let r: Rig | null = null;
 const dirs: string[] = [];
@@ -286,14 +287,113 @@ describe("monitor state (§8.3)", () => {
     expect(r.coverage(m.taskId)).toEqual([]);
   });
 
-  test("a reply on a monitor's thread is refused for now, and starts nothing (§5.7)", async () => {
+});
+
+describe("replies on a monitor's thread (§5.7)", () => {
+  /** Like `gated`, but the context message a reply starts with is taken at once. */
+  function gatedReplies() {
+    let open: () => void = () => {};
+    let gate = new Promise<void>((res) => (open = res));
+    let free = false;
+    const script: FakeScript = async (s) => {
+      for (let i = await s.nextInput(); i; i = await s.nextInput()) {
+        if (i.text.startsWith("[Homerun]")) {
+          s.result([i.uuid]);
+          continue;
+        }
+        if (!free) await gate;
+        s.emit({ type: "message", messageId: `m-${i.uuid}`, text: i.text === "why?" || i.text === "and now?" ? `answer to ${i.text}` : "acted" });
+        s.result([i.uuid]);
+      }
+    };
+    return {
+      script,
+      release() {
+        open();
+        gate = new Promise<void>((res) => (open = res));
+      },
+      /** From now on nothing waits. */
+      free() {
+        free = true;
+        open();
+      },
+    };
+  }
+
+  const send = (text: string, threadId: string) =>
+    r!.shell.call("messages.send", { thread_id: threadId, client_msg_id: crypto.randomUUID(), text } as never) as Promise<{ run_id: string; disposition: string }>;
+
+  test("a reply runs with the act model from the recent reports; fires wait for it; nothing of the monitor changes", async () => {
+    const g = gatedReplies();
+    r = await rig({ start: T0, script: g.script });
+    const m = await r.fileMonitor(every5());
+    await r.step(4 * MIN); // 00:05 baseline
+    r.write("v2");
+    await r.clock.advance(5 * MIN); // 00:10 changed; the act step waits
+
+    // While the monitor checks or acts, a reply is refused rather than steering it.
+    const busy = await send("why?", m.threadId).catch((e) => e);
+    expect(busy.code).toBe(RPC_ERROR.VALIDATION_FAILED);
+    expect(busy.message).toContain("checking right now");
+    g.release();
+    await r.idle();
+    const stateAfterAct = r.state(m.taskId);
+    const sessionsBefore = r.sr.engine.sessions.length;
+
+    const first = await send("why?", m.threadId);
+    expect(first.disposition).toBe("started_run");
+    await until(() => r!.sr.engine.sessions.length > sessionsBefore, 2000, "reply session");
+    const s1 = r.sr.engine.sessions.at(-1)!;
+    expect(s1.opts.model).toBe("haiku");
+    expect(s1.opts.appendSystemPrompt).toContain("replying on the thread");
+    expect(s1.opts.resume).toBeNull();
+    expect(s1.opts.initialInputs.map((i) => i.text)).toEqual([expect.stringContaining("acted"), "why?"]);
+    expect(s1.opts.builtinTools).toEqual(["Read"]);
+
+    // Run now is refused, and a fire that comes due waits for the reply (§8.2).
+    const now = await r.shell.call("tasks.run_now", { task_id: m.taskId } as never).catch((e) => e);
+    expect(now.message).toContain("answering a reply");
+    r.write("v3");
+    await r.clock.advance(5 * MIN); // 00:15 due while the reply runs
+    expect(r.fires(m.taskId).at(-1)).toMatchObject({ state: "queued" });
+    g.free();
+    await r.idle();
+    await r.clock.advance(0);
+    await r.idle();
+
+    const runs = r.runs(m.taskId);
+    expect(runs.map((x) => [x.trigger, x.monitor_phase === null ? "reply" : "monitor", x.state])).toEqual([
+      ["schedule", "monitor", "succeeded"],
+      ["schedule", "monitor", "succeeded"],
+      ["message", "reply", "succeeded"],
+      ["schedule", "monitor", "succeeded"],
+    ]);
+    expect(r.coverage(m.taskId)[0]).toMatchObject({ ran: 3 });
+    // The reply never wrote the monitor's state: its last writer is a monitor run.
+    expect((stateAfterAct as { last_run_id: string }).last_run_id).toBe(runs[1]!.run_id);
+    expect((r.state(m.taskId) as { last_run_id: string }).last_run_id).toBe(runs[3]!.run_id);
+
+    // The next reply continues the reply's session, with only the reports since.
+    const n = r.sr.engine.sessions.length;
+    await send("and now?", m.threadId);
+    await until(() => r!.sr.engine.sessions.length > n, 2000, "second reply session");
+    const s2 = r.sr.engine.sessions.at(-1)!;
+    expect(s2.opts.resume).toBe(`fake-session-${runs[2]!.run_id}`);
+    const texts = s2.opts.initialInputs.map((i) => i.text);
+    expect(texts).toHaveLength(2);
+    expect(texts[1]).toBe("and now?");
+    expect(texts[0]!.match(/Report from/g)).toHaveLength(1);
+    await r.idle();
+    expect(r.events(m.threadId, "message.final").map((e) => (e.payload as { text: string }).text)).toEqual(["acted", "answer to why?", "acted", "answer to and now?"]);
+  });
+
+  test("the monthly cap refuses a reply once it is spent (§7.4)", async () => {
     r = await rig({ start: T0 });
-    const m = await r.fileMonitor(hourly());
-    const err = await r.shell
-      .call("messages.send", { thread_id: m.threadId, client_msg_id: crypto.randomUUID(), text: "why?" } as never)
-      .catch((e) => e);
-    expect(err.code).toBe(RPC_ERROR.VALIDATION_FAILED);
-    expect(err.message).toContain("monitor's thread");
-    expect(r.runs(m.taskId)).toEqual([]);
+    const m = await r.fileMonitor(hourly(), { monthly_cap_usd: 0.001 });
+    await send("hello", m.threadId);
+    await r.idle();
+    r.sr.rt.store.db.query("UPDATE runs SET cost_usd = 1").run();
+    const err = await send("again", m.threadId).catch((e) => e);
+    expect(err.code).toBe(RPC_ERROR.BUDGET_EXCEEDED);
   });
 });

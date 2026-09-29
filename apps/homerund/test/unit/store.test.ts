@@ -9,7 +9,7 @@ import { contentValue, toContent } from "../../src/store/content";
 import { openDb } from "../../src/store/db";
 import { appendEvent, callsWithoutResult, eventsAfter, historyPage } from "../../src/store/events";
 import { currentVersion, DatabaseTooNewError, listBackups, migrate, MigrationFailedError, MIGRATIONS, type Migration } from "../../src/store/migrate";
-import { createThread, ensureDevice, tryInsertRun, type NewRun } from "../../src/store/rows";
+import { createThread, ensureDevice, markRead, threadSummary, tryInsertRun, type NewRun } from "../../src/store/rows";
 import { SqliteSessionStore } from "../../src/store/session-store";
 import { Store } from "../../src/store/store";
 
@@ -91,6 +91,29 @@ describe("migration 3: the scheduler (§6, §8)", () => {
     for (const t of ["schedules", "monitor_state", "schedule_coverage", "schedule_fires", "downtime", "runtime_lives", "health_digests", "app_settings"]) expect(tables).toContain(t);
     const cols = db.query<{ name: string; notnull: number }, []>("PRAGMA table_info(runs)").all();
     for (const c of ["monitor_phase", "check_session_id", "state_version"]) expect(cols.find((x) => x.name === c)).toMatchObject({ notnull: 0 });
+  });
+});
+
+describe("migration 5: read markers (§9.8)", () => {
+  test("threads from before the upgrade count as read on this device; new ones start unread", () => {
+    dir = mkdtempSync(join(tmpdir(), "hr-store-"));
+    db = openDb(join(dir, "homerun.db"));
+    migrate(db, { backupDir: join(dir, "b"), runtimeVersion: "t", migrations: MIGRATIONS.filter((m) => m.version <= 4) });
+    const store = new Store(db, new Bus());
+    const device = ensureDevice(store).device_id;
+    const old = createThread(store);
+    const origin = { device_id: device, surface: "desktop" as const };
+    appendEvent(store, old.thread_id, null, "message.final", { message_id: "m1", role: "assistant", text: "hi" });
+    expect(migrate(db, { backupDir: join(dir, "b"), runtimeVersion: "t" })).toMatchObject({ status: "migrated", from: 4, to: N });
+    const fresh = createThread(store);
+    appendEvent(store, fresh.thread_id, null, "user.message", { client_msg_id: crypto.randomUUID(), text: "q", origin, disposition: "started_run" });
+    appendEvent(store, fresh.thread_id, null, "message.final", { message_id: "m2", role: "assistant", text: "a" });
+    const unread = (id: string) => threadSummary(store, id, device)!.unread_count;
+    expect(unread(old.thread_id)).toBe(0);
+    expect(unread(fresh.thread_id)).toBe(1);
+    expect(markRead(store, fresh.thread_id, device, 2, 1)).toBe(true);
+    expect(unread(fresh.thread_id)).toBe(0);
+    expect(markRead(store, fresh.thread_id, device, 1, 2)).toBe(false);
   });
 });
 

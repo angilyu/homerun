@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Milestone 0 spike harness: it drives the spike shell's --autotest hooks and the spike runtime
+# (helpers.check, bundled node and uv), which the milestone 7 app no longer has. Rerun it from
+# commit 44376c8 (scripts/macos/ at that commit builds the matching bundle).
 # Launch a built Homerun.app's shell binary with a scrubbed environment and an
 # --autotest driver; wait up to $TIMEOUT s; print shell + runtime logs.
 #   spikes/packaging/run-app.sh <Homerun.app> <data-dir> <autotest> [timeout]

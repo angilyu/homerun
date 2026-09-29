@@ -112,6 +112,7 @@ function methodArea(m: MethodName): string {
     case "cli.deny":
     case "secrets.set":
     case "secrets.clear":
+    case "secrets.verify":
     case "secrets.persist":
       return "local";
     default:

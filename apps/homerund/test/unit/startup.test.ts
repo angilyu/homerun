@@ -79,6 +79,58 @@ describe("startup recovery (§5.4)", () => {
     expect(eventTypes(b, thread_id)).toEqual(["user.message", "run.started", "run.resumed", "message.final", "run.end"]);
   });
 
+  test("a follow-up resumed after a crash is charged its own share of the session's cost, not the thread's", async () => {
+    // Found by the real-key check (apps/desktop/README.md): claude restores a resumed session's
+    // running total_cost_usd, so a follow-up killed before its first result must keep the baseline
+    // it started with (the previous run's total), not 0.
+    const env = { HOMERUN_DEV_AUTO_APPROVE: "1" };
+    let n = 0;
+    const a = await socketRuntime({
+      env,
+      script: async (s) => {
+        const i = (await s.nextInput())!;
+        if (++n === 1) {
+          s.emit({ type: "message", messageId: "m1", text: "first" });
+          s.result([i.uuid], { cost: 0.02 });
+          return;
+        }
+        s.emit({ type: "delta", messageId: "m2", text: "writing" });
+        await never();
+      },
+    });
+    const shell = await a.shell();
+    await shell.call("secrets.set", { name: "anthropic_api_key", value: KEY });
+    const { thread_id } = await shell.call("tasks.create", { spec: sessionSpec({ builtin: ["Bash"] }) as never });
+    const first = await shell.call("messages.send", { thread_id, client_msg_id: uuid(), text: "one" });
+    await until(() => row(a, first.run_id).state === "succeeded", 2000, "first run");
+    const second = await shell.call("messages.send", { thread_id, client_msg_id: uuid(), text: "two" });
+    await until(() => a.engine.sessions.length === 2, 2000, "second session");
+    await Bun.sleep(120);
+    expect(row(a, second.run_id)).toMatchObject({ sdk_cost_total: null, sdk_cost_baseline: 0.02 });
+    a.crash();
+
+    const b = await socketRuntime({
+      dir: a.dir,
+      env,
+      script: async (s) => {
+        const i = (await s.nextInput())!;
+        s.emit({ type: "message", messageId: "m3", text: "done" });
+        // The resumed session's total: 0.02 from the first run, 0.005 from this one.
+        s.result([i.uuid], { cost: 0.025 });
+      },
+    });
+    cleanups.push(async () => {
+      await b.close();
+      rmSync(a.dir, { recursive: true, force: true });
+    });
+    await b.shell().then((c) => c.call("secrets.set", { name: "anthropic_api_key", value: KEY }));
+    await b.rt.scheduler.idle();
+    expect(b.engine.sessions[0]!.opts.resume).toBe(`fake-session-${first.run_id}`);
+    expect(row(b, second.run_id)).toMatchObject({ state: "succeeded", sdk_cost_total: 0.025 });
+    expect(row(b, second.run_id).cost_usd).toBeCloseTo(0.005, 6);
+    expect(row(b, first.run_id).cost_usd).toBe(0.02);
+  });
+
   test("a finished call whose mirrored tool_result was lost gets its recorded result in the transcript", async () => {
     // The Post hook wrote tool.result, but the SDK mirror died before storing claude's tool_result
     // (it can lag the API request). Left alone, claude would show the call as interrupted on

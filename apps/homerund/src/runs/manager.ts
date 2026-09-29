@@ -113,8 +113,20 @@ export class RunManager {
     return this.resolver.answer(requestId, a, now(this.ctx));
   }
 
-  createThread(title?: string): Thread {
-    return createThread(this.ctx.store, { title: title ?? null, now: now(this.ctx) });
+  /**
+   * threads.create: a one-off chat, or a new chat on a session task (§2.1), which runs under the
+   * task's spec and grants. A monitor has exactly one thread, its own.
+   */
+  createThread(title?: string, taskId?: string): Thread {
+    const store = this.ctx.store;
+    return store.tx(() => {
+      if (!taskId) return createThread(store, { title: title ?? null, now: now(this.ctx) });
+      const task = getTask(store, taskId);
+      if (!task) throw new NotFoundError("task");
+      if (task.archived_at !== null) throw new InvalidRequestError("This task is archived.");
+      if (task.kind !== "session") throw new InvalidRequestError("A monitor has one thread; reply there instead.");
+      return createThread(store, { taskId, title: title ?? task.name, now: now(this.ctx) });
+    });
   }
 
   setHooks(h: ManagerHooks): void {
@@ -202,6 +214,7 @@ export class RunManager {
       const threadId = monitorThread(store, taskId);
       if (!threadId) throw new NotFoundError("thread");
       const active = activeRunRow(store, threadId);
+      if (active && active.monitor_phase === null) throw new InvalidRequestError("The monitor is answering a reply on its thread. Run it once that finishes.");
       if (active) return { run_id: active.run_id, thread_id: threadId };
       const t = now(this.ctx);
       const cap = spec.budget.monthly_cap_usd;
@@ -249,12 +262,22 @@ export class RunManager {
         const task = getTask(store, thread.task_id);
         if (!task) throw new NotFoundError("task");
         if (task.archived_at !== null) throw new InvalidRequestError("This task is archived.");
-        if (task.kind !== "session") throw new InvalidRequestError("Replying on a monitor's thread arrives in a later version of Homerun.");
         taskId = task.task_id;
         taskVersion = task.version;
       }
 
       const t = now(this.ctx);
+      // A reply on a monitor's thread (§5.7) is a session run under the monitor's tools and
+      // policy. It spends from the monitor's monthly cap, and a fire that comes due meanwhile
+      // waits for it like a busy monitor (§8.2).
+      const monitor = taskId ? getTask(store, taskId)!.spec : null;
+      if (monitor?.kind === "monitor" && !activeRunRow(store, thread.thread_id)) {
+        const cap = monitor.budget.monthly_cap_usd;
+        const zone = scheduleForTask(store, taskId!)?.timezone ?? this.hooks.deviceZone();
+        if (cap !== undefined && monthCost(store, taskId!, zone, t) >= cap) {
+          throw new BudgetCapError(`This monitor's spend this month reached its $${cap} cap.`);
+        }
+      }
       const sentAt = p.sent_at !== undefined && p.sent_at < t ? { sent_at: p.sent_at } : {};
       const created = tryInsertRun(store, {
         threadId: thread.thread_id,
@@ -283,6 +306,8 @@ export class RunManager {
 
       const active = activeRunRow(store, thread.thread_id);
       if (!active) throw new Error("no active run after a unique-index conflict");
+      // A check or act step is not a conversation to steer (§8.3): reply once it finishes.
+      if (active.monitor_phase) throw new InvalidRequestError("The monitor is checking right now. Send your reply when it finishes.");
       const held = active.state === "waiting_input";
       const authority = authorityAfterMessage(active.authority as "full", origin.surface);
       if (authority !== active.authority) updateRun(store, active.run_id, { authority });

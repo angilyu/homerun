@@ -17,7 +17,7 @@ import { migrate } from "../src/store/migrate";
 import { ensureDevice } from "../src/store/rows";
 import { Store } from "../src/store/store";
 import { RpcClient } from "../src/rpc/client";
-import { startRuntime, type Runtime } from "../src/runtime";
+import { startRuntime, type Runtime, type RuntimeOptions } from "../src/runtime";
 import { NoopAssertions, type PowerAssertions } from "../src/power/power";
 import type { Clock } from "../src/schedule/clock";
 
@@ -105,7 +105,16 @@ export interface SocketRuntime {
 
 /** The whole runtime (startRuntime) on a temporary data dir with the fake engine, served on a socket. */
 export async function socketRuntime(
-  opts: { script?: FakeScript; env?: Record<string, string>; dir?: string; engine?: FakeEngine; clock?: Clock; power?: PowerAssertions; deviceZone?: string } = {},
+  opts: {
+    script?: FakeScript;
+    env?: Record<string, string>;
+    dir?: string;
+    engine?: FakeEngine;
+    clock?: Clock;
+    power?: PowerAssertions;
+    deviceZone?: string;
+    verifyKey?: RuntimeOptions["verifyKey"];
+  } = {},
 ): Promise<SocketRuntime> {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "hr-rpc-"));
   const logs: string[] = [];
@@ -121,6 +130,7 @@ export async function socketRuntime(
     power: opts.power ?? new NoopAssertions(),
     ...(opts.clock ? { clock: opts.clock } : {}),
     ...(opts.deviceZone ? { deviceZone: () => opts.deviceZone! } : {}),
+    ...(opts.verifyKey ? { verifyKey: opts.verifyKey } : {}),
   });
   const clients: RpcClient[] = [];
   const track = async (p: Promise<RpcClient>) => {
