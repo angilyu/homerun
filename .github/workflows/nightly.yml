@@ -1,7 +1,7 @@
 name: Nightly
 
 # The full crash sweep: homerund killed at every event boundary (§16.2). Pull requests run a
-# sample of it (ci.yml).
+# sample of it (ci.yml). Also the macOS-only desktop shell build, which is too slow per pull request.
 on:
   schedule:
     - cron: "0 9 * * *"
@@ -28,3 +28,32 @@ jobs:
         run: pnpm --filter @homerun/homerund test:crash
         env:
           HOMERUN_CRASH_SWEEP: full
+
+  desktop-macos:
+    name: apps/desktop Tauri build (macOS)
+    # The full shell (WebKit, AppKit, keychain) and an unsigned .app, which is too slow for every
+    # pull request (plan §9). Signing and notarization are milestone 11 (§11).
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/desktop..."
+      # tauri-build checks that every externalBin exists (§5.1): homerund compiled from source and
+      # the SDK's darwin-arm64 claude.
+      - name: Stage the sidecars
+        working-directory: apps/desktop
+        run: ../../node_modules/.bin/bun scripts/stage-sidecars.ts --release
+      - name: Rust tests (whole shell workspace)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --workspace --locked
+      - name: Unsigned .app
+        run: pnpm --filter @homerun/desktop tauri build --bundles app --no-sign
