@@ -140,8 +140,8 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
     results: [["page", { threads: [F.summary()], has_more: true }]],
   },
   "threads.create": {
-    params: [["untitled", {}], ["titled", { title: "Plan the trip" }]],
-    badParams: [["numeric title", { title: 7 }]],
+    params: [["untitled", {}], ["titled", { title: "Plan the trip" }], ["on a session task", { task_id: F.TASK }]],
+    badParams: [["numeric title", { title: 7 }], ["bad task id", { task_id: "task-1" }]],
     results: [["chat", { thread: F.thread({ task_id: null, last_seq: 0 }) }]],
   },
   "threads.history": {
@@ -261,6 +261,12 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
     params: [["refresh token", { name: "refresh_token" }]],
     badParams: [["missing name", {}]],
     results: [["ok", { ok: true }]],
+  },
+  "secrets.verify": {
+    params: [["api key", { name: "anthropic_api_key", value: "sk-ant-TEST-not-a-real-key" }]],
+    badParams: [["other secret", { name: "refresh_token", value: "x" }], ["empty value", { name: "anthropic_api_key", value: "" }]],
+    results: [["valid", { outcome: "valid" }], ["rejected", { outcome: "invalid", detail: "authentication_error" }], ["offline", { outcome: "unreachable" }]],
+    badResults: [["unknown outcome", { outcome: "maybe" }]],
   },
   "secrets.persist": {
     params: [["device key", { name: "device_static_key", value: "TEST-private-key-material" }]],

@@ -4577,6 +4577,44 @@
         "ok"
       ]
     },
+    "SecretsVerifyParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "anthropic_api_key"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "SecretsVerifyResult": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "valid",
+            "invalid",
+            "unreachable"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "outcome"
+      ]
+    },
     "Seq": {
       "type": "integer",
       "minimum": 1,
@@ -5097,6 +5135,9 @@
         "title": {
           "type": "string",
           "maxLength": 500
+        },
+        "task_id": {
+          "$ref": "#/$defs/TaskId"
         }
       }
     },
