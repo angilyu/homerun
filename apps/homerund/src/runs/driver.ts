@@ -238,7 +238,10 @@ export class RunDriver {
     const reportTaint = reports.reduce<number | null>((t, r) => (r.tainted_at !== null && (t === null || r.tainted_at < t) ? r.tainted_at : t), null);
     const resume = own ? row.sdk_session_id : (prev?.sdk_session_id ?? null);
     this.costBefore = row.cost_usd ?? 0;
-    this.costBaseline = own ? (row.sdk_cost_total ?? 0) : (prev?.sdk_cost_total ?? 0);
+    // claude restores a resumed session's running total_cost_usd, so a run pays only what the
+    // session added after it began. A run resumed before its first result keeps the baseline it
+    // started with; 0 would charge it the whole thread's earlier runs (§5.4).
+    this.costBaseline = own ? (row.sdk_cost_total ?? row.sdk_cost_baseline ?? 0) : (prev?.sdk_cost_total ?? 0);
     updateRun(this.store, this.runId, {
       sdk_cost_baseline: this.costBaseline,
       ...(resume !== row.sdk_session_id ? { sdk_session_id: resume } : {}),
