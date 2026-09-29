@@ -4,7 +4,7 @@ import { getTaskVersionSpec, type RunRow } from "../store/rows";
 import type { Store } from "../store/store";
 
 /**
- * Built-ins for one-off chats (plan Q4): reading and research only until approvals exist (M6).
+ * Built-ins for one-off chats (§2.1): reading and research only until approvals exist (M6).
  * AskUserQuestion is left out until questions can be answered (M6); WebFetch and WebSearch
  * are listed but need approval, so they are denied outside `--dev-auto-approve`.
  */

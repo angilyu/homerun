@@ -80,7 +80,7 @@ type SummaryRow = ThreadRow & { msg_seq: number | null; msg_type: string | null;
 
 /**
  * threads.list (§5.7): summaries, most recently updated first. `unread_count` is 0 until
- * per-device read markers and `threads.mark_read` arrive with the desktop app (M3 plan Q9).
+ * per-device read markers and `threads.mark_read` arrive with the desktop app.
  *
  * The cursor is `updated_before` alone, so a page never ends inside a group of threads with the
  * same `updated_at`: the group moves to the next page, or, if it would fill a page by itself,

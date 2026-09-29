@@ -4,7 +4,7 @@ import { escapedTools, killProcs, killRunTree, listProcs } from "../agent/claude
 import { groupAlive } from "../agent/claude/spawn";
 import { log } from "../log";
 
-/** Boot time in whole seconds, to tell a recorded pid from a reused one after a reboot (plan Q6). */
+/** Boot time in whole seconds, to tell a recorded pid from a reused one after a reboot. */
 export function bootTime(): number {
   if (process.platform === "darwin") {
     const r = Bun.spawnSync(["/usr/sbin/sysctl", "-n", "kern.boottime"]);

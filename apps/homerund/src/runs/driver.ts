@@ -226,7 +226,7 @@ export class RunDriver {
 
   // ------------------------------------------------------------------ steering and stop
 
-  /** A message for this run (§5.7, R8): pushed into the running agent. The caller already stored it. */
+  /** A message for this run (§5.7): pushed into the running agent. The caller already stored it. */
   steer(input: UserInput): void {
     if (this.phase !== "running" || !this.engine) return;
     this.pushed.add(input.uuid);
@@ -463,7 +463,7 @@ export class RunDriver {
 
   private onExit(ex: EngineExit): void {
     if (this.phase !== "running") return;
-    // The agent died on its own (§5.4, Q11).
+    // The agent died on its own (§5.1, §5.4).
     this.phase = "ending";
     this.flushAllDeltas();
     log.warn("agent exited unexpectedly", { run_id: this.runId, code: ex.code, signal: ex.signal, error: ex.error });

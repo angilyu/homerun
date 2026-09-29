@@ -224,7 +224,7 @@ describe("threads over the socket", () => {
     expect(got.length).toBe(n);
   });
 
-  test("concurrent sends from two clients start exactly one run; the rest steer it (R8)", async () => {
+  test("concurrent sends from two clients start exactly one run; the rest steer it (§5.7)", async () => {
     srt = await socketRuntime({ script });
     const a = await srt.shell();
     const b = await srt.dev();

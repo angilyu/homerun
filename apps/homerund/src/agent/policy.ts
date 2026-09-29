@@ -10,7 +10,7 @@ import {
 /**
  * Tool policy (§5.5, §5.6). `classify` and `decide` are the permanent interface; grants and
  * approvals arrive in M6. Until then a call that needs approval is allowed only by a
- * development build started with `--dev-auto-approve`, and denied otherwise (plan Q2). The
+ * development build started with `--dev-auto-approve`, and denied otherwise. The
  * recorded `policy` stays `needs_approval` either way, so the audit trail is honest.
  */
 
@@ -57,7 +57,7 @@ export function classify(spec: PolicySpec, tool: string, input: unknown): ToolCl
     }
     return BUILTIN_TOOL_CLASS[tool];
   }
-  // Untrusted third-party MCP tools are destructive until a grant says otherwise (plan Q18).
+  // Untrusted third-party MCP tools are destructive until a grant says otherwise (§5.5).
   return "destructive";
 }
 

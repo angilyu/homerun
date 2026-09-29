@@ -8,7 +8,7 @@ import { devTokenPath } from "@homerun/client";
  * - `launch_token`: the 64-hex token the shell passes on homerund's stdin; authenticates the
  *   shell and its webview.
  * - `dev_token`: development builds only (`roleAllowedInBuild`). Regenerated on every start and
- *   written to `<run dir>/dev-token` (0600) for local tools and the replay harness (plan Q8).
+ *   written to `<run dir>/dev-token` (0600) for local tools and the replay harness.
  * - `cli_token` and `paired_device` arrive with the CLI (M3) and remote access (M9).
  */
 export class Authenticator {
