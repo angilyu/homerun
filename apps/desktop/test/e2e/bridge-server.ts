@@ -31,8 +31,9 @@ const PORT = Number(process.env.HOMERUN_E2E_PORT ?? 5179);
 const DIST = join(import.meta.dir, "dist");
 const CASSETTES = join(HOMERUND_DIR, "test", "replay", "cassettes");
 const API_KEY = "anthropic_api_key";
-/** Keys the fake runtime's `secrets.verify` accepts (§7.2); any other well-formed key is refused. */
-const GOOD_KEY = /^sk-ant-e2e-good/;
+/** The key the fake runtime's `secrets.verify` accepts (§7.2); any other key is refused. The
+ * dummy keys come from scripts/check-no-secrets.sh. */
+const GOOD_KEY = /^sk-ant-mock-not-a-real-key$/;
 
 type ShellErr = { kind: string; code: number | null; message: string; data: unknown };
 type Status = Record<string, unknown> & { state: string };
@@ -248,7 +249,7 @@ const server = Bun.serve({
     if (url.pathname === "/__e2e/scene" && req.method === "POST") {
       const body = (await req.json()) as { mode: "fake" | "replay"; key?: string | null; scenario?: string };
       try {
-        const out = body.mode === "replay" ? await shell.replay(body.scenario ?? "") : await shell.fake(body.key === undefined ? "sk-ant-e2e-good-0000000000001234" : body.key);
+        const out = body.mode === "replay" ? await shell.replay(body.scenario ?? "") : await shell.fake(body.key === undefined ? "sk-ant-mock-not-a-real-key" : body.key);
         shell.opened = [];
         return Response.json(out);
       } catch (e) {

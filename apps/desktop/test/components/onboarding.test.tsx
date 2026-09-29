@@ -15,10 +15,10 @@ describe("onboarding: connect an API key (§7.2)", () => {
     await screen.findByRole("heading", { name: "Connect your Anthropic API key" });
     const connect = screen.getByRole("button", { name: "Connect" }) as HTMLButtonElement;
     expect(connect.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-ant-good-1234" } });
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-ant-mock-not-a-real-key" } });
     fireEvent.click(connect);
     await screen.findByRole("navigation");
-    expect(shell.calls).toContain("setKey:sk-ant-good-1234");
+    expect(shell.calls).toContain("setKey:sk-ant-mock-not-a-real-key");
   });
 
   test("a rejected key stays on the form with the reason", async () => {

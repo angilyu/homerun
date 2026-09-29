@@ -104,7 +104,7 @@ fn ready(s: &RuntimeStatus) -> bool {
 
 #[test]
 fn spawns_with_the_token_on_stdin_hands_over_the_key_and_forwards() {
-    let f = start("ok", &[], Some("sk-ant-test-0000000000000000"));
+    let f = start("ok", &[], Some("sk-ant-TEST-not-a-real-key"));
     let s = f.wait("ready", ready);
     assert_eq!(s, RuntimeStatus::Ready { connection: 1, device_id: "dev-1".into(), runtime_version: "fake".into(), protocol: 1 });
     let rec = f.record();
@@ -112,7 +112,7 @@ fn spawns_with_the_token_on_stdin_hands_over_the_key_and_forwards() {
     assert!(rec.contains("token len=64"));
     // The key reaches the runtime on the shell connection before the webview connects.
     let (shell_at, key_at, webview_at) =
-        (rec.find("hello role=shell").unwrap(), rec.find("secrets.set anthropic_api_key=sk-ant-test").unwrap(), rec.find("hello role=webview").unwrap());
+        (rec.find("hello role=shell").unwrap(), rec.find("secrets.set anthropic_api_key=sk-ant-TEST").unwrap(), rec.find("hello role=webview").unwrap());
     assert!(shell_at < key_at && key_at < webview_at, "{rec}");
 
     let r = forward(f.rt.webview().as_deref(), "threads.list", json!({})).unwrap();
@@ -133,7 +133,7 @@ fn spawns_with_the_token_on_stdin_hands_over_the_key_and_forwards() {
     assert!(f.record().contains("note power.did_wake"));
     let log = std::fs::read_to_string(f.dir.join("logs/homerund.log")).unwrap();
     assert!(log.contains("\"msg\":\"ready\"") && log.contains("\"src\":\"shell\""));
-    assert!(!log.contains("sk-ant-test"), "the shell never logs a secret");
+    assert!(!log.contains("sk-ant-TEST"), "the shell never logs a secret");
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn a_runtime_that_ignores_eof_is_terminated() {
 
 #[test]
 fn crashes_restart_with_backoff_and_reconnect() {
-    let f = start("crash", &[("FAKE_CRASH_FIRST", "2")], Some("sk-ant-test-0000000000000000"));
+    let f = start("crash", &[("FAKE_CRASH_FIRST", "2")], Some("sk-ant-TEST-not-a-real-key"));
     let s = f.wait("ready", ready);
     assert!(matches!(s, RuntimeStatus::Ready { connection: 1, .. }));
     let seen = f.host.statuses.lock().unwrap().clone();

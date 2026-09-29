@@ -10,10 +10,10 @@ test("onboarding, then a streamed chat that is steered and stopped (§7.2, §5.3
   await expect(page.getByRole("heading", { name: "Connect your Anthropic API key" })).toBeVisible();
   const field = page.getByLabel("API key");
   await expect(field).toHaveAttribute("type", "password");
-  await field.fill("sk-ant-e2e-bad-000000000000000");
+  await field.fill("sk-ant-mock-not-a-key");
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("alert")).toContainText("didn't accept this key");
-  await field.fill("sk-ant-e2e-good-000000000009999");
+  await field.fill("sk-ant-mock-not-a-real-key");
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("navigation")).toBeVisible();
 

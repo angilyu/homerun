@@ -187,7 +187,7 @@ mod tests {
         r.calls.lock().unwrap().iter().map(|c| c.0.clone()).collect()
     }
 
-    const KEY: &str = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz-a1b2";
+    const KEY: &str = "sk-ant-TEST-not-a-real-key";
 
     #[test]
     fn a_valid_key_is_checked_then_stored_then_handed_over() {
@@ -196,17 +196,17 @@ mod tests {
         assert_eq!(set_key(&s, Some(&r), &format!("  {KEY}\n")), Ok(SetOutcome::Saved));
         assert_eq!(methods(&r), ["secrets.verify", "secrets.set"]);
         assert_eq!(s.get(API_KEY).unwrap().as_deref(), Some(KEY));
-        assert_eq!(status(&s).unwrap(), KeyStatus { present: true, hint: Some("a1b2".into()), store: "memory" });
+        assert_eq!(status(&s).unwrap(), KeyStatus { present: true, hint: Some("-key".into()), store: "memory" });
     }
 
     #[test]
     fn a_rejected_key_changes_nothing() {
         let s = MemoryKeyStore::default();
-        s.set(API_KEY, "sk-ant-old-key-0000000000000").unwrap();
+        s.set(API_KEY, "sk-ant-mock-not-a-key").unwrap();
         let r = rt("invalid");
         assert!(matches!(set_key(&s, Some(&r), KEY), Ok(SetOutcome::Rejected { .. })));
         assert_eq!(methods(&r), ["secrets.verify"]);
-        assert_eq!(s.get(API_KEY).unwrap().as_deref(), Some("sk-ant-old-key-0000000000000"));
+        assert_eq!(s.get(API_KEY).unwrap().as_deref(), Some("sk-ant-mock-not-a-key"));
     }
 
     #[test]
