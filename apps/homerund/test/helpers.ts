@@ -181,6 +181,7 @@ export function monitorSpec(o: {
   max_run_usd?: number;
   monthly_cap_usd?: number;
   act_instructions?: string;
+  builtin?: string[];
 }) {
   return {
     kind: "monitor" as const,
@@ -188,7 +189,7 @@ export function monitorSpec(o: {
     name: o.name ?? "watch",
     prompt: "Watch the thing.",
     budget: { max_run_usd: o.max_run_usd ?? 1, ...(o.monthly_cap_usd !== undefined ? { monthly_cap_usd: o.monthly_cap_usd } : {}) },
-    tools: { builtin: ["Read"], mcp_servers: [], homerun: [] },
+    tools: { builtin: o.builtin ?? ["Read"], mcp_servers: [], homerun: [] },
     policy: {
       roots: o.roots ?? [],
       egress: { mode: "allowlist", domains: [] },

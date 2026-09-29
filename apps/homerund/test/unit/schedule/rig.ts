@@ -21,7 +21,7 @@ export interface Rig {
   /** The watched file of `fileMonitor`. */
   file: string;
   write(text: string): void;
-  fileMonitor(schedule: unknown, o?: { name?: string; monthly_cap_usd?: number; max_run_usd?: number }): Promise<{ taskId: string; threadId: string; schedule(): ScheduleRow }>;
+  fileMonitor(schedule: unknown, o?: { name?: string; monthly_cap_usd?: number; max_run_usd?: number; builtin?: string[] }): Promise<{ taskId: string; threadId: string; schedule(): ScheduleRow }>;
   /** Advance awake time, then wait for the runs it started to settle. */
   step(ms: number): Promise<void>;
   /** The computer sleeps for `ms` (no timers), optionally telling the runtime as the shell would. */
@@ -35,10 +35,10 @@ export interface Rig {
   close(): Promise<void>;
 }
 
-export async function rig(o: { start: number; zone?: string; script?: FakeScript; dir?: string }): Promise<Rig> {
+export async function rig(o: { start: number; zone?: string; script?: FakeScript; dir?: string; env?: Record<string, string> }): Promise<Rig> {
   const clock = new FakeClock(o.start);
   const power = new FakeAssertions(() => clock.now());
-  const sr = await socketRuntime({ clock, power, deviceZone: o.zone ?? "UTC", ...(o.script ? { script: o.script } : {}), ...(o.dir ? { dir: o.dir } : {}) });
+  const sr = await socketRuntime({ clock, power, deviceZone: o.zone ?? "UTC", ...(o.script ? { script: o.script } : {}), ...(o.dir ? { dir: o.dir } : {}), ...(o.env ? { env: o.env } : {}) });
   const shell = await sr.shell();
   await shell.call("secrets.set", { name: "anthropic_api_key", value: MOCK_KEY });
   const file = join(sr.dir, "watched.txt");
