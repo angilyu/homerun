@@ -171,7 +171,8 @@ change:
   line, not staying past it), `new_items`.
 - A *model check* is one small `query()` with `check.model` that must return a `CheckResult`
   (structured output). With a `source`, the runtime fetches the observation and the model
-  judges it with no tools (3 turns). Without one, it may use the task's tools, but only calls the
+  judges it with no tools (3 turns). The answer arrives as a call to `claude`'s own
+  `StructuredOutput` tool, which the engine lets through without the policy gate. Without one, it may use the task's tools, but only calls the
   policy allows outright (12 turns). It is capped at the task's `max_run_usd`; the act step gets
   what is left.
 - The first check records a baseline and reports no change.
@@ -331,7 +332,12 @@ The scenarios:
 - `kill-claude-mid-tool`: `claude` alone is killed, and its orphaned shell with it. The user
   answers "not run", and the call runs again exactly once;
 - `ambiguity-truncate`: the truncate fallback;
-- `cancel-parked`: a parked run is stopped, and the thread's next turn resumes cleanly.
+- `cancel-parked`: a parked run is stopped, and the thread's next turn resumes cleanly;
+- `monitor-model-no-change`: a model check with an HTTP source (a local page, normalised to
+  `status.example.com`) records a baseline, then sees no change. Each check is one request
+  offering only `claude`'s `StructuredOutput` tool, and the thread stays empty;
+- `monitor-model-changed-act`: the page changes, the check reports it, the act step writes
+  the report, and the monitor state advances with the run.
 
 Replay skips a scenario whose cassette is missing.
 
