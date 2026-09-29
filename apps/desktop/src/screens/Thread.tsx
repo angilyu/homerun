@@ -347,11 +347,9 @@ function RunLine({ item }: { item: RunItem }) {
       return why ? <p className="event">{why}</p> : null;
     }
     case "run.cancelled":
-      return (
-        <p className="event">
-          {e.payload.reason === "user" ? "Stopping…" : e.payload.reason === "input_timeout" ? "Stopped: nobody answered in time" : "Stopped: the monthly budget was reached"}
-        </p>
-      );
+      // A stop by hand shows as "Stopping…" while it runs (ActivityLine) and "Stopped" at run.end.
+      if (e.payload.reason === "user") return null;
+      return <p className="event">{e.payload.reason === "input_timeout" ? "Stopped: nobody answered in time" : "Stopped: the monthly budget was reached"}</p>;
     case "run.end": {
       const p = e.payload;
       const cost = p.cost_usd !== null ? ` · ${usd(p.cost_usd)}` : "";

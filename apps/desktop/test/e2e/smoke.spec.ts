@@ -28,8 +28,8 @@ test("onboarding, then a streamed chat that is steered and stopped (§7.2, §5.3
   await expect(log.getByText(/while you watch\./)).toBeVisible({ timeout: 20_000 });
   // The steer was taken as the next turn; stop it partway.
   await expect(page.locator("[aria-busy=true]").filter({ hasText: 'said "and then stop"' })).toBeVisible();
-  await page.getByRole("button", { name: "Stop" }).click();
-  await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0, { timeout: 15_000 });
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0, { timeout: 15_000 });
   await expect(log.getByText(/Stopped/)).toBeVisible();
   // Titled by its first message in the sidebar; the history survives a reload.
   await page.reload();
@@ -88,7 +88,7 @@ test("a task: approval with an edited Always allow, the grant revoked, a questio
   await expect(page.getByRole("region", { name: "Approve Bash" })).toBeVisible();
   await send(page, "also check the docs");
   await expect(log.getByText(/Held until you answer/)).toBeVisible();
-  await page.getByRole("button", { name: "Stop" }).click();
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(log.getByText(/Not delivered/)).toBeVisible({ timeout: 15_000 });
   await expect(log.getByRole("button", { name: "Send again" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Approve Bash" })).toHaveCount(0);
