@@ -256,6 +256,17 @@ change:
   user edited the state meanwhile (`monitors.state.set` bumps its version), the edit wins and
   the run's new state is dropped.
 
+**Replies on a monitor's thread** (§5.7, §8.3). `messages.send` on a monitor's thread starts a
+reply: a session run with the monitor's tools, policy and budget, the act model, and a system
+prompt that says it is replying on the thread.
+- It continues the previous reply's `claude` session, and its first input is a context message
+  with up to 3 of the monitor's reports (act-step `message.final`s) since that reply, capped at
+  4,000 characters. A report from a tainted run taints the reply (§7.1).
+- It is refused while a check or act step runs ("The monitor is checking right now"), and at
+  the monthly cap (BUDGET_EXCEEDED); its cost counts toward the cap.
+- While it runs, a due fire waits as it does behind a busy monitor, and `tasks.run_now` is
+  refused. It never touches fires, coverage, the schedule's failure count or monitor state.
+
 **Failures.** A failed fire is retried twice, after 1 and 5 minutes, as new attempts of the same
 fire. Three failed fires in a row pause the schedule (`paused_reason: failures`), and reaching
 the task's monthly cap pauses it too (`budget_cap`); each writes `schedule.paused` to the

@@ -360,6 +360,36 @@ export function lastSessionRun(store: Store, threadId: string, usable: (sessionI
   return null;
 }
 
+/** The latest reply run on a monitor's thread with a usable session (§5.7): never a check or act step. */
+export function lastReplySessionRun(store: Store, threadId: string, usable: (sessionId: string) => boolean): RunRow | null {
+  const q = store.db.query<RunRow, [string]>(
+    "SELECT * FROM runs WHERE thread_id = ? AND sdk_session_id IS NOT NULL AND monitor_phase IS NULL ORDER BY created_at DESC, rowid DESC",
+  );
+  for (const r of q.iterate(threadId)) if (usable(r.sdk_session_id!)) return r;
+  return null;
+}
+
+/**
+ * A monitor's reports on its thread after `afterSeq`, newest `limit`, oldest first: the text of
+ * each check-and-act run's `message.final`, and whether that run had read untrusted content.
+ */
+export function monitorReports(store: Store, threadId: string, afterSeq: number, limit: number): Array<{ seq: number; ts: number; text: string; tainted_at: number | null }> {
+  return store.db
+    .query<{ seq: number; ts: number; payload: string; tainted_at: number | null }, [string, number, number]>(
+      `SELECT e.seq, e.ts, e.payload, r.tainted_at FROM thread_events e JOIN runs r ON r.run_id = e.run_id
+       WHERE e.thread_id = ? AND e.seq > ? AND e.type = 'message.final' AND r.monitor_phase IS NOT NULL
+       ORDER BY e.seq DESC LIMIT ?`,
+    )
+    .all(threadId, afterSeq, limit)
+    .reverse()
+    .map((r) => ({ seq: r.seq, ts: r.ts, text: (JSON.parse(r.payload) as { text: string }).text, tainted_at: r.tainted_at }));
+}
+
+/** The last event a run wrote on its thread, or 0. */
+export function lastSeqOfRun(store: Store, runId: string): number {
+  return store.db.query<{ s: number | null }, [string]>("SELECT MAX(seq) AS s FROM thread_events WHERE run_id = ?").get(runId)?.s ?? 0;
+}
+
 /** When the run last asked for input (it parked then), or null if it never did. */
 export function lastInputRequestAt(store: Store, runId: string): number | null {
   return store.db.query<{ at: number | null }, [string]>("SELECT MAX(requested_at) AS at FROM input_requests WHERE run_id = ?").get(runId)?.at ?? null;
