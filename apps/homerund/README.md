@@ -171,13 +171,19 @@ change:
   under the task's roots. `homerun_tool` sources are refused until Homerun's own tools exist.
   Comparators: `changed`, `equals`, `above`, `below` (edge-triggered: they report crossing the
   line, not staying past it), `new_items`.
+- The feed parser (`feed.ts`) is ours, not a dependency. It decodes only the predefined and
+  numeric entities, never expands declared ones (no XXE or entity bombs), skips a DOCTYPE's
+  internal subset, and refuses more than 5 MB, 64 levels of nesting or 100,000 elements. An
+  entry's id is its `guid`, `rdf:about` or Atom `id`, else its link, else a hash of its title
+  and date.
 - A *model check* is one small `query()` with `check.model` that must return a `CheckResult`
   (structured output). With a `source`, the runtime fetches the observation and the model
-  judges it with no tools (3 turns). The answer arrives as a call to `claude`'s own
-  `StructuredOutput` tool, which the engine lets through without the policy gate. Without one, it may use the task's tools, but only calls the
-  policy allows outright (12 turns). It is capped at the task's `max_run_usd`; the act step gets
-  what is left.
-- The first check records a baseline and reports no change.
+  judges it with no tools (3 turns). Without one, it may use the task's tools, but only calls
+  the policy allows outright (12 turns). Either way the answer arrives as a call to `claude`'s
+  own `StructuredOutput` tool, which the engine lets through without the policy gate. The check
+  is capped at the task's `max_run_usd`; the act step gets what is left.
+- The first check records a baseline and reports no change, except a threshold comparator
+  whose condition already holds.
 - The check's result is stored on the run as evidence (`runs.get`, `check_result`). A quiet check
   writes nothing to the thread. A change starts the act step in the same run, with the
   evidence as its input.
@@ -305,6 +311,11 @@ production. Covered:
   a fire's run and marking the fire; the web client refused.
 - `model-check.test.ts`, `digest.test.ts`, `shell-power.test.ts`, and
   `test/unit/monitors/rules.test.ts` (sources and comparators against a local HTTP server).
+- `test/unit/monitors/feed.test.ts`: hand-made feeds in real-world shapes (RSS 2.0 with the
+  usual namespaces, RSS 1.0, Atom, no guids) and hostile ones (XXE, an entity bomb, deep
+  nesting, oversized or truncated input).
+- `test/unit/power.test.ts`: keeping awake when caffeinate is missing, not executable or exits
+  at once.
 
 ### Replay harness (§16.2)
 
