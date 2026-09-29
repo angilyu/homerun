@@ -329,4 +329,5 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
 - Bash pattern matching: milestone 6.
 - SQL and migrations: `apps/homerund` (`src/store/migrations/`).
 - Crypto and ciphertext test vectors: milestone 9.
-- The Rust shell's `RUNTIME_METHODS` moves to `schema/callers.json` in milestone 7.
+- The Rust shell reads its webview allowlist from `schema/callers.json` at build time
+  (`apps/desktop/src-tauri/shell-core/src/allowlist.rs`).
