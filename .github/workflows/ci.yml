@@ -183,9 +183,9 @@ jobs:
 
   windows-probe:
     name: Windows probe (temporary, milestone 8b)
-    # Answers the milestone 8b plan's probe questions before the Windows design depends on them.
-    # Round 2: the DACL on later pipe instances, SMB loopback and other local users (logged on
-    # in-process), and job objects. Every probe step reports rather than fails; removed before merge.
+    # Round 3: the runtime, client, win32 and CLI unit suites on Windows, with the cross-user pipe
+    # test. Each suite reports on its own (continue-on-error) so one run shows every failure;
+    # replaced by the per-PR Windows jobs before merge.
     runs-on: windows-latest
     timeout-minutes: 10
     defaults:
@@ -199,19 +199,19 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: Install
-        run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..."
-      - name: P1–P3 named pipes from source
-        run: pnpm exec bun spikes/windows-probe/pipe.ts
-      - name: P1 named pipes, compiled
-        run: |
-          pnpm exec bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv spikes/windows-probe/pipe.ts --outfile probe.exe
-          ./probe.exe
-      - name: P2 SMB loopback and other local users
-        timeout-minutes: 2
-        run: pnpm exec bun spikes/windows-probe/acl.ts
-      - name: P6 job objects
-        timeout-minutes: 2
-        run: pnpm exec bun spikes/windows-probe/jobs.ts
-      - name: Windows denylist, against the real file system
-        working-directory: apps/homerund
-        run: pnpm exec bun test test/unit/denylist-windows.test.ts test/unit/denylist.test.ts
+        run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/cli..."
+      - name: win32
+        continue-on-error: true
+        run: pnpm --filter @homerun/win32 test
+      - name: client
+        continue-on-error: true
+        run: pnpm --filter @homerun/client test
+      - name: homerund unit (with the cross-user pipe test)
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          HOMERUN_WIN_CROSS_USER: "1"
+        run: pnpm --filter @homerun/homerund test:unit
+      - name: CLI unit
+        continue-on-error: true
+        run: pnpm --filter @homerun/cli test:unit
