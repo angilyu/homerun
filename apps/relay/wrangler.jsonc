@@ -1,0 +1,21 @@
+// The Homerun relay (§9.4). Deploying is a manual step: see README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "homerun-relay",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [{ "name": "ACCOUNTS", "class_name": "AccountDurableObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AccountDurableObject"] }],
+  "vars": {
+    // Set these to the identity provider's values before deploying (README.md).
+    "OIDC_ISSUER": "",
+    "OIDC_CLIENT_ID": "",
+    "OIDC_AUDIENCE": "",
+    "APNS_TOPIC": "com.angilyu.homerun.ios"
+  },
+  // Secrets, set with `wrangler secret put`: APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID.
+  "observability": { "enabled": true }
+}
