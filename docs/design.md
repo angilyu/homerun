@@ -3,8 +3,8 @@
 *A local-first agent that runs your tasks at home, on your own machine — and
 that you control from anywhere.*
 
-**Status:** v1 architecture. Milestones 0–7 are done; milestone 8 (menu bar,
-login item, signed updater) is next (§16).
+**Status:** v1 architecture. Milestones 0–8 are done; 8a (command-line access)
+is next (§16).
 **Updated:** 2026-09-29
 **Scope:** v1 architecture and build plan. This document describes the current
 design. Test evidence from the milestone 0 spike is in
@@ -308,11 +308,11 @@ Homerun.app (shell)         owns the keychain (§11)
 
 | Event | Behaviour |
 |---|---|
-| Login | App starts hidden in the menu bar / tray (§11). Runtime starts; schedules resume. |
+| Login | App starts hidden in the menu bar / tray, with no window (§11), unless onboarding is unfinished. Runtime starts; schedules resume. |
 | Window closed | Webview destroyed. App, runtime, runs, and schedules continue. |
-| Quit | If runs are active or schedules enabled, confirm: *"2 runs will pause and 5 schedules won't fire until Homerun is running."* Runtime checkpoints and exits cleanly. |
+| Quit | If runs are active or approvals or questions are pending, confirm: *"2 runs will pause and continue where they left off the next time you open Homerun. While Homerun is quit, your 5 monitors won't run."* Enabled monitors alone don't ask, or nearly every quit would. Runtime checkpoints and exits cleanly. Logout, restart and shutdown never ask. |
 | Tier 1 (web) update | Only the webview reloads. Runtime unaffected. |
-| Tier 2 (app) update | Deferred while runs are active unless the user chooses otherwise; runtime checkpoints first and resumes afterwards (§5.4). |
+| Tier 2 (app) update | Downloaded in the background and installed on the next quit, or at once with *Restart now*, which confirms like Quit. Never on logout. Runtime checkpoints first and resumes afterwards (§5.4). |
 | Runtime crash | Shell restarts it with backoff; orphaned `claude` processes and their tools are killed, then runs resume from checkpoint (§5.4). |
 | Shell crash | Runtime detects parent exit (its stdin pipe closes), checkpoints, and exits. Next launch resumes. |
 
@@ -333,8 +333,12 @@ the Mac sleeps.
   after 10 s, and SIGKILL 5 s later.
 
 - **macOS:** menu-bar app; the Dock icon is shown only while a window is open.
-  Until the menu-bar item arrives (§16 row 8), the Dock icon stays and reopens
-  the window. Permissions (Full Disk Access, Automation) attach to **Homerun.app** as the
+  The menu shows the runtime's status, approvals and questions waiting (also
+  the item's count), running runs, *Open Homerun*, *Pause All Monitors*, the
+  update, and *Quit*. A second launch, or opening the app from Finder or
+  Spotlight, shows the window. ⌘Q, the Dock's and the menu's Quit and
+  AppleScript `quit` all pass one confirmation hook
+  (`applicationShouldTerminate:`). Permissions (Full Disk Access, Automation) attach to **Homerun.app** as the
   responsible process, so users see one entry in System Settings rather than an
   unfamiliar helper binary.
 - **Windows:** tray app, per-user install, started at login (§11).
@@ -1291,7 +1295,12 @@ A monitor that quietly stops is worse than useless, because the user believes
 they are still being watched.
 
 Every missed or abandoned fire must produce a visible state and a notification
-with a one-tap "run now." This is P0, not polish.
+with a one-tap "run now." This is P0, not polish. On the desktop (milestone 8)
+the runtime composes local notifications from fixed templates, never with tool
+input or secrets, and the shell posts them. They cover input waiting, a monitor
+that reported, failed, was paused or missed checks, and a runtime crash loop.
+They carry no buttons: a click opens the monitor, where *run now* is one tap.
+Answering from a notification waits for push (§9.7).
 
 ### 8.3 How monitors work
 
@@ -1919,6 +1928,10 @@ accounts.**
 - Register **the app itself** as a login item with `SMAppService.mainApp`
   (macOS 13+). It appears under System Settings → Login Items as Homerun, where
   users expect to control it. No helper or LaunchAgent is installed.
+  Onboarding offers it, pre-checked, because monitors run only while Homerun
+  does (§8.4). Settings reads the live status, so turning it off in System
+  Settings shows there. A login launch is recognised from the launch Apple
+  event and opens no window.
 - Guide the user through granting Full Disk Access and Automation only when a
   task actually needs them, never upfront.
 - **Signing is inside-out, by our own script,** because Tauri's bundler cannot
@@ -1961,14 +1974,18 @@ accounts.**
   - The runtime never calls Security.framework. The shell hands it secrets over
     the authenticated channel (`secrets.set`, §5.2), and stores the ones the
     runtime creates or rotates (`secrets.persist`).
+  - **The shell remembers what it has read.** The data-protection keychain
+    refuses reads while the Mac is locked, so a runtime restarted overnight
+    gets the secrets the shell already read, and monitors keep running (§8.2).
+    Whenever the keychain answers, it wins.
   - **Keychain reads never block.** A read from the legacy keychain can show a
     modal dialog and block the calling thread, even when told not to. The shell
     reads off the main thread with a timeout, and on timeout shows *"Keychain
     access needs your approval"*.
   - **Fallback** if the access group cannot be set up: with a Developer ID
     build, the legacy keychain's `teamid:` partition also prevents the prompt
-    after an update. The update test (§16.1 item 8) runs in CI for every
-    release.
+    after an update. The update test (§16.1 item 8,
+    `scripts/macos/update-test.sh`) runs for every release.
   - **Builds without a profile.** Ad-hoc and self-signed builds get
     `errSecMissingEntitlement` (-34018) from the data-protection keychain, so
     the shell uses the legacy keychain, and each rebuild may prompt once.
@@ -2013,6 +2030,21 @@ Code", and visuals imitating it, are not (§3.4).
   it as real infrastructure.
 
 **Updates and control**
+- **The signed updater (milestone 8).** `tauri-plugin-updater` with native TLS
+  only (Security.framework; no rustls or proxy features). The manifest and
+  payload are on GitHub Releases (`releases/latest/download/latest.json`),
+  checked 60 s after launch and every 6 hours.
+  - The payload is downloaded in the background and verified.
+  - It installs on the next quit, or with *Restart now*.
+  - The shell re-checks the signature against the compiled-in key before it
+    installs.
+  - Only newer versions install. The manifest's `homerun` extension can send
+    installs older than `min_update_from` to the download page (for example
+    after a key rotation), and notes a runtime protocol change for older
+    command-line tools.
+  - A build without a real public key carries a placeholder and never updates.
+  - The minisign key is kept offline, outside the repo, with its passphrase in
+    the login keychain. CI signing is milestone 11.
 - Stable and beta channels, staged rollout.
 - **Minimum-version gate and remote kill switch**, served by our backend. For
   software that takes unattended actions on users' machines, the ability to stop
@@ -2148,7 +2180,9 @@ compromised CDN or update server could push malicious code to every desktop and
 phone — the weakness §9.9 attributes to the web client.
 
 - Bundles are signed in CI with a key held **offline or in a hardware-backed
-  signing service** — never on the CDN, relay, or update server.
+  signing service** — never on the CDN, relay, or update server. Until
+  milestone 11, tier 2 payloads are signed on the release machine with an
+  offline key (§11).
 - The desktop shell verifies the signature (Ed25519) against a public key
   compiled into the signed shell binary, and refuses unsigned or mismatched
   bundles, falling back to the bundled baseline.
@@ -2195,7 +2229,7 @@ UI last: the runtime is the risky part.
 
 | # | Milestone | Exit criteria | Status |
 |---|---|---|---|
-| 0 | **Spike: SDK + packaging** | See §16.1 | **Done**, with three open items (§16.1) |
+| 0 | **Spike: SDK + packaging** | See §16.1 | **Done**, with open items (§16.1) |
 | 1 | [`packages/core`](../packages/core/README.md) | Task spec, event types, IPC protocol as Zod schemas | **Done** |
 | 2 | [`homerund`](../apps/homerund/README.md) runtime | Prompt → Agent SDK `query()` → streamed deltas, persisted `thread_events`, isolated from `~/.claude`; replay harness (§16.2) in CI | **Done** |
 | 3 | [CLI](../apps/cli/README.md) | Drive the runtime end-to-end with no UI; authenticated socket (§5.2), with a development-mode token until the app exists | **Done** |
@@ -2203,8 +2237,9 @@ UI last: the runtime is the risky part.
 | 5 | Scheduler + monitors | Cron + timezone + catch-up-on-wake + power assertions; rule-based and model-based checks; state advances only on success; health digest; fake-clock suite including DST and sleep | **Done** |
 | 6 | Approvals + questions | Destructive tool pauses a run; `AskUserQuestion` pauses for an answer; long waits `defer` and resume; answer from CLI; first answer wins | **Done** |
 | 7 | [Desktop app](../apps/desktop/README.md) | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | **Done** |
-| 8 | Packaging | Menu-bar / tray residency, login item, signed updater, quit confirmation | Next |
-| 8b | Windows | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | — |
+| 8 | [Packaging](../apps/desktop/README.md#in-the-background-milestone-8) | Menu-bar / tray residency, login item, signed updater, quit confirmation, local notifications | **Done**; launch at login and the clean-VM Gatekeeper click need a person (§16.1) |
+| 8a | CLI access | `cli.request_access` with a native prompt in the shell; `cli_tokens`, listed and revoked in Settings; the CLI keeps its token in its own keychain item and checks the socket's peer; the release CLI ships in the bundle and answers questions (§5.2) | Next |
+| 8b | Windows | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | Next, after 8a |
 | 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | — |
 | 10 | iOS + web | Sign-in and device linking; history sync, live chat, steering, questions, approvals, rich push; web client with reduced authority | — |
 | 11 | Distribution | Signed and notarized builds, installers, crash reporting, version gate | — |
@@ -2235,11 +2270,20 @@ commands and raw results are in [spike-results.md](spike-results.md).
 - **Item 6 on a clean VM.** The test VM image has the Developer ID Gatekeeper
   rules disabled, so the launch needs an image prepared with "App Store & Known
   Developers" (§11) and one click on the first-launch prompt. Item 10 with
-  quarantine kept waits on the same VM.
-- **Item 9, launch at login.** Needs a logout and login.
+  quarantine kept waits on the same VM. Milestone 8 rewrote
+  `scripts/macos/tart-clean-vm.sh` for the shipping app; the click-through
+  stays manual ([apps/desktop, Manual checks](../apps/desktop/README.md#manual-checks)).
+- **Item 9, launch at login.** Needs a logout and login; the steps are in the
+  same Manual checks.
 - **The `uvx` CLT dialog** ([spike-results entry 27](spike-results.md#added-by-the-clean-machine-run)):
   ship an `install_name_tool` with the `uv` component and give MCP children a
-  curated `PATH` (§5.5), then rerun the clean-VM test.
+  curated `PATH` (§5.5), then rerun the clean-VM test. Not yet relevant: the
+  app bundles neither Node nor `uv`, so this moves to the components work
+  (§5.5), which no milestone owns yet.
+- **Keeping awake from the packaged app** (§8.1): **passed** in milestone 8. A
+  busy run in the signed app holds `PreventUserIdleSystemSleep` through a
+  `caffeinate` child of `homerund`; it goes when the run ends and when
+  `homerund` is killed (`update-test.sh`, case 3).
 
 **Measurements** (arm64, [details](spike-results.md#measurements)). These set the
 concurrency defaults (§5.3).
@@ -2297,7 +2341,7 @@ upgrade can change agent behaviour without any change to our code.
 ## 17. Open questions
 
 1. **Windows parity timing** — *decided in milestone 7* (§18 row 40): macOS
-   first; Windows is its own milestone, 8b, right after milestone 8 (§16).
+   first; Windows is its own milestone, 8b, after milestones 8 and 8a (§16).
 2. **Browser tooling** — bundle Playwright (heavy, reliable, own browser) or
    drive the user's existing Chrome via CDP (light, reuses logged-in sessions,
    more fragile)? This materially affects what monitors can do.
@@ -2360,3 +2404,7 @@ One line per major decision: what was chosen, and why.
 | 39 | **Onboarding checks the API key before storing it** (§7.2) | A mistyped key is caught at once, not on the first run. `GET /v1/models` costs nothing, and the runtime neither keeps nor uses the candidate |
 | 40 | **macOS first; Windows as milestone 8b** (§16, §17) | The runtime's sockets, process groups and `ps` are POSIX, so a Windows shell would have nothing to supervise. The shell's core (`shell-core`) is platform-neutral, so a port adds a named pipe, job objects and Credential Manager |
 | 41 | **The UI's end-to-end test runs in a browser against a stand-in shell** (§16.2) | A Tauri build with WebKitGTK on every pull request doesn't fit CI's time budget. The stand-in applies the same `webview` allowlist from `callers.json`, and the Rust shell has its own tests |
+| 42 | **Quit asks only for active runs and pending input, and never on logout** (§5.1) | Enabled monitors alone would make nearly every quit ask. The dialog still says monitors won't run. Blocking logout, restart or shutdown is never acceptable, so those skip the dialog and the update install |
+| 43 | **The runtime composes local notifications; they carry no buttons** (§8.2, §9.7) | What a notification may say is decided in one tested place, which push reuses in milestone 9: fixed templates, no tool input, secrets redacted, sent after commit and at most once per key. Answering from a notification waits for push, and destructive approvals never are |
+| 44 | **The updater: native TLS, GitHub Releases, install on quit, an offline key** (§11, §14) | The plugin's defaults add rustls and proxy crates we don't need. Installing on quit never interrupts a run, and the placeholder public key fails closed |
+| 45 | **Command-line access is its own milestone, 8a** (§5.2, §16) | Runtime tokens, the CLI's keychain item and peer check, and shipping a signed release CLI share nothing with packaging, and each is security-sensitive |
