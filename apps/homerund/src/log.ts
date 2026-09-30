@@ -17,7 +17,8 @@ export function forgetSecret(value: string): void {
 export function scrub(text: string): string {
   let out = text;
   for (const s of secrets) out = out.split(s).join("[REDACTED]");
-  return out.replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, "[REDACTED]");
+  // CLI, development and launch tokens (§5.2) are never registered, so redact any value under a token key.
+  return out.replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, "[REDACTED]").replace(/("token\\?"\s*:\s*\\?")[A-Za-z0-9_-]{43,}/g, "$1[REDACTED]");
 }
 
 type Level = "debug" | "info" | "warn" | "error";

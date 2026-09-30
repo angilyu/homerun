@@ -94,6 +94,8 @@ export const LAUNCH_TOKEN = "a".repeat(64);
 
 export interface SocketRuntime {
   dir: string;
+  /** Every log line the runtime wrote, after scrubbing. */
+  logs: string[];
   rt: Runtime;
   engine: FakeEngine;
   shell(): Promise<RpcClient>;
@@ -114,6 +116,7 @@ export async function socketRuntime(
     power?: PowerAssertions;
     deviceZone?: string;
     verifyKey?: RuntimeOptions["verifyKey"];
+    helloTimeoutMs?: number;
   } = {},
 ): Promise<SocketRuntime> {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "hr-rpc-"));
@@ -131,6 +134,7 @@ export async function socketRuntime(
     ...(opts.clock ? { clock: opts.clock } : {}),
     ...(opts.deviceZone ? { deviceZone: () => opts.deviceZone! } : {}),
     ...(opts.verifyKey ? { verifyKey: opts.verifyKey } : {}),
+    ...(opts.helloTimeoutMs ? { helloTimeoutMs: opts.helloTimeoutMs } : {}),
   });
   const clients: RpcClient[] = [];
   const track = async (p: Promise<RpcClient>) => {
@@ -141,6 +145,7 @@ export async function socketRuntime(
   let crashed = false;
   return {
     dir,
+    logs,
     rt,
     engine,
     shell: () => track(RpcClient.open(config.socketPath, "shell", { kind: "launch_token", token: LAUNCH_TOKEN })),

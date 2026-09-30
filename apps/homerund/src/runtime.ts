@@ -10,6 +10,7 @@ import { Bus } from "./bus";
 import { RUNTIME_VERSION, type Config } from "./config";
 import { log } from "./log";
 import { Authenticator, newDevToken, writeDevToken } from "./rpc/auth";
+import { CliAccess } from "./rpc/cli-access";
 import { makeHandlers } from "./rpc/handlers";
 import { RpcServer } from "./rpc/server";
 import type { RunContext } from "./runs/context";
@@ -20,6 +21,7 @@ import { bootTime, killEscapedTools, killStaleGroup, sweepTemp } from "./runs/pr
 import { recoverRun, type RecoveryOutcome } from "./runs/recovery";
 import { Scheduler } from "./runs/scheduler";
 import { SecretStore } from "./secrets";
+import { useCliToken } from "./store/cli-tokens";
 import { openDb } from "./store/db";
 import { migrate, type MigrateOutcome } from "./store/migrate";
 import { ensureDevice, getRunRow, runsInState, setRunState, updateRun, type RunRow } from "./store/rows";
@@ -54,6 +56,8 @@ export interface RuntimeOptions {
   verifyKey?: (key: string) => Promise<KeyCheck>;
   /** How long missed-check notifications from one wake are coalesced (§8.2). */
   notifyCoalesceMs?: number;
+  /** How long a connection may wait before `hello` (tests shorten it). */
+  helloTimeoutMs?: number;
 }
 
 export interface StartupReport {
@@ -73,6 +77,7 @@ export interface Runtime {
   scheduler: Scheduler;
   manager: RunManager;
   server: RpcServer;
+  cliAccess: CliAccess;
   fires: FireScheduler;
   digest: DigestScheduler;
   timeouts: InputTimeouts;
@@ -187,7 +192,13 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
 
     const devToken = config.build === "development" ? newDevToken() : null;
     if (devToken) writeDevToken(config.runDir, devToken);
-    const auth = new Authenticator(config.build, o.launchToken, devToken);
+    const auth = new Authenticator(config.build, o.launchToken, devToken, (token) => useCliToken(store, token, clock.now()));
+    const cliAccess = new CliAccess({
+      store,
+      clock,
+      toShell: (m, p) => server?.broadcast(m, p),
+      closeTokenConnections: (tokenId) => server?.closeTokenConnections(tokenId),
+    });
     const changes = new ThreadChanges(store, device.device_id, (summary) => server?.broadcast("threads.changed", { summary }));
     server = new RpcServer({
       socketPath: config.socketPath,
@@ -198,10 +209,16 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         digest,
         changes,
         settingsChanged: () => fires.run(),
-        shellConnected: (conn) => notifier.replayPending((m, p) => conn.notify(m, p)),
+        cliAccess,
+        shellConnected: (conn) => {
+          notifier.replayPending((m, p) => conn.notify(m, p));
+          cliAccess.replay((m, p) => conn.notify(m, p));
+        },
         verifyKey: o.verifyKey ?? ((key) => verifyAnthropicKey(key, config.anthropicBaseUrl)),
       }),
       ...(o.checkResults ? { checkResults: true } : {}),
+      ...(o.helloTimeoutMs ? { helloTimeoutMs: o.helloTimeoutMs } : {}),
+      onConnectionClosed: (conn) => cliAccess.cancel(conn),
       onNotification: (method, params) => {
         if (method === "power.will_sleep") fires.willSleep((params as { at: number }).at);
         else if (method === "power.did_wake") {
@@ -228,6 +245,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       scheduler,
       manager,
       server: srv,
+      cliAccess,
       fires,
       digest,
       timeouts,
@@ -238,6 +256,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       report: { migration, killedGroups, killedTools, swept, recovered },
       shutdown: () =>
         (stopping ??= (async () => {
+          cliAccess.stop();
           srv.stop();
           changes.stop();
           notifier.stop();

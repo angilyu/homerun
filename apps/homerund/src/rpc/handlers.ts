@@ -8,6 +8,7 @@ import {
   SURFACE_OF_ROLE,
   negotiateCapabilities,
   negotiateProtocol,
+  policyNeedsFullApp,
   type CallerRole,
   type MethodName,
   type Origin,
@@ -25,7 +26,9 @@ import { getInputRequest, getRunRow, getTask, getThread, listRuns, listTasks, li
 import { allSchedules, coverageDays, editMonitorState, getMonitorState, rowToScheduleState, scheduleForTask } from "../store/schedule-rows";
 import { computeDigest, type DigestScheduler } from "../monitors/digest";
 import type { ThreadChanges } from "../threads/changes";
+import { listCliTokens } from "../store/cli-tokens";
 import type { Authenticator } from "./auth";
+import type { AccessRequester, CliAccess } from "./cli-access";
 
 /** A JSON-RPC error a handler wants to send as is. */
 export class RpcFail extends Error {
@@ -41,9 +44,11 @@ export class RpcFail extends Error {
 }
 
 /** What a handler sees of its connection. */
-export interface Conn {
+export interface Conn extends AccessRequester {
   role: CallerRole | null;
   setRole(role: CallerRole): void;
+  /** The CLI token this connection said hello with, so revoking it closes the connection. */
+  cliTokenId: string | null;
   /** Send a notification on this connection. */
   notify(method: string, params: unknown): void;
   subscriptions: Map<string, () => void>;
@@ -60,6 +65,8 @@ export interface HandlerDeps {
   changes?: ThreadChanges;
   /** The shell's connection said hello: replay what it should still show (§8.2 notifications). */
   shellConnected?: (conn: Conn) => void;
+  /** Command-line access requests and token revocation (§5.2). */
+  cliAccess: CliAccess;
   /** secrets.verify (§7.2): ask the provider about a candidate key. */
   verifyKey: (key: string) => Promise<{ outcome: "valid" | "invalid" | "unreachable"; detail?: string }>;
 }
@@ -71,6 +78,14 @@ export type Reply<M extends MethodName> = ResultIn<M> | { result: ResultIn<M>; a
 type Params<M extends MethodName> = z.output<(typeof METHODS)[M]["params"]>;
 type Handler<M extends MethodName> = (conn: Conn, p: Params<M>) => Reply<M> | Promise<Reply<M>>;
 export type Handlers = { [M in MethodName]?: Handler<M> };
+
+/**
+ * The release CLI may edit tasks but never pre-approve calls (§5.2): anything running as the user
+ * can invoke it. `policyNeedsFullApp` says what only the app may add.
+ */
+function refuseWidening(reasons: string[]): void {
+  if (reasons.length) throw new RpcFail(RPC_ERROR.AUTHORITY_INSUFFICIENT, `Change this in the Homerun app: ${reasons.join("; ")}.`);
+}
 
 const BACKLOG_PAGE = 1000;
 const HISTORY_DEFAULT = 100;
@@ -88,9 +103,12 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       if (protocol === null) {
         throw new RpcFail(RPC_ERROR.INCOMPATIBLE_PROTOCOL, "No protocol version in common.", { supported: { ...SUPPORTED_PROTOCOL } }, true);
       }
+      // A connection that says hello while its access request waits no longer wants the answer.
+      d.cliAccess.cancel(conn);
       const ok = d.auth.check(p);
-      if (!ok.ok) throw new RpcFail(RPC_ERROR.UNAUTHENTICATED, ok.message, undefined, true);
+      if (!ok.ok) throw new RpcFail(RPC_ERROR.UNAUTHENTICATED, ok.message, ok.data, true);
       conn.setRole(p.role);
+      if (ok.cliTokenId) conn.cliTokenId = ok.cliTokenId;
       const result = {
         protocol,
         runtime_version: RUNTIME_VERSION,
@@ -102,6 +120,25 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     },
 
     ping: () => ({ pong: true as const, runtime_version: RUNTIME_VERSION, protocol: PROTOCOL_VERSION }),
+
+    // ---- command-line access (§5.2)
+    "cli.request_access": (conn, p) => d.cliAccess.request(conn, p.client, p.hostname),
+    "cli.approve": (_c, p) => d.cliAccess.approve(p.request_id),
+    "cli.deny": (_c, p) => {
+      d.cliAccess.deny(p.request_id);
+      return { ok: true as const };
+    },
+    "cli.tokens.list": () => ({ tokens: listCliTokens(store) }),
+    "cli.tokens.revoke": (_c, p) => {
+      if (!d.cliAccess.revoke(p.token_id)) throw notFound("CLI token");
+      return { ok: true as const };
+    },
+    "cli.sign_out": (conn) => {
+      const tokenId = conn.cliTokenId;
+      if (!tokenId) throw new RpcFail(RPC_ERROR.VALIDATION_FAILED, "This connection did not sign in with a CLI token.");
+      // Revoke now; close this and the token's other connections once the reply is written.
+      return { result: { ok: true as const }, after: () => d.cliAccess.revoke(tokenId) };
+    },
 
     "secrets.set": (_c, p) => {
       ctx.secrets.set(p.name, p.value);
@@ -189,7 +226,8 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     }),
     "runs.stop": (conn, p) => ({ state: manager.stop(p.run_id, originOf(conn)) }),
 
-    "tasks.create": (_c, p) => {
+    "tasks.create": (conn, p) => {
+      if (conn.role === "cli") refuseWidening(policyNeedsFullApp(p.spec));
       const { task, thread } = manager.createTask(p.spec, p.from_thread_id);
       d.changes?.touch(thread.thread_id);
       return { task, thread_id: thread.thread_id };
@@ -200,7 +238,14 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       return { task: t };
     },
     "tasks.list": (_c, p) => ({ tasks: listTasks(store, p.kind, p.include_archived ?? false) }),
-    "tasks.update": (_c, p) => ({ task: manager.updateTask(p.task_id, p.spec, p.expected_version) }),
+    "tasks.update": (conn, p) => {
+      if (conn.role === "cli") {
+        const current = getTask(store, p.task_id);
+        if (!current) throw notFound("task");
+        refuseWidening(policyNeedsFullApp(p.spec, current.spec));
+      }
+      return { task: manager.updateTask(p.task_id, p.spec, p.expected_version) };
+    },
     "tasks.archive": (_c, p) => ({ archived_at: manager.archiveTask(p.task_id) }),
     "tasks.run_now": (conn, p) => manager.runNow(p.task_id, originOf(conn)),
 
