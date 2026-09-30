@@ -74,6 +74,22 @@ Params, results and callers are defined in `@homerun/core` (`src/protocol/method
 - `input.list_pending`; `input.answer` for approvals, questions and "Did this happen?"
   (below). `grants.list`, `grants.create`, `grants.revoke` (§5.6).
 - `blobs.get`: a stored tool input or output over 4 KB, in pages (`offset`, `length`).
+- Command-line access (§5.2, milestone 8a; `src/rpc/cli-access.ts`, `src/store/cli-tokens.ts`):
+  - `cli.request_access` comes before `hello` (preauth), once per connection, with at most
+    three waiting (`UNAVAILABLE` with `{reason: "too_many_requests"}` past that). Each expires after 2 minutes. While one
+    waits, its connection's hello timeout is held, and it restarts after the decision.
+  - The shell's connection gets `cli.access_requested`, replayed when the shell reconnects,
+    and `cli.access_withdrawn` on expiry or disconnect.
+  - `cli.approve` and `cli.deny` are shell-only; `NOT_FOUND` once the request is gone. The
+    token goes in `cli.access_decision` to the requesting connection only; the shell gets its
+    `token_id`.
+  - `hello` with `cli_token` checks its SHA-256 and `revoked_at` in `cli_tokens` (migration 6)
+    and updates `last_used_at`. An unknown or revoked token gets `UNAUTHENTICATED` with
+    `{reason}`, and the connection is closed.
+  - `cli.tokens.list` and `cli.tokens.revoke` are for the app; `cli.sign_out` revokes the
+    caller's own token. Revoking closes that token's live connections.
+  - From the `cli` role, `tasks.create` and `tasks.update` are refused (`AUTHORITY_INSUFFICIENT`)
+    when they add what `policyNeedsFullApp` names. The log redacts token values.
 
 ## Crash resume (§5.4, milestone 4)
 
@@ -317,6 +333,10 @@ pnpm --filter @homerun/homerund dev [--no-key] [-- <serve switches>]
   homerund is spawned), or from a hidden prompt. It never reads a file.
 - `--no-key` starts without a key, for use with `HOMERUN_ANTHROPIC_BASE_URL` and a
   replay server.
+- It stands in for the app's CLI access prompt: a `cli.access_requested` asks
+  `[y/N]` on this terminal (`--cli-access ask`, the default), or is answered without asking
+  (`--cli-access allow|deny`). Try it with `pnpm homerun login --dev-role cli
+  --dev-token-store /tmp/t --dev-skip-peer-check`.
 - Ctrl-C closes homerund's stdin, and the runtime shuts down gracefully.
 - Drive it with the development CLI ([`apps/cli`](../cli)), e.g. `pnpm homerun status`.
 
