@@ -6,6 +6,9 @@ import type {
 } from "@homerun/core";
 import type { OutboxItem, StoredEvent, ThreadState } from "./reducer";
 
+/** A message that took this long to arrive was queued, and says when it was sent. */
+export const QUEUED_MIN_MS = 60_000;
+
 /**
  * The view model of a thread: what a client renders, in order (§9.8). Derived from
  * `ThreadState`; the persisted part is cached per events array, so a delta only re-derives
@@ -31,6 +34,11 @@ export interface UserItem {
   text: string;
   disposition: "started_run" | "steered" | "held" | null;
   surface: Surface | null;
+  /** The device that sent it; null for the desktop's own unsent messages. */
+  device_id: string | null;
+  /** When the sender wrote it, if the desktop received it a minute or more later: an
+   * instruction queued at the relay while the desktop was offline (§9.4). */
+  sent_at: number | null;
   delivery: Delivery;
   error?: string;
 }
@@ -190,6 +198,8 @@ export function threadView(s: ThreadState, fallbackActive?: { run_id: string; st
       text: o.text,
       disposition: null,
       surface: "desktop",
+      device_id: null,
+      sent_at: null,
       delivery: o.state,
       error: o.error,
     });
@@ -262,6 +272,8 @@ function derive(events: readonly StoredEvent[]): Derived {
           text: p.text,
           disposition: p.disposition,
           surface: p.origin.surface,
+          device_id: p.origin.device_id,
+          sent_at: p.sent_at !== undefined && e.ts - p.sent_at >= QUEUED_MIN_MS ? p.sent_at : null,
           delivery: p.disposition === "held" ? "held" : "delivered",
         };
         if (p.disposition === "held" && e.run_id !== null) held.set(e.run_id, [...(held.get(e.run_id) ?? []), item]);
