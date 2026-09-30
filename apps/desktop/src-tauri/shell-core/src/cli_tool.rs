@@ -3,7 +3,7 @@
 //! link is the user's own, and the UI shows how to put `~/.local/bin` on `PATH` rather than
 //! reading anyone's shell profile. It never replaces a file that isn't a link to some Homerun's
 //! CLI, and it won't link to a copy that is about to go away (a disk image or a translocated app).
-//! Windows has no bundled CLI to link yet (§18 row @cli): every status there is `Unavailable`.
+//! Windows has no bundled CLI to link yet (§18 row 67): every status there is `Unavailable`.
 
 use serde::Serialize;
 use std::fs;

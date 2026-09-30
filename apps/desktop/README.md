@@ -1,7 +1,7 @@
 # Homerun desktop app
 
-The macOS app (docs/design.md §4, §5.1): a Tauri v2 shell that spawns and supervises `homerund`
-and a React UI in its webview. Milestone 7 covers:
+The desktop app for macOS and, since milestone 8b, Windows (docs/design.md §4, §5.1): a Tauri v2
+shell that spawns and supervises `homerund` and a React UI in its webview. Milestone 7 covers:
 
 - chat with streaming, steering and stop;
 - history and the thread list;
@@ -17,7 +17,7 @@ Milestone 8 keeps it running in the background (§5.1, §11):
 - local notifications;
 - the signed updater.
 
-Command-line access approval is §16 row 8a.
+Command-line access approval is §16 row 8a. Windows is §16 row 8b ([below](#windows-milestone-8b)).
 
 ```
 Homerun.app
@@ -92,6 +92,9 @@ signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
     - `cli_access.rs`: the access prompt's text (client, version and hostname are sanitised and
       shortened) and the queue that shows one prompt at a time;
     - `cli_tool.rs`: the `~/.local/bin/homerun` link, its status, install and remove.
+  - Milestone 8b's (Windows): `transport.rs` (a Unix socket or a named pipe), `proc.rs` (a
+    process group or a job object), `win/`, `dirs.rs`, and the Windows halves of `login.rs`,
+    `notify.rs` and `token.rs`.
   - `tests/supervisor.rs` drives all of it against `fake_homerund`: spawn, forward, crash and
     backoff, crash loop, blocking exits, hang, stop.
 - `src/`: the Tauri app.
@@ -105,6 +108,8 @@ signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
   - `tray.rs`, `lifecycle.rs`, `login_item.rs`, `notifications.rs`, `updater.rs`, `macos.rs`:
     milestone 8's AppKit wiring, described below.
   - `cli_prompts.rs`: the command-line access prompt (milestone 8a), described below.
+  - `win.rs`: the Windows counterpart of the AppKit and Security code (milestone 8b), described
+    [below](#windows-milestone-8b).
 
 **The UI** (`src/`) is React DOM over `@homerun/app-state`, which holds all client logic (§9.8).
 
@@ -230,6 +235,85 @@ runs `apps/cli`'s macOS tests against it:
 - the peer check passing for the bundled `homerund` and failing for any other listener before a
   byte is sent;
 - the keychain calls, against a throwaway keychain.
+
+## Windows (milestone 8b)
+
+The same app on Windows (§16 row 8b): the shell, the runtime and the UI are shared, and
+what differs is behind `cfg(windows)` in the shell and `process.platform` in the runtime and
+the CLI. It builds and passes its tests on `windows-latest`; it isn't signed or packaged yet
+(milestone 11, §18 row 70).
+
+```sh
+pnpm install
+bun apps/desktop/scripts/stage-sidecars.ts            # homerund.exe from source, the SDK's claude.exe
+pnpm --filter @homerun/desktop tauri dev              # or: tauri build --no-bundle
+```
+
+Rust 1.94 with the MSVC toolchain, and WebView2 (part of Windows 11). The runtime's `Bash`
+tool needs Git for Windows at its default location; without it every `Bash` call asks
+(§18 row 57).
+
+| | macOS | Windows |
+|---|---|---|
+| Runtime connection (§5.2) | Unix socket in a 0700 dir | Named pipe with a protected ACL; the shell checks `GetNamedPipeServerProcessId` is its child before `hello` (`shell-core/src/win/pipe.rs`, §18 rows 60–61) |
+| Process tree (§5.1) | Process group; TERM, then KILL | Job object; both steps terminate it (`shell-core/src/proc.rs`, `win/job.rs`, §18 row 63) |
+| Launch token | `/dev/urandom` | `BCryptGenRandom` |
+| API key | Keychain | Credential Manager, `com.angilyu.homerun/anthropic_api_key` (§18 row 62) |
+| Sleep and wake (§8.1) | `NSWorkspace` | `PowerRegisterSuspendResumeNotification` |
+| Background | Menu-bar item, Dock icon while a window is open | Tray icon with the same menu; its colour shows attention or trouble, since a tray icon has no count |
+| Quit | `applicationShouldTerminate:` | The tray's *Quit*. A hidden window hears `WM_QUERYENDSESSION`/`WM_ENDSESSION` and stops the runtime on logout and shutdown, never blocking (§18 row 64) |
+| Open at login | `SMAppService` | `HKCU\…\Run` value `Homerun` with `--autostart`; Task Manager's switch shows as *Needs approval* (§18 row 65) |
+| Notifications | `UNUserNotificationCenter` | WinRT toasts under the AppUserModelID `com.angilyu.homerun`, registered in `HKCU` |
+| Dialogs | `NSAlert` | Task dialogs; the CLI access prompt defaults to *Don't Allow* and denies if it can't be shown (§18 row 66) |
+| Data dir | `~/Library/Application Support/Homerun` | `%LOCALAPPDATA%\Homerun` (§18 row 68) |
+| Updates, CLI tool | Signed updater; `~/.local/bin/homerun` | Not yet (milestone 11): both show as unavailable (§18 rows 67, 70) |
+
+The Win32 code is `src/win.rs` in the Tauri crate (the counterpart of `macos.rs`, `power.rs`,
+`login_item.rs`, `notifications.rs` and `keychain.rs`'s AppKit and Security code), and
+`shell-core/src/win/` for the pipe and the job. Everything that decides stays in `shell-core`
+and is tested on every OS: `dirs.rs` (the data dir), `login.rs` (the `Run` value's status and
+command), `notify.rs` (toast tags). `scripts/tray-icons.ts` draws the coloured `*-win.png` tray
+icons and `icons/icon.ico`.
+
+No crate or npm package was added: `windows` 0.62 and `windows-sys` 0.61 were already in
+`Cargo.lock` through Tauri, and only their features are new. The Win32 calls in the runtime and
+the CLI are in [`@homerun/win32`](../../packages/win32), a workspace package with no
+dependencies.
+
+**CI.** Every pull request runs `windows-runtime` (the runtime, CLI, client and Win32 unit
+suites) and `windows-shell` (`cargo test -p homerun-shell-core`) on `windows-latest`, about 2
+minutes each. Nightly, `desktop-windows` runs the Tauri crate's tests (a Credential Manager round
+trip, the registry reads, the sleep and wake registration) and a release build without a
+bundle.
+
+### Windows manual checks
+
+These need a person at a Windows desktop session; CI has none. Use a release build
+(`tauri build --no-bundle`, then `src-tauri\target\release\homerun.exe`), since debug builds
+keep the key in memory and don't offer Open at login.
+
+1. Onboarding saves a key. Credential Manager → Windows Credentials lists
+   `com.angilyu.homerun/anthropic_api_key`, and after a restart the key is read without asking.
+2. The tray icon's menu matches the macOS menu. The icon turns amber with an approval waiting and
+   red in a crash loop (end `homerund.exe` five times in three minutes in Task Manager).
+3. Close the window: runs continue, and the tray's *Open Homerun* brings it back.
+4. With a run active, the tray's *Quit* asks. Cancel keeps it running; Quit leaves no
+   `homerund.exe` or `claude.exe` in Task Manager, and the run continues on the next launch.
+5. With a run active, sign out: nothing asks or blocks, `logs\homerund.log` shows a clean stop,
+   and the run continues after you sign in and open Homerun.
+6. Notifications: with the window in the background, an approval and a question each show a
+   toast, and clicking it opens the thread. An answered approval's toast goes away. Turning
+   Homerun's notifications off in Settings → System → Notifications shows as off in Homerun.
+7. Open at login: turn it on in Settings. Task Manager → Startup apps lists Homerun; turning it
+   off there shows *Needs approval* in Homerun, with a button that opens Startup apps. With it
+   on, sign out and in: Homerun starts in the tray with no window, and the latest `"launch"` line
+   in `homerund.log` has `"at_login":true`.
+8. Sleep the PC for a few minutes with a monitor on. After wake, its coverage shows the sleep.
+9. Command-line access, with the development CLI:
+   `pnpm homerun login --dev-role cli --dev-peer-requirement sha256:<SHA-256 of homerund.exe>`
+   (`Get-FileHash`). The task dialog names the client and this PC; Return denies. Run it again,
+   press Tab and Enter: the CLI is approved, and Credential Manager lists
+   `com.angilyu.homerun.cli/default`. A wrong hash refuses before anything is sent.
 
 ## Releasing an update
 
@@ -375,9 +459,10 @@ cd src-tauri && cargo test -p homerun-shell-core
   The bridge meters the API traffic. It refuses requests past `HOMERUN_E2E_LIVE_CAP_USD` (default
   $0.10), and `HOMERUN_E2E_LIVE_LEDGER` appends each run's spend to a file. One run costs about
   $0.04. Traces and videos are off, because they would record the key.
-- **CI.** The `desktop`, `desktop-e2e` and `shell` jobs run on every pull request. The Tauri crate
-  and an unsigned `.app` build nightly on macOS, followed by `cli-test.sh` (the bundled CLI,
-  below) and `update-test.sh adhoc`.
+- **CI.** The `desktop`, `desktop-e2e` and `shell` jobs run on every pull request, and on Windows
+  `windows-shell`. The Tauri crate and an unsigned `.app` build nightly on macOS, followed by
+  `cli-test.sh` (the bundled CLI, below) and `update-test.sh adhoc`; the Tauri crate and an
+  unbundled release build run nightly on Windows too.
 
 ## Manual checks
 

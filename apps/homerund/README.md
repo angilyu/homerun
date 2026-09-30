@@ -3,8 +3,8 @@
 The local Homerun runtime (docs/design.md §5). It takes a prompt for a task thread or a
 one-off chat and runs it through the Agent SDK's `query()` with the bundled `claude`, isolated
 from `~/.claude` (§5.3). It streams deltas, persists `thread_events` to SQLite, and serves
-JSON-RPC over a 0700 unix socket (§5.2). It also survives being killed (§5.4), and it
-runs monitors on their schedules (§8).
+JSON-RPC over a 0700 unix socket (§5.2), or on Windows a named pipe only this user can open.
+It also survives being killed (§5.4), and it runs monitors on their schedules (§8).
 
 Types, the event vocabulary, the protocol and the caller roles come from `@homerun/core`.
 They are not redefined here.
@@ -21,7 +21,8 @@ They are not redefined here.
 | `src/runs/` | Run lifecycle (§5.7): `manager` (one active run per thread, steering), `scheduler` (3 sessions + 2 monitors), `driver` (one run, and the tool gate), `gate` (approval and question prompts), `answers` (applying answers, with or without a process), `input-timeouts` (§5.6), `recovery` (§5.4), `ambiguity` (the answer to "Did this happen?"), `resume` (results for open calls before a resume), `process-groups` |
 | `src/schedule/` | The scheduler (§8): `clock` (wall time and timers; `FakeClock` for tests), `cron-next` and `zone` (next fire in a timezone, with the DST rules), `fire-scheduler` (claims fires, catch-up, downtime, retries, pauses) |
 | `src/monitors/` | Monitor runs (§8.3): `sources` and `feed` (what a rule check observes), `rules` (comparators), `check-runner` (the check step), `model-check`, `complete` (the check result, monitor state, act), `digest` (the health digest) |
-| `src/power/` | Keeping the computer awake while a run is in progress (§8.1) |
+| `src/power/` | Keeping the computer awake while a run is in progress (§8.1): `caffeinate` on macOS, `SetThreadExecutionState` on Windows |
+| `src/platform/` | What differs on Windows (milestone 8b): `processes.ts` picks the process-tree code (process groups and `ps`, or job objects in `windows-processes.ts`), and `secure.ts` makes the data and run dirs private (0700, or a protected ACL) and locks the pipe's ACL. The Win32 calls are in [`@homerun/win32`](../../packages/win32) |
 | `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers. The client, the data dir and socket paths and the build channel rule live in [`@homerun/client`](../../packages/client) |
 | `test/unit/` | Fast tests against the fake engine |
 | `test/replay/` | Record/replay harness (§16.2) and the committed cassettes |
@@ -42,6 +43,13 @@ workspaces/  logs/
 run/homerund.sock   0700 dir; falls back to $TMPDIR/hr-<uid>/ when the path is too long
 run/dev-token       development builds only (0600)
 ```
+
+On Windows the default is `%LOCALAPPDATA%\Homerun`. There is no socket: the runtime listens on
+`\\.\pipe\homerun-<128 random bits>`, sets a protected ACL on it (this user and SYSTEM, network
+logons denied), reads it back, and only then writes the name to `run\endpoint` (§5.2, §18 row
+60). The data and run dirs get the same kind of ACL instead of 0700. `claude.exe` runs its `Bash`
+tool through Git Bash, found at fixed install locations; without it every `Bash` call is
+destructive (§18 row 57).
 
 ## RPC methods
 
@@ -390,7 +398,14 @@ scripts/check-no-secrets.sh                   # from the repo root
 CI runs all of these on Linux (`ubuntu-latest`; `.github/workflows/ci.yml`): job `homerund`
 runs the secret scan, typecheck, unit and replay tests, and job `homerund-crash` runs the crash
 tests on a sample of boundaries in parallel. `.github/workflows/nightly.yml` runs the full
-crash sweep on main every day at 09:00 UTC, and on demand. The code is POSIX-only (process groups, `ps`, unix sockets) and is tested on macOS and Linux; liveness checks ignore zombies, which `kill(pid, 0)` still reports as alive.
+crash sweep on main every day at 09:00 UTC, and on demand. Liveness checks ignore zombies,
+which `kill(pid, 0)` still reports as alive.
+
+Job `windows-runtime` runs the unit tests on `windows-latest` (milestone 8b). There they cover
+the pipe (`pipe-windows.test.ts`: private, published, one server per data dir) and job objects
+(`processes-windows.test.ts`), and with `HOMERUN_WIN_CROSS_USER=1` a throwaway local user is
+denied the pipe, the endpoint and the dev token. Tests that need POSIX signals, `ps` or
+`/bin/bash` skip there. Replay and the crash sweep run on Linux only (§18 row 69).
 
 ### Fake-clock suite (§16 row 5)
 

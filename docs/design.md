@@ -330,7 +330,9 @@ the Mac sleeps.
 - **Exits that retrying can't fix** wait for the user: another runtime owns the
   data folder, or the database was written by a newer version (§6.3).
 - **Quit** closes the runtime's stdin (it checkpoints and exits), sends SIGTERM
-  after 10 s, and SIGKILL 5 s later.
+  after 10 s, and SIGKILL 5 s later. Windows has no SIGTERM, so both later
+  steps terminate the runtime's job object, which ends everything it started
+  (§18 row 63).
 
 - **macOS:** menu-bar app; the Dock icon is shown only while a window is open.
   The menu shows the runtime's status, approvals and questions waiting (also
@@ -341,11 +343,18 @@ the Mac sleeps.
   (`applicationShouldTerminate:`). Permissions (Full Disk Access, Automation) attach to **Homerun.app** as the
   responsible process, so users see one entry in System Settings rather than an
   unfamiliar helper binary.
-- **Windows:** tray app, per-user install, started at login (§11).
+- **Windows** (milestone 8b, §18 row 64): tray app, per-user install, started
+  at login (§11). The tray icon shows the same menu on a click, and its
+  colour, not a count, shows that something waits. The tray's
+  *Quit* is the only way to quit and asks as on macOS. Logout, restart and
+  shutdown are heard by a hidden window (`WM_QUERYENDSESSION`,
+  `WM_ENDSESSION`), which stops the runtime within 4 s and never blocks the
+  session ending.
 
 **Single-instance enforcement:** the shell refuses a second app instance, and
-the runtime holds an exclusive lock on its IPC socket (macOS) or a named mutex
-(Windows). This, not leases, prevents double execution on one machine.
+the runtime holds a pid lock in its run directory and refuses to start while
+another runtime answers on its socket or, on Windows, on the pipe its endpoint
+file names. This, not leases, prevents double execution on one machine.
 
 **Future option, not v1:** the runtime speaks the same IPC protocol regardless of
 who launched it. A "keep running when Homerun is quit" setting, or a headless
@@ -371,6 +380,11 @@ do not stop same-user processes. Every local connection therefore authenticates.
 - **Socket placement.** A Unix socket in a `0700` directory inside the data
   directory (§6) on macOS; on Windows, a named pipe whose ACL admits only the
   current user. This stops other users on the machine, not same-user processes.
+  The pipe's name is random on every start (`\\.\pipe\homerun-<128 bits>`)
+  and published in `run\endpoint`, in a directory with the same protected ACL.
+  Its ACL admits the user and SYSTEM and denies network logons; the runtime
+  sets it just after listening, reads it back, and refuses to start if it is
+  not private (§18 row 60).
   A Unix socket path is limited to 104 bytes (`sun_path`). If
   `<data dir>/run/homerund.sock` would exceed it, the runtime falls back
   to a short per-user path such as `$TMPDIR/hr-<uid>/homerund.sock` (directory
@@ -421,6 +435,8 @@ do not stop same-user processes. Every local connection therefore authenticates.
   - **The prompt.** The shell shows a native alert: *"Allow the Homerun CLI to
     control your agents?"*, naming the client and the Mac, and saying to allow
     it only if you just ran `homerun`. *Don't Allow* is the default button.
+    On Windows it is a task dialog, and one that can't be shown denies
+    (§18 row 66).
     The shell answers with `cli.approve` or `cli.deny`, which are shell-only
     like `secrets.verify`. A withdrawn or expired request closes the alert
     unanswered. Outside a terminal the CLI never asks: it exits 77 and says to
@@ -436,13 +452,19 @@ do not stop same-user processes. Every local connection therefore authenticates.
     data directory, created through Security.framework (`bun:ffi`). macOS ties
     access to the CLI's code signature, so another binary gets a visible
     prompt. The runtime never touches the keychain, and the token is never in
-    argv, the environment, logs or the database.
+    argv, the environment, logs or the database. On Windows the item is a
+    generic credential in Credential Manager, which any process of the user
+    can read (§18 row 62).
   - **The peer check.** Before it reads the token, or sends anything at all,
     the CLI checks who is listening on the socket. It takes the peer's pid
     (`LOCAL_PEERPID`) and audit token (`LOCAL_PEERTOKEN`), which must agree,
     and checks the code behind the audit token against a code-signing
     requirement compiled into the release CLI: the one `homerund` has once
-    signed (§11). A spoofed socket gets no token and no request. Development
+    signed (§11). On Windows it opens the pipe itself and checks, in order,
+    the pipe's ACL, the server's pid (`GetNamedPipeServerProcessId`), that
+    the server runs as this user, and that its image matches the requirement:
+    a SHA-256 of `homerund.exe`, or an Authenticode signer checked with
+    `WinVerifyTrust` (§18 row 61). A spoofed socket gets no token and no request. Development
     builds have no compiled-in requirement; they can pass one, or skip the
     check with a warning on every run, through switches that release builds
     refuse with exit 64.
@@ -800,7 +822,12 @@ request, and no answer, grant or `--dev-auto-approve` overrides it. It covers
 `Read`, `Glob`, `Grep`, `Write`, `Edit` and `NotebookEdit`, even inside a
 declared root; `Glob` and `Grep` are checked on their search path, and their
 results are not filtered. Paths are compared as given and after realpath (of
-the nearest existing ancestor, for a new file), case-insensitively on macOS.
+the nearest existing ancestor, for a new file), case-insensitively on macOS
+and Windows. On Windows a path is first normalised the way Win32 opens it
+(`\\?\` prefixes, alternate data streams, trailing dots and spaces, `/`), is
+also checked in its MSYS spelling, and is canonicalised through junctions,
+symlinks and 8.3 short names; UNC and device paths are refused before
+anything touches the file system, so a lookup can't reach the network.
 Inside Homerun's data dir, only the workspaces are open, plus, for reading,
 `claude`'s own saved tool results and task output for the run's session, which
 `claude` tells the model to `Read`. The hard denylist is additionally expressed
@@ -1321,7 +1348,9 @@ warning, stops trying, and runs carry on.
 
 **2. Catch-up on wake.** The shell subscribes to `NSWorkspace`'s will-sleep and
 did-wake notifications (`PowerRegisterSuspendResumeNotification` on Windows) and
-forwards them to the runtime (`power.will_sleep`, `power.did_wake`). Without the
+forwards them to the runtime (`power.will_sleep`, `power.did_wake`). On
+Windows these arrive on a system thread; Modern Standby machines may report a
+resume late, and the tick-gap check below is the backstop. Without the
 shell, the runtime infers sleep from a gap of more than 45 s between its 15 s
 ticks. Time when Homerun was not running is measured from the previous
 runtime's clean stop, or after a crash from its last heartbeat (written every
@@ -1461,8 +1490,9 @@ scheduled checks this week (11%). Your Mac was asleep for most of the rest."*
 
 **Suggest a fix when coverage is low.** If a monitor's weekly coverage falls below
 50%, Homerun suggests, once and dismissibly:
-- changing the macOS setting that prevents sleep on power adapter (the user's
-  own OS setting, which Homerun links to but never changes);
+- changing the macOS setting that prevents sleep on power adapter, or Windows'
+  sleep setting when plugged in (the user's own OS setting, which Homerun links
+  to but never changes);
 - running Homerun on an always-on machine, such as a Mac mini or a desktop PC,
   and controlling it from the phone. Accounts already support several desktops
   per user (§10.6).
@@ -2081,7 +2111,14 @@ Code", and visuals imitating it, are not (§3.4).
   say so on the download page.
 - NSIS or MSI installer via Tauri's bundler; per-user install, so no admin
   prompt is needed. Start at login via a per-user startup entry, toggleable in
-  settings.
+  settings: the `HKCU` `Run` value, passing `--autostart` (§18 row 65).
+- **Milestone 8b** builds the app for Windows, unsigned and unbundled, and runs
+  its tests on `windows-latest`. The data dir is `%LOCALAPPDATA%\Homerun`
+  (§18 row 68), and the API key is a Credential Manager credential (§18 row 62).
+  Signing, the installer, a Start menu shortcut carrying the notifications'
+  AppUserModelID, the CLI on `PATH` and the updater on Windows are milestone 11
+  (§18 row 70); until then the updater is compiled in but reports itself
+  unavailable.
 
 **iOS**
 - App Store distribution. **App Review needs to see a working desktop**: ship a
@@ -2164,7 +2201,9 @@ true sandbox**):
   `.env.*` file, credential files (`~/.aws/credentials`, `~/.netrc`,
   `~/.config/gh/hosts.yml`, `~/.docker/config.json`, `~/.npmrc`, `~/.pypirc`,
   `~/.kube/config`, `~/.gnupg`), and Homerun's own data dir, including the
-  `claude` config snapshot (§5.5 for its details). It binds the file tools;
+  `claude` config snapshot (§5.5 for its details). On Windows the same list
+  under `%USERPROFILE%`, plus Windows credentials and DPAPI keys and the
+  browser profiles under `%APPDATA%` and `%LOCALAPPDATA%`. It binds the file tools;
   `Bash` is not path-checked, and is gated as `destructive` instead.
 - **Tool classification + approval gates** (§5.5). `destructive` tools are
   never auto-approved inside an unattended run. A scheduled run that wants to
@@ -2208,13 +2247,17 @@ they must not silently gain CLI authority or approve anything.
   or sends a byte, so a program that binds a fake socket learns nothing.
 - **The token is kept where only the CLI reads it silently**: its own login
   keychain item. The database holds a SHA-256, and the token is never logged.
+  Windows' Credential Manager has no per-program access, so there any process
+  of the user can read the token and the API key (§18 row 62).
 - **The CLI's authority is bounded.** It answers questions but not approvals,
   can't grant, and can't widen a task's policy (§5.2). Running the release CLI
   binary is equivalent to holding its token, by design.
 - **Revocation is immediate**: it closes the token's live connections, and
   every `hello` re-checks it.
 - Out of scope: a process that runs as root, has Accessibility access (it can
-  click *Allow*), or controls the kernel.
+  click *Allow*), or controls the kernel. On Windows any process of the user
+  can send input to the prompt, so there the prompt makes approval visible
+  rather than unforgeable (§18 row 66).
 
 **Secondary threat: the remote access path.** Internet reachability means a
 compromised relay or a stolen phone becomes a path to a machine that can run
@@ -2321,8 +2364,8 @@ UI last: the runtime is the risky part.
 | 7 | [Desktop app](../apps/desktop/README.md) | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | **Done** |
 | 8 | [Packaging](../apps/desktop/README.md#in-the-background-milestone-8) | Menu-bar / tray residency, login item, signed updater, quit confirmation, local notifications | **Done**; launch at login and the clean-VM Gatekeeper click need a person (§16.1) |
 | 8a | CLI access | `cli.request_access` with a native prompt in the shell; `cli_tokens`, listed and revoked in Settings; the CLI keeps its token in its own keychain item and checks the socket's peer; the release CLI ships in the bundle and answers questions (§5.2) | **Done**; the real login keychain and the native prompt need a person ([manual checks](../apps/desktop/README.md#manual-checks)) |
-| 8b | Windows | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | Next |
-| 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | — |
+| 8b | [Windows](../apps/desktop/README.md#windows-milestone-8b) | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | **Done**; the tray, dialogs, notifications, login and sleep need a person on a Windows desktop ([manual checks](../apps/desktop/README.md#windows-manual-checks)); signing, the installer and the updater are milestone 11 (§18 row 70) |
+| 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | Next |
 | 10 | iOS + web | Sign-in and device linking; history sync, live chat, steering, questions, approvals, rich push; web client with reduced authority | — |
 | 11 | Distribution | Signed and notarized builds, installers, crash reporting, version gate | — |
 
@@ -2389,6 +2432,12 @@ upgrades.
 | **Desktop UI end to end** | The app's views work against a real runtime | Playwright drives the production web bundle in Chrome, through a stand-in for the Rust shell that applies the same `webview` allowlist, against a real runtime with a scripted engine or replay cassettes. The Rust shell has its own tests; WKWebView and the keychain are checked by hand on macOS |
 | **Protocol test vectors** | Desktop, iOS, and web interoperate | Shared files of known keys, messages, and expected ciphertext, for Noise live sessions, sealed messages, expiry, and replay rejection. The TypeScript runtime and the React Native client must both pass the same files |
 
+**Windows** (milestone 8b). Every pull request runs the runtime's unit suite,
+the client's, the CLI's and the Win32 bindings' on `windows-latest`, including
+a test that creates a second local user and is denied the pipe, and
+`shell-core`'s tests there; the Tauri crate builds nightly. Replay and the crash
+sweep run on Linux only (§18 row 69).
+
 **SDK upgrade gate (eval suite).** Because the SDK tracks Claude Code, an
 upgrade can change agent behaviour without any change to our code.
 
@@ -2448,6 +2497,12 @@ upgrade can change agent behaviour without any change to our code.
    which is rarely bash. Deferred: those profiles belong to the Git install, not
    the user, and the classifier fails closed on anything that isn't bash
    (§18 row 57).
+8. **Windows wording and suites** (milestone 8b). The desktop UI still says
+   *Mac*, *System Settings* and *keychain* on Windows, and the CLI's
+   end-to-end suite and the crash sweep don't run there (§18 row 69).
+   Recommended: platform wording in `@homerun/app-state` and the desktop
+   views, and the CLI suite on Windows, with milestone 11's installer, when
+   Windows first ships.
 
 ---
 
@@ -2514,4 +2569,16 @@ One line per major decision: what was chosen, and why.
 | 55 | **In the access prompt, Return means *Don't Allow*; Escape does nothing, and *Allow* needs a click** (§5.2) | A stray keypress must never approve. An alert button takes one key, and Return is the key pressed without reading, so it denies; the plan's Escape would have needed a second deny button. *Allow* has its key cleared, so no key approves |
 | 56 | **Revoking a token closes its connections without a reason** (§5.2) | The runtime closes the socket; the CLI says Homerun closed the connection, and its next command says access was revoked. A reason frame sent just before closing adds a path for no gain |
 | 57 | **On Windows the `Bash` tool's shell is pinned Git Bash, and any other dialect fails closed** (§5.3, §5.5) | `claude` on Windows runs `Bash` through Git Bash, found by a fixed-path search and `PATH`, and without it offers a PowerShell tool instead. Bash patterns would read PowerShell's `(…)`, `@(…)` and `$(…)`, or cmd's `%VAR%`, as plain text, so a grant for `git status*` could approve a PowerShell command that deletes files. The runtime finds `bash.exe` at fixed install locations only (never `PATH`, which could find WSL's), passes it as `CLAUDE_CODE_GIT_BASH_PATH`, and sets `CLAUDE_CODE_USE_POWERSHELL_TOOL=0`. The PowerShell tool is not a Homerun tool name, so policy denies it. With no Git Bash at those locations, that variable is left unset (with no Git Bash at all, `claude` refuses to start with its PowerShell tool off) and policy treats every `Bash` call as `destructive` with no pattern, grant or *"Always allow"*. Probe P7 on `windows-latest` found that `claude` ignores a `CLAUDE_CODE_GIT_BASH_PATH` that does not exist and runs its own search, `git` on `PATH` included, so it can expose a `Bash` tool the runtime did not find; that tool is still in an unknown dialect, so it fails closed the same way (a test covers this case). The P7 run also confirmed Git Bash as the shell when pinned, and that `--tools` keeps the PowerShell tool out. PowerShell patterns would need a dialect on patterns and grants, a `@homerun/core` change for later |
-| 58 | **A compiled executable is detected by any of four signals** (§11) | A milestone 8b Windows CI run found a compiled `homerund` without a build define running as a development build. The embedded file system's marker is checked in `import.meta.url` (decoded too), `Bun.main` and `argv[1]`, and an executable not named `bun` counts as compiled, so a platform that reports one signal differently still fails closed to release |
+| 58 | **A compiled executable is detected by any of four signals** (§11) | A milestone 8b Windows CI run found a compiled `homerund` without a build define running as a development build. The embedded file system's marker is checked in `import.meta.url` (decoded too), `Bun.main` and `argv[1]`, and an executable (`process.execPath`, since a compiled Bun reports `argv[0]` as `bun`) not named `bun` counts as compiled, so a platform that reports one signal differently still fails closed to release |
+| 59 | **Win32 through `bun:ffi` in `packages/win32`, and the `windows` crates in the shell** (§5.1, §5.2) | No native addon to build and sign, and no new npm package. The runtime and the CLI share one set of bindings, whose struct layouts are tested on `windows-latest`. `shell-core` takes `windows-sys` on Windows only, an exception to its std-and-serde rule, and the Tauri crate takes `windows`; both were already in `Cargo.lock` through Tauri |
+| 60 | **The runtime's pipe gets its private ACL just after it listens** (§5.2) | Bun's listener creates the pipe through libuv, which takes no security descriptor. The runtime opens its own pipe with `WRITE_DAC`, sets a protected ACL (the user and SYSTEM; network logons denied), reads it back, and refuses to start if it isn't private; connections accepted before that are closed. The ACL covers the listener's later instances (checked on `windows-latest`). `PIPE_REJECT_REMOTE_CLIENTS` can't be set this way, so the network deny is the remote control. A CI test logs on as a second local user and is denied the pipe, the endpoint file and the development token |
+| 61 | **Clients check the pipe's server before sending anything** (§5.2) | The shell compares `GetNamedPipeServerProcessId` with the child it spawned, on its own connection, before `hello`. The CLI can't reach the handle of Bun's connection, so it opens the pipe once more and checks the ACL, the server's pid and user, and its image (`sha256:` or `authenticode:<signer>`), then connects. A same-user process could swap servers between the two opens, but such a process can already read the token from Credential Manager (row 62). Any failure refuses, as on macOS, and the development escape hatch is unchanged |
+| 62 | **Credential Manager holds the API key and the CLI's token** (§11, §13) | The Windows counterpart of the keychain: generic credentials, kept on this machine and never roamed. It has no per-program access, so any process of the user can read them; §13 already puts confidentiality against same-user malware out of scope, and approvals still need visible UI |
+| 63 | **Job objects replace process groups on Windows** (§5.1, §5.4) | The runtime puts itself in a kill-on-close job, and each run's `claude` in its own, assigned just after spawn; a sweep of descendants catches anything started before that. A stale `claude` from before a crash is matched by its image and the boot. There is no escaped-tool sweep: nothing leaves a job that forbids breakaway, and Windows' process list has no command lines. The shell's job isn't kill-on-close, so a shell crash still lets the runtime checkpoint on stdin EOF |
+| 64 | **The Windows shell: a tray, a hidden session window, and toasts** (§5.1, §8.2) | Windows has no application-level quit hook, so the tray's *Quit* is the only way to quit and asks as on macOS. A hidden window hears logout and shutdown, stops the runtime within 4 s and never blocks. Toasts use an AppUserModelID registered under `HKCU`; clicks are handled in the running app only, since relaunching from a toast needs the installer's shortcut (milestone 11) |
+| 65 | **Open at login on Windows is the `HKCU` `Run` value** (§5.1, §11) | Per-user and needs no admin. `--autostart` marks a login launch, which starts in the tray. Task Manager's *Startup apps* switch is the user's: Homerun shows *Needs approval* and links there, and never overrides it |
+| 66 | **On Windows the access prompt is a task dialog, and *Allow* is reachable from the keyboard** (§5.2, §13) | Return still means *Don't Allow*, the default. *Allow* needs Tab first rather than a click: any process of the user can send input to a window at its integrity level, so click-only would add nothing on Windows. A system without the task dialog denies |
+| 67 | **The app doesn't install the command-line tool on Windows** (§5.2, §11) | There is no bundled release CLI until the installer (milestone 11) puts one on `PATH`, so Settings shows the tool as unavailable. The Windows peer check and token store are built and tested now |
+| 68 | **On Windows the data dir is `%LOCALAPPDATA%\Homerun`** (§6, §11) | Not `%APPDATA%`, which roams: the database, the workspaces and the pipe endpoint belong to one machine, as the runtime does |
+| 69 | **Windows CI: two jobs per pull request; replay and the crash sweep stay on Linux** (§16.2) | `windows-runtime` (the runtime, client, CLI and Win32 unit suites) and `windows-shell` (`shell-core`) each take about 2 minutes; the Tauri crate builds nightly. `claude.exe` offers `Glob` and `Grep` too, which changes the cassettes' tool fingerprints, and the crash harness drives a simulated `claude` with POSIX signals; the logic both cover is the same on every platform |
+| 70 | **Windows signing, installer and updater are milestone 11** (§11) | They need a certificate (Azure Trusted Signing or EV) and an installer, and change neither the runtime nor the shell. Milestone 8b ships nothing to users, so the Windows app is built unsigned and unbundled; the updater is compiled in and reports itself unavailable, as on Intel Macs |

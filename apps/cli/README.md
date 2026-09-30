@@ -127,10 +127,17 @@ A **release** build connects as `cli`:
   in by `scripts/macos/package.sh` (`LOCAL_PEERPID`, `LOCAL_PEERTOKEN`, then
   `SecCodeCopyGuestWithAttributes` and `SecCodeCheckValidity`). If it can't tell, it
   refuses (77): the check fails closed, including a build with no requirement.
+- On Windows (milestone 8b) it connects to the named pipe `run\endpoint` names, after
+  opening the pipe once to check it: an ACL that admits only this user, the server's
+  pid (`GetNamedPipeServerProcessId`) and user, and its image against the requirement,
+  `sha256:<hex of homerund.exe>` or `authenticode:<signer>` (§18 row 61). A release
+  Windows CLI ships with milestone 11's installer.
 - Its token is a generic password in the login keychain: service
   `com.angilyu.homerun.cli`, labelled "Homerun command-line tool", account `default`
   (or `data:<sha256 of the data dir>` under `HOMERUN_DATA_DIR`). homerund keeps only its
-  sha256.
+  sha256. On Windows it is a Credential Manager credential,
+  `com.angilyu.homerun.cli/<account>`, kept on this machine, which any process of the
+  user can read (§18 row 62).
 
 ### Getting a token
 
@@ -162,6 +169,11 @@ pnpm --filter @homerun/cli test:e2e      # the CLI spawned against homerund with
 pnpm --filter @homerun/cli test:replay   # the CLI driving real claude against recorded cassettes, no key
 pnpm --filter @homerun/cli test:macos    # macOS: the real keychain and peer-check calls (nightly)
 ```
+
+On Windows, CI runs `test:unit`, which there includes the peer check against a real pipe
+(one served by the test itself, one with the default ACL, and a name nobody serves) and
+the Credential Manager errors. The end-to-end and replay suites run on Linux and macOS
+(§17 item 8).
 
 None of them need an API key. The e2e tests start homerund in-process on a temporary
 data dir, play the shell to set a mock key, and spawn the CLI from source.

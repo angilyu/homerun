@@ -4,7 +4,7 @@
 //! On Windows the item is a per-user `HKCU\…\CurrentVersion\Run` value that starts the app
 //! with `--autostart`; Task Manager's Startup tab (or Settings → Apps → Startup) can turn it off
 //! through `…\Explorer\StartupApproved\Run`, which Homerun honours and reports as
-//! `NeedsApproval` rather than overriding (§18 row @login).
+//! `NeedsApproval` rather than overriding (§18 row 65).
 
 use serde::Serialize;
 use std::path::Path;

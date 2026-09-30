@@ -1,4 +1,4 @@
-//! Win32 glue for the shell on Windows (§5.1, §18 row @winshell), the counterpart of macos.rs,
+//! Win32 glue for the shell on Windows (§5.1, §18 row 64), the counterpart of macos.rs,
 //! power.rs, login_item.rs, notifications.rs and keychain.rs's AppKit and Security code. As on
 //! macOS, everything that decides lives in `shell-core`; this only talks to the system.
 //!
@@ -468,7 +468,7 @@ pub fn toast_status() -> Permission {
 
 /// A generic credential per account, `com.angilyu.homerun/<account>`, persisted on this machine
 /// only (never roamed). Any process running as this user can read it, like a keychain item
-/// without an ACL (§13, §18 row @cred). Errors are Win32 codes.
+/// without an ACL (§13, §18 row 62). Errors are Win32 codes.
 pub mod cred {
     use super::wide;
     use windows::core::PWSTR;
