@@ -98,7 +98,7 @@ export function parseMcpName(tool: string): { server: string; tool: string } | n
 
 export function resolveRoots(roots: readonly string[], home: string, fallback: string): string[] {
   const abs = roots.length ? roots.map((r) => expandTilde(r, home)) : [fallback];
-  return abs.map(canonicalPath);
+  return abs.map((p) => canonicalPath(p));
 }
 
 export function insideRoots(roots: readonly string[], path: string): boolean {
