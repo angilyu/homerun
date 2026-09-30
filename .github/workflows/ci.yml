@@ -36,6 +36,49 @@ jobs:
       - name: Markdown links and anchors resolve
         run: pnpm check:doc-links
 
+  protocol:
+    name: packages/protocol and packages/testkit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/protocol..." --filter "@homerun/testkit..."
+      - name: Typecheck
+        run: pnpm --filter @homerun/protocol --filter @homerun/testkit typecheck
+      # Noise against the cacophony vectors, then every protocol vector, positive and negative (§16.2).
+      - name: Test
+        run: pnpm --filter @homerun/protocol --filter @homerun/testkit test
+      - name: Protocol test vectors are up to date
+        run: pnpm --filter @homerun/protocol vectors:check
+
+  relay:
+    name: apps/relay and packages/remote
+    # The relay under Bun and under workerd (wrangler's local runtime, driven from Node), then the
+    # reference client end to end against it. No Cloudflare account, WorkOS or APNs is involved.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/relay..." --filter "@homerun/remote..."
+      - name: Typecheck (Bun adapter and the Worker)
+        run: pnpm --filter @homerun/relay --filter @homerun/remote typecheck
+      - name: Relay under Bun
+        run: pnpm --filter @homerun/relay test
+      - name: Relay under workerd, and the vectors inside a Worker
+        run: pnpm --filter @homerun/relay test:workerd
+      - name: Reference client end to end
+        run: pnpm --filter @homerun/remote test
+
   homerund:
     name: apps/homerund
     # Linux: the runtime's process-group, ps and socket code is POSIX, and the SDK ships a

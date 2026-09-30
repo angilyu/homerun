@@ -9,6 +9,11 @@ target/
 .spike/
 *.key
 *.key.pub
+# the relay: wrangler state, local Worker secrets, the APNs key (§9.7)
+.wrangler/
+.dev.vars*
+*.p8
+*.pem
 apps/desktop/src-tauri/binaries/
 apps/desktop/src-tauri/gen/
 .vendor/
