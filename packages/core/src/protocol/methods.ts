@@ -148,7 +148,15 @@ export const AccountStatus = named(
       error: z.string().max(500).nullable(),
     }),
     /** A device asking to link, while the shell's prompt shows its code (§10.5). */
-    link_request: z.object({ name: z.string().max(100), platform: z.enum(["ios", "web"]) }).nullable(),
+    link_request: z
+      .object({
+        name: z.string().max(100),
+        /** The authority it would get: `ios` only if App Attest vouched for it (§12). */
+        platform: z.enum(["ios", "web"]),
+        /** What it says it is. An `ios` claim App Attest didn't vouch for links as `web`. */
+        claimed_platform: z.enum(["ios", "web"]),
+      })
+      .nullable(),
   }),
 );
 export type AccountStatus = z.infer<typeof AccountStatus>;
@@ -159,7 +167,10 @@ export const PairedDevice = named(
   z.object({
     device_id: DeviceId,
     name: z.string().min(1).max(100),
+    /** Its role (§12): `ios` only if App Attest vouched for an iPhone app; otherwise `web`. */
     platform: z.enum(["ios", "web"]),
+    /** What it said it was when it paired. `ios` with platform `web` is an unverified iPhone. */
+    claimed_platform: z.enum(["ios", "web"]),
     /** QR pairing (§9.6) or code linking (§10.5). */
     method: z.enum(["qr", "code"]),
     paired_at: TimestampMs,
@@ -732,7 +743,10 @@ export const NOTIFICATIONS = {
     params: z.object({
       request_id: Uuid,
       name: z.string().min(1).max(100),
+      /** The authority it would get (§12). */
       platform: z.enum(["ios", "web"]),
+      /** What it says it is; `ios` with platform `web` means App Attest didn't vouch for it. */
+      claimed_platform: z.enum(["ios", "web"]),
       /** The six-digit code the other device shows too (§10.5). */
       code: z.string().regex(/^[0-9]{6}$/),
       requested_at: TimestampMs,

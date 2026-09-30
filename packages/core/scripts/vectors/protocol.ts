@@ -256,7 +256,7 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
       ["signed out", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }],
       [
         "signed in, linking",
-        { status: { state: "signed_in", email: "ada@example.com", error: null, relay: { state: "connected", since: F.T0, error: null }, link_request: { name: "Ada's iPhone", platform: "ios" } } },
+        { status: { state: "signed_in", email: "ada@example.com", error: null, relay: { state: "connected", since: F.T0, error: null }, link_request: { name: "Ada's iPhone", platform: "ios", claimed_platform: "ios" } } },
       ],
     ],
     badResults: [["unknown state", { status: { state: "online", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }]],
@@ -285,7 +285,10 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
     params: [["empty", {}]],
     badParams: [["null", null]],
     results: [["one phone", { devices: [F.pairedDevice()] }]],
-    badResults: [["a desktop", { devices: [{ ...F.pairedDevice(), platform: "desktop" }] }]],
+    badResults: [
+      ["a desktop", { devices: [{ ...F.pairedDevice(), platform: "desktop" }] }],
+      ["no claimed platform", { devices: [{ ...F.pairedDevice(), claimed_platform: undefined }] }],
+    ],
   },
   "devices.unpair": {
     params: [["by id", { device_id: F.PHONE }]],
@@ -404,7 +407,11 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
     invalid: [["missing status", {}]],
   },
   "devices.changed": {
-    valid: [["one phone", { devices: [F.pairedDevice()] }], ["none", { devices: [] }]],
+    valid: [
+      ["one phone", { devices: [F.pairedDevice()] }],
+      ["an unverified iPhone", { devices: [{ ...F.pairedDevice(), platform: "web" }] }],
+      ["none", { devices: [] }],
+    ],
     invalid: [["missing devices", {}]],
   },
   "devices.pairing_completed": {
@@ -412,8 +419,11 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
     invalid: [["missing device", { offer_id: F.OFFER }]],
   },
   "devices.link_requested": {
-    valid: [["phone", { request_id: F.LINK_REQUEST, name: "Ada's iPhone", platform: "ios", code: "482915", requested_at: F.T0, expires_at: F.T0 + 120_000 }]],
-    invalid: [["four digits", { request_id: F.LINK_REQUEST, name: "Ada's iPhone", platform: "ios", code: "4821", requested_at: F.T0, expires_at: F.T0 + 120_000 }]],
+    valid: [
+      ["phone", { request_id: F.LINK_REQUEST, name: "Ada's iPhone", platform: "ios", claimed_platform: "ios", code: "482915", requested_at: F.T0, expires_at: F.T0 + 120_000 }],
+      ["unverified phone", { request_id: F.LINK_REQUEST, name: "Ada's iPhone", platform: "web", claimed_platform: "ios", code: "482915", requested_at: F.T0, expires_at: F.T0 + 120_000 }],
+    ],
+    invalid: [["four digits", { request_id: F.LINK_REQUEST, name: "Ada's iPhone", platform: "ios", claimed_platform: "ios", code: "4821", requested_at: F.T0, expires_at: F.T0 + 120_000 }]],
   },
   "devices.link_withdrawn": {
     valid: [["expired", { request_id: F.LINK_REQUEST, reason: "expired" }]],
