@@ -148,6 +148,10 @@ export function scheduleState(over: Record<string, unknown> = {}) {
   };
 }
 
+export function accountStatus(over: Record<string, unknown> = {}) {
+  return { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null, ...over };
+}
+
 /** A transport that answers the calls every screen makes, with nothing in it. */
 export function baseTransport(): FakeTransport {
   const t = new FakeTransport();
@@ -160,6 +164,8 @@ export function baseTransport(): FakeTransport {
     "threads.subscribe": () => ({ subscription_id: uuid() }),
     "threads.unsubscribe": () => ({ ok: true }),
     "threads.mark_read": () => ({ ok: true }),
+    "account.status": () => ({ status: accountStatus() }),
+    "devices.list": () => ({ devices: [] }),
   };
   return t;
 }
@@ -175,7 +181,7 @@ export interface Harness {
 export async function renderApp(opts: { t?: FakeTransport; shell?: FakeShell; route?: Route; connect?: boolean } = {}): Promise<Harness> {
   const t = opts.t ?? baseTransport();
   const shell = opts.shell ?? new FakeShell();
-  const client = new AppClient(t, { keepThreadMs: 0 });
+  const client = new AppClient(t, { keepThreadMs: 0, remote: true });
   const app = createApp({ transport: t, shell }, client);
   if (opts.route) app.route.set(opts.route);
   client.start();

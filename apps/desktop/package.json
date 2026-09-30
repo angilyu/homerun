@@ -19,7 +19,8 @@
     "@homerun/core": "workspace:*",
     "@tauri-apps/api": "2.11.1",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "uqr": "0.1.3"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "20.14.5",

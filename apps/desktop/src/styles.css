@@ -89,6 +89,7 @@ legend { padding: 0 4px; font-weight: 600; }
 .notice { border-radius: var(--radius); padding: 10px 14px; margin: 10px 0; background: var(--bg-2); }
 .notice.warn { background: var(--warn-bg); }
 .notice.info { border-left: 3px solid var(--info); }
+.pairing .qr { display: block; width: 220px; height: 220px; margin: 4px 0 10px; border-radius: 6px; }
 .card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); padding: 12px 14px; }
 .cards, .plain, .grants, .runs { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 .row-card { display: grid; gap: 2px; width: 100%; text-align: left; }

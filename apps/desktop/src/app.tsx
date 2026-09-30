@@ -5,7 +5,7 @@ import { AppContext, type App, type Route } from "./hooks";
 import type { KeyStatus, Platform, UpdateState } from "./platform/types";
 import { Root } from "./screens/Root";
 
-export function createApp(platform: Platform, client = new AppClient(platform.transport)): App {
+export function createApp(platform: Platform, client = new AppClient(platform.transport, { remote: true })): App {
   const route = new Store<Route>({ name: "home" });
   const key = new Store<KeyStatus | null>(null);
   const update = new Store<UpdateState | null>(null);

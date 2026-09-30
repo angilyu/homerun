@@ -6,6 +6,10 @@
  * names end in `.exe`, as Tauri expects there.
  *
  *   [HOMERUND_VERSION=x.y.z] bun scripts/stage-sidecars.ts [--release]
+ *
+ * A release build also bakes in remote access (§9, §10.4) when these are set, and otherwise shows
+ * it as not configured: HOMERUND_RELAY_URL (the deployed relay, https), HOMERUND_OIDC_ISSUER and
+ * HOMERUND_OIDC_CLIENT_ID (the WorkOS AuthKit issuer and public client id; apps/relay/README.md).
  */
 import { chmodSync, copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -29,10 +33,12 @@ mkdirSync(OUT, { recursive: true });
 const homerund = join(OUT, `homerund-${triple}${exe}`);
 const main = join(ROOT, "apps", "homerund", "src", "main.ts");
 // Release: no build define (a compiled binary defaults to the release channel), minified, and the
-// app version when package.sh passes one.
-const define = release
-  ? ["--minify", ...(process.env.HOMERUND_VERSION ? ["--define", `HOMERUND_VERSION=${JSON.stringify(process.env.HOMERUND_VERSION)}`] : [])]
-  : ["--define", `HOMERUND_BUILD="development"`];
+// app version and remote-access endpoints when package.sh passes them. Development builds read
+// the endpoints from the environment at run time instead (apps/homerund/src/remote/config.ts).
+const baked = ["HOMERUND_VERSION", "HOMERUND_RELAY_URL", "HOMERUND_OIDC_ISSUER", "HOMERUND_OIDC_CLIENT_ID"].flatMap((name) =>
+  process.env[name] ? ["--define", `${name}=${JSON.stringify(process.env[name])}`] : [],
+);
+const define = release ? ["--minify", ...baked] : ["--define", `HOMERUND_BUILD="development"`];
 // The release CLI trusts this process (§5.2): no bunfig.toml or .env from its working directory.
 const noAutoload = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv"];
 const t0 = Date.now();
