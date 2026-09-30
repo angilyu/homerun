@@ -132,6 +132,9 @@ importers:
       '@homerun/core':
         specifier: workspace:*
         version: link:../core
+      '@homerun/win32':
+        specifier: workspace:*
+        version: link:../win32
     devDependencies:
       '@types/bun':
         specifier: 1.3.14
