@@ -3,10 +3,12 @@
 //! link is the user's own, and the UI shows how to put `~/.local/bin` on `PATH` rather than
 //! reading anyone's shell profile. It never replaces a file that isn't a link to some Homerun's
 //! CLI, and it won't link to a copy that is about to go away (a disk image or a translocated app).
+//! Windows has no bundled CLI to link yet (§18 row @cli): every status there is `Unavailable`.
 
 use serde::Serialize;
 use std::fs;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
@@ -58,6 +60,9 @@ impl Place {
 
     /// The bundled CLI, or why there isn't one to link to.
     pub fn cli(&self) -> Result<PathBuf, String> {
+        if cfg!(windows) {
+            return Err("On Windows the command-line tool isn't installed from the app yet.".into());
+        }
         let exe = self.exe.to_string_lossy();
         if !exe.contains(".app/Contents/MacOS/") {
             return Err("The command-line tool comes with the Homerun app; this is a development build.".into());
@@ -159,6 +164,11 @@ pub fn install(p: &Place) -> Result<ToolStatus, ToolError> {
     Ok(status(p))
 }
 
+#[cfg(not(unix))]
+fn symlink(_: &Path, _: &Path) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 pub fn remove(p: &Place) -> Result<ToolStatus, ToolError> {
     let link = p.link();
     match status(p) {
@@ -171,7 +181,7 @@ pub fn remove(p: &Place) -> Result<ToolStatus, ToolError> {
     Ok(status(p))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
@@ -303,5 +313,19 @@ mod tests {
     fn status_serializes_for_the_webview() {
         let s = serde_json::to_value(ToolStatus::NotInstalled { link: "/h/.local/bin/homerun".into() }).unwrap();
         assert_eq!(s, serde_json::json!({"state": "not_installed", "link": "/h/.local/bin/homerun"}));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn windows_has_nothing_to_link_so_nothing_is_touched() {
+        let home = std::env::temp_dir().join(format!("hr-cli-tool-win-{}", std::process::id()));
+        let p = Place { home: home.clone(), exe: home.join("Homerun").join("homerun.exe") };
+        assert!(matches!(status(&p), ToolStatus::Unavailable { .. }));
+        assert!(install(&p).is_err());
+        assert!(!home.exists());
     }
 }

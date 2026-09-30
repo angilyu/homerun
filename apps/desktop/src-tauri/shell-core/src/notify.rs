@@ -97,6 +97,21 @@ fn id_ok(s: &str) -> bool {
     (1..=64).contains(&s.len()) && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
+/// A Windows toast's `Tag`, which may be at most 64 characters: the key itself when it fits,
+/// else a stable FNV-1a hash of it. Posting the same key again replaces the toast; withdrawing
+/// removes it.
+pub fn toast_tag(key: &str) -> String {
+    if key.len() <= 64 {
+        return key.to_string();
+    }
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in key.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("h:{h:016x}")
+}
+
 /// The runtime already cleans the text; the shell clips and strips again rather than trust it.
 pub fn clean(s: &str, max: usize) -> String {
     let flat: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
@@ -267,5 +282,16 @@ mod tests {
         for junk in ["", "../x", "a b", "homerun.shell", &"x".repeat(65)] {
             assert_eq!(Target::from_thread_identifier(junk), Target::Home, "{junk}");
         }
+    }
+
+    #[test]
+    fn toast_tags_fit_and_stay_stable() {
+        assert_eq!(toast_tag("input:abc"), "input:abc");
+        let long = format!("input:{}", "a".repeat(120));
+        let t = toast_tag(&long);
+        assert!(t.len() <= 64 && t.starts_with("h:"), "{t}");
+        assert_eq!(t, toast_tag(&long));
+        assert_ne!(t, toast_tag(&format!("input:{}", "b".repeat(120))));
+        assert_eq!(toast_tag(&"x".repeat(64)).len(), 64);
     }
 }
