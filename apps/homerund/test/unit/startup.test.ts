@@ -216,7 +216,7 @@ describe("startup recovery (§5.4)", () => {
     expect(sent).toMatchObject({ run_id, disposition: "held" });
   }, 10_000);
 
-  test("stale process groups are killed before recovery; foreign or other-boot groups are left alone", async () => {
+  test.skipIf(process.platform === "win32")("stale process groups are killed before recovery; foreign or other-boot groups are left alone", async () => {
     const ours = spawn("/bin/bash", ["-c", "sleep 30; true"], { detached: true, stdio: "ignore" });
     const foreign = spawn("/bin/sleep", ["30"], { detached: true, stdio: "ignore" });
     const otherBoot = spawn("/bin/bash", ["-c", "sleep 30; true"], { detached: true, stdio: "ignore" });
@@ -257,7 +257,7 @@ describe("startup recovery (§5.4)", () => {
     expect(row(b, run_id).state).toBe("pending");
   });
 
-  test("tool shells that escaped claude's group are killed at startup (F8)", async () => {
+  test.skipIf(process.platform === "win32")("tool shells that escaped claude's group are killed at startup (F8)", async () => {
     const procs: ReturnType<typeof spawn>[] = [];
     cleanups.push(() => {
       for (const p of procs) {

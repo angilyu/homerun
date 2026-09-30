@@ -2,6 +2,7 @@ import type { SpawnedProcess, SpawnOptions } from "@anthropic-ai/claude-agent-sd
 import { killRunTree } from "../agent/claude/process-tree";
 import { pidAlive, spawnInGroup } from "../agent/claude/spawn";
 import { bootTime, killEscapedTools, killStaleGroup } from "../runs/process-groups";
+import { windowsProcesses } from "./windows-processes";
 
 /**
  * How the runtime owns the processes it starts (§5.1): the one place that differs by OS. POSIX
@@ -39,4 +40,4 @@ export const posixProcesses: ProcessPlatform = {
   killEscapedTools,
 };
 
-export const processes: ProcessPlatform = posixProcesses;
+export const processes: ProcessPlatform = process.platform === "win32" ? windowsProcesses : posixProcesses;
