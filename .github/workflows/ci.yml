@@ -183,9 +183,10 @@ jobs:
 
   windows-probe:
     name: Windows probe (temporary, milestone 8b)
-    # Round 3: the runtime, client, win32 and CLI unit suites on Windows, with the cross-user pipe
-    # test. Each suite reports on its own (continue-on-error) so one run shows every failure;
-    # replaced by the per-PR Windows jobs before merge.
+    # Round 4: the runtime, client, win32 and CLI unit suites on Windows, with the cross-user pipe
+    # test, then probes P8 (compiled self-detection) and P7 (claude's shell). Each step reports on
+    # its own (continue-on-error) so one run shows every failure; replaced by the per-PR Windows
+    # jobs before merge.
     runs-on: windows-latest
     timeout-minutes: 10
     defaults:
@@ -215,3 +216,14 @@ jobs:
       - name: CLI unit
         continue-on-error: true
         run: pnpm --filter @homerun/cli test:unit
+      - name: P8 what a compiled executable reports about itself
+        continue-on-error: true
+        run: |
+          pnpm exec bun build --compile spikes/windows-probe/compiled.ts --outfile p8.exe
+          ./p8.exe
+      # Last: it renames Git for Windows away and back, so nothing here may be using it (pwsh).
+      - name: P7 which shell claude's Bash tool runs, with and without Git Bash
+        shell: pwsh
+        continue-on-error: true
+        timeout-minutes: 3
+        run: pnpm exec bun spikes/windows-probe/bash.ts --hide-git
