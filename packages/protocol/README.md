@@ -4,8 +4,8 @@ The relay protocol of [`docs/design.md` §9.4–§9.7](../../docs/design.md#94-r
 [§10.5](../../docs/design.md#105-device-linking), as code and as plain-JSON test vectors. It is the
 first half of milestone 9 ([§16](../../docs/design.md#16-build-plan)). The runtime (`homerund`),
 the relay (`apps/relay`) and the reference client (`packages/remote`) all build on it, and so will
-the M10 web client. The iOS client reimplements it in Swift on CryptoKit and must pass the same
-vector files.
+the M10 web and React Native clients. The iOS app's Notification Service Extension opens sealed
+pushes in Swift on CryptoKit; it and the React Native app must pass the same vector files.
 
 ```ts
 import { LiveInitiator, liveRespond, seal, openSealed, verifyAllVectors } from "@homerun/protocol";
@@ -69,8 +69,8 @@ allows (instruction 72 h, push 24 h, answer 1 h); and the caller's seen-set. The
 
 ## Test vectors
 
-`vectors/` holds plain JSON so every client can use it: the TypeScript clients here, the Swift
-client in M10. Test keys only; they are published on purpose.
+`vectors/` holds plain JSON so every client can use it: the TypeScript clients here, and in M10
+the React Native app and the Swift notification extension. Test keys only; they are published on purpose.
 
 | File | What it pins |
 | --- | --- |
@@ -94,7 +94,7 @@ the files contain, and `verifyAllVectors()` runs in any JavaScript runtime (the 
 inside workerd). Regenerate with `pnpm --filter @homerun/protocol vectors` after a deliberate
 protocol change; CI runs `vectors:check`, so a drift fails the build.
 
-### For the Swift client (M10)
+### For the Swift notification extension (M10)
 
 CryptoKit has everything: `Curve25519.KeyAgreement` (X25519), `ChaChaPoly` (note that CryptoKit's
 nonce is the 12-byte Noise nonce: four zero bytes then the little-endian counter), `SHA256`,

@@ -1569,8 +1569,10 @@ the relay as fallback. It cannot replace the relay or the push server.
 
 **End-to-end encrypted.** Pairing (§9.6) establishes static keypairs on both
 devices. A Noise `KK` handshake over the relay produces an authenticated channel
-with forward secrecy; frames are then AEAD-encrypted (XChaCha20-Poly1305 via
-libsodium, available in both Node and React Native). **The relay sees only
+with forward secrecy; frames are then AEAD-encrypted with ChaCha20-Poly1305
+(`Noise_KK_25519_ChaChaPoly_SHA256`, on the audited pure-JavaScript `@noble`
+libraries, which run unchanged in Bun, Workers, browsers and React Native;
+§18 rows 71–72). **The relay sees only
 ciphertext and routing metadata.** Compromising it does not expose task content,
 prompts, results, or credentials.
 
@@ -1654,9 +1656,13 @@ Waking a sleeping machine over the internet is not possible without an
 always-on device on its LAN, and is out of scope.
 
 **Implementation:** Cloudflare Workers + Durable Objects — one Durable Object per
-pairing group, using the WebSocket hibernation API so an idle connection costs
-effectively nothing. A small Node service on Fly.io is an equivalent fallback
-(§17). Either way it is a few hundred lines, and must stay that way.
+account, using the WebSocket hibernation API so an idle connection costs
+effectively nothing (§18 rows 74–75). The Worker verifies the access token at the
+edge and routes to the account's object, which holds that account's tables in its
+own SQLite storage. The relay's logic is one runtime-neutral module of about 800
+lines, with thin adapters for the Durable Object and for Bun, so the same code runs
+in the tests ([`apps/relay`](../apps/relay/README.md)). A small Node service on
+Fly.io remains an equivalent fallback. The relay must stay small.
 
 ### 9.5 No direct same-network connection in v1
 
@@ -1688,13 +1694,18 @@ both require signing in, because all phone traffic goes through the relay.
 2. Desktop displays a QR code: `{device_id, static public key, one-time pairing
    code}`.
 3. Phone scans, completes the handshake, and proves possession of the pairing
-   code.
+   code (Noise `IKpsk1` with the code as the pre-shared key; §18 row 72). The
+   desktop answers with a link statement it signs, naming both devices' keys,
+   and the relay records the link only from such a statement (§18 row 77).
 4. Both sides persist each other's static public key. The phone stores its
    identity key in the iOS Keychain (Secure Enclave-backed where available).
 5. All later connections authenticate against those pinned keys.
 
 **Revocation:** the desktop lists paired devices and can unpair one, which
-invalidates its relay token and removes its key. Necessary for a lost phone.
+removes the link at the relay and the device's pinned key. Necessary for a lost
+phone. The relay then refuses traffic between the two, and a phone or browser
+left with no linked desktop is deleted from the relay, so its device key no
+longer authenticates at all (§18 row 77).
 
 ### 9.7 Push notifications
 
@@ -1888,7 +1899,8 @@ Requirements:
 | Auth0 | Mature and complete; heavier and pricier at scale. |
 | Better Auth (self-hosted) | TypeScript, runs on Workers + D1, no vendor — but we own the security. |
 
-The choice is open (§17). Because requirement 1 is standard OIDC,
+**Decided in milestone 9: WorkOS AuthKit**, used only through standard OIDC
+(§18 row 76). Because requirement 1 is standard OIDC,
 switching providers later is a configuration change plus a user migration, not a
 rewrite.
 
@@ -1923,8 +1935,9 @@ Linking a phone to a desktop:
 
 1. Phone signs in and sees the desktops registered to the account.
 2. User taps a desktop. Phone and desktop exchange public keys via the relay.
-3. **Both screens show the same short code** (e.g. `4821`), derived from a hash
-   of both public keys.
+3. **Both screens show the same short code** (e.g. `482 915`), derived from the
+   handshake and from a nonce each side commits to before seeing the other's,
+   so neither the relay nor either device can choose it (§18 row 73).
 4. User confirms on the desktop that the codes match.
 5. Desktop signs the phone's key, and both sides pin each other.
 
@@ -1952,6 +1965,13 @@ tasks (§3.3), and no data is shared between desktops.
 
 No task, run, prompt, or tool data — plaintext or ciphertext. This is also what
 keeps the compliance burden (§10.9) small.
+
+As built in milestone 9 (§18 row 75), each account's Durable Object holds its own
+tables: the provider's subject (no email: the provider has it), `devices` (both
+public keys, kind, name, last seen), `links` (the desktop-signed statement per
+link), `push_tokens`, the sealed-message `queue`, and short-lived pairing offers,
+linking sessions, push dedupe ids and rate counters. Deleting the account deletes
+the object's storage.
 
 ### 10.8 Recovery
 
@@ -2365,7 +2385,7 @@ UI last: the runtime is the risky part.
 | 8 | [Packaging](../apps/desktop/README.md#in-the-background-milestone-8) | Menu-bar / tray residency, login item, signed updater, quit confirmation, local notifications | **Done**; launch at login and the clean-VM Gatekeeper click need a person (§16.1) |
 | 8a | CLI access | `cli.request_access` with a native prompt in the shell; `cli_tokens`, listed and revoked in Settings; the CLI keeps its token in its own keychain item and checks the socket's peer; the release CLI ships in the bundle and answers questions (§5.2) | **Done**; the real login keychain and the native prompt need a person ([manual checks](../apps/desktop/README.md#manual-checks)) |
 | 8b | [Windows](../apps/desktop/README.md#windows-milestone-8b) | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | **Done**; the tray, dialogs, notifications, login and sleep need a person on a Windows desktop ([manual checks](../apps/desktop/README.md#windows-manual-checks)); signing, the installer and the updater are milestone 11 (§18 row 70) |
-| 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | Next |
+| 9 | [Accounts + relay + push](../apps/relay/README.md) | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | **In progress.** 9a is done: the protocol and its vectors, the relay (tested under Bun and workerd, not deployed), APNs against a mock, and the reference client end to end. 9b: sign-in, keys, pairing and the relay link in the runtime, and the desktop UI. "All clients" is the runtime and the reference client until milestone 10 (§18 row 80) |
 | 10 | iOS + web | Sign-in and device linking; history sync, live chat, steering, questions, approvals, rich push; web client with reduced authority | — |
 | 11 | Distribution | Signed and notarized builds, installers, crash reporting, version gate | — |
 
@@ -2430,7 +2450,7 @@ upgrades.
 | **Crash at every boundary** | Crash resume is correct, not just usually correct | Run a scripted scenario; kill the runtime (and separately the `claude` process) after event *k*, for every *k*; resume; assert on the final state. Invariants: no duplicate side effects from non-idempotent tools, no lost messages, `seq` has no gaps, and ambiguous calls always ask the user. It runs against a simulated `claude` that behaves like the real one where recovery depends on it, because a real `claude` would need a cassette per boundary. A nightly build crashes at every *k*; each pull request crashes at a seeded sample that includes every kind of boundary |
 | **Fake clock** | Scheduling is correct across time | An injected clock and injected sleep and wake events. Cases: DST gaps and overlaps, timezone changes, week-long sleep, every catch-up policy, `UNIQUE(dedupe_key)` under a race between catch-up and a normal fire |
 | **Desktop UI end to end** | The app's views work against a real runtime | Playwright drives the production web bundle in Chrome, through a stand-in for the Rust shell that applies the same `webview` allowlist, against a real runtime with a scripted engine or replay cassettes. The Rust shell has its own tests; WKWebView and the keychain are checked by hand on macOS |
-| **Protocol test vectors** | Desktop, iOS, and web interoperate | Shared files of known keys, messages, and expected ciphertext, for Noise live sessions, sealed messages, expiry, and replay rejection. The TypeScript runtime and the React Native client must both pass the same files |
+| **Protocol test vectors** | Desktop, iOS, and web interoperate | Shared plain-JSON files of known keys, messages, and expected ciphertext ([`packages/protocol/vectors`](../packages/protocol/README.md#test-vectors)), for Noise live sessions, sealed messages, pairing, linking, link statements, the APNs payload and the relay's wire frames. Negative cases cover tampering, the wrong key, the wrong recipient, expiry, replay and a lying sender. Our Noise is checked against an independent implementation's vectors (cacophony). The runtime, the relay (inside workerd too) and the reference client pass them now; the React Native client and the Swift Notification Service Extension must pass the same files in milestone 10 |
 
 **Windows** (milestone 8b). Every pull request runs the runtime's unit suite,
 the client's, the CLI's and the Win32 bindings' on `windows-latest`, including
@@ -2477,10 +2497,10 @@ upgrade can change agent behaviour without any change to our code.
 2. **Browser tooling** — bundle Playwright (heavy, reliable, own browser) or
    drive the user's existing Chrome via CDP (light, reuses logged-in sessions,
    more fragile)? This materially affects what monitors can do.
-3. **Relay hosting.** Cloudflare Workers + Durable Objects (recommended) vs a
-   small Node service (§9.4). Decide before milestone 9; it does not block 1–8.
-4. **Identity provider** — WorkOS AuthKit (recommended), Clerk, Auth0, or
-   self-hosted Better Auth (§10.3). Decide before milestone 9.
+3. **Relay hosting** — *decided in milestone 9* (§18 row 74): Cloudflare
+   Workers + Durable Objects with the WebSocket hibernation API (§9.4).
+4. **Identity provider** — *decided in milestone 9* (§18 row 76): WorkOS
+   AuthKit, used only through standard OIDC so it stays swappable (§10.3).
 5. **Business model.** Users bring their own Anthropic key, so v1 earns nothing,
    while the relay, push, identity, and the App Review demo desktop all cost
    money. Options: a paid desktop licence, a subscription for remote access, or
@@ -2593,3 +2613,14 @@ One line per major decision: what was chosen, and why.
 | 68 | **On Windows the data dir is `%LOCALAPPDATA%\Homerun`** (§6, §11) | Not `%APPDATA%`, which roams: the database, the workspaces and the pipe endpoint belong to one machine, as the runtime does |
 | 69 | **Windows CI: two jobs per pull request; the CLI's end-to-end suite and a crash sweep nightly; replay stays on Linux and macOS** (§16.2) | `windows-runtime` (the runtime, client, CLI and Win32 unit suites, each run even after another fails) and `windows-shell` (`shell-core`) each take about 2 minutes. Nightly, `windows-full` runs the CLI's end-to-end suite and the sampled crash sweep, where a life dies by `TerminateProcess` on itself (exit code 137) instead of SIGKILL, and the Tauri crate builds. Tests that can't run on Windows skip one by one, with their reasons (§17 item 8). `claude.exe` offers `Glob` and `Grep` too, which changes the cassettes' tool fingerprints, so replay stays off Windows |
 | 70 | **Windows signing, installer and updater are milestone 11** (§11) | They need a certificate (Azure Trusted Signing or EV) and an installer, and change neither the runtime nor the shell. Milestone 8b ships nothing to users, so the Windows app is built unsigned and unbundled; the updater is compiled in and reports itself unavailable, as on Intel Macs |
+| 71 | **Noise's ChaChaPoly and SHA-256 on the `@noble` libraries, not libsodium's XChaCha20-Poly1305** (§9.4) | Noise fixes a counter nonce, so XChaCha's extended nonce buys nothing, and XChaCha isn't a Noise cipher, so no independent vectors exist for it. ChaChaPoly, SHA-256, X25519 and Ed25519 are all in Apple's CryptoKit, so the iOS extension can open pushes natively. `@noble` is audited pure JavaScript, one code path in Bun, Workers, browsers and React Native (whose Hermes engine has no WebAssembly). We compose its primitives into Noise ourselves (existing JavaScript Noise libraries bind libsodium or only do XX inside libp2p), and the cacophony vectors check our Noise byte for byte |
+| 72 | **Four Noise patterns: `KK` live, `K` sealed, `IKpsk1` for QR pairing, `XX` for code linking** (§9.4, §9.6, §10.5) | Live and sealed are the design's. `IKpsk1` takes the desktop's key from the QR code and the code as a pre-shared key, so a first message that decrypts proves the phone scanned it. `XX` suits linking, where neither side knows the other's key yet. The live and sealed handshake messages carry no application data; everything goes in transport messages |
+| 73 | **The linking code is six digits from a commit/reveal, not four digits from a hash of both keys** (§10.5) | A code from the keys alone can be ground: a relay that substitutes keys can try key pairs until the codes collide, and four digits make that cheap. The phone commits to a nonce before it sees the desktop's; the code comes from the handshake hash and both nonces, so neither the relay nor either device can steer it |
+| 74 | **The relay runs on Cloudflare Workers + Durable Objects with the WebSocket hibernation API** (§9.4; closes §17 item 3) | As §9.4 recommended: idle connections cost almost nothing, and a Durable Object gives each account one serialized owner of its state. Milestone 9 builds and tests it locally; creating the Cloudflare account and `wrangler deploy` are manual steps ([`apps/relay`](../apps/relay/README.md#deploying)) |
+| 75 | **One Durable Object per account, with its own SQLite storage; no D1** (§9.4, §10.7) | Everything the relay does happens inside one account, so the account's object owns its devices, links, push tokens and queue, and applies the queue bounds, presence and rate limits in one place with no cross-object transactions. The relay stores the provider's subject, not the email, which the provider already holds. Account deletion drops the object's storage |
+| 76 | **WorkOS AuthKit, only through standard OIDC; the relay verifies tokens at the edge with the provider's JWKS** (§10.3, §10.4; closes §17 item 4) | Authorization Code + PKCE, refresh and revocation, and JWT verification with cached keys keep the provider swappable: WorkOS is configuration (issuer, client id, audience). Every test uses a local OIDC issuer (`packages/testkit`), so milestone 9 needs no WorkOS account |
+| 77 | **Each device has an X25519 key for Noise and an Ed25519 key for signatures; the relay links devices only from a statement the desktop signs** (§9.6, §12) | The relay authenticates a device by its signature (a challenge on the WebSocket, a signed request header on HTTPS), not only by the account's token. A desktop signs a statement naming both devices' keys when it pairs or links, and the relay records a link only from one that verifies against the desktop's registered key. A phone or browser with no links left is deleted, which is how unpairing revokes it |
+| 78 | **A push carries the sealed envelope beside a generic alert; when it doesn't fit 4 KB the relay sends the generic alert and queues the envelope** (§9.7) | Apple sees only "Homerun: You have a new update." with `mutable-content`, so the extension can replace it. On fallback the phone fetches the queued message when it next connects. APNs accepts only HTTP/2, which a Worker's `fetch` negotiates with Apple in practice but Cloudflare doesn't document; milestone 9 tests against a mock APNs, and real delivery is checked in milestone 10 with the iOS app |
+| 79 | **The relay's logic is runtime-neutral, with a Bun adapter for tests and development; workerd tests run through wrangler from Node** (§16.2) | The same black-box scenarios run against the Bun adapter, with a fake clock for expiries and limits, and against the real Worker in workerd, including the protocol vectors inside a Worker. Wrangler's local runtime hangs under Bun, so a small Node host starts it; `@cloudflare/vitest-pool-workers` would have added vitest as a second test runner. pnpm doesn't run workerd's or esbuild's install scripts: their binaries come from platform packages |
+| 80 | **A headless TypeScript reference client plays the phone and the web in milestone 9** (§9.8, §9.9, §16) | There is no phone app yet. `packages/remote` does everything a remote client does with the relay and a desktop, on `fetch` and `WebSocket` alone, and milestone 10's clients build on it. Until then, "all clients" in milestone 9's exit criteria means the runtime and the reference client |
+| 81 | **Two CI jobs for the relay: `protocol` and `relay`** (§16.2) | `protocol` checks Noise against cacophony, every protocol vector and vector drift; `relay` runs the relay under Bun and under workerd, then the reference client end to end. Each takes well under the 3-minute budget, with no Cloudflare, WorkOS or Apple account |
