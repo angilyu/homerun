@@ -188,8 +188,9 @@ jobs:
     # and the Windows denylist; the client's pipe endpoint; the CLI's peer check against a real
     # pipe and its Credential Manager token store; and the win32 FFI they share. The cross-user
     # test creates a throwaway local user (the runner is an administrator) and expects every open
-    # of the pipe, the endpoint and the dev token to be denied. About 2 minutes. Replay and the
-    # crash sweep stay on Linux (§18 row 40).
+    # of the pipe, the endpoint and the dev token to be denied. About 2 minutes. The CLI's end-to-end
+    # tests and a sampled crash sweep run nightly on Windows (nightly.yml, windows-full); replay
+    # stays on Linux (§18 row 69).
     runs-on: windows-latest
     timeout-minutes: 10
     defaults:
@@ -202,16 +203,23 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/cli..."
+      - id: install
+        run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/cli..."
+      # Each suite runs even when an earlier one failed, so one failure doesn't hide another; any
+      # failure still fails the job.
       - name: win32 FFI
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm --filter @homerun/win32 test
       - name: Client
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm --filter @homerun/client test
       - name: Runtime unit tests (with the cross-user pipe test)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm --filter @homerun/homerund test:unit
         env:
           HOMERUN_WIN_CROSS_USER: "1"
-      - name: CLI unit tests
+      - name: CLI unit tests (with the Authenticode peer check against PowerShell 7)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm --filter @homerun/cli test:unit
 
   windows-shell:
