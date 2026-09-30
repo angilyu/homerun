@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitForElementToBeRemoved, within } from "@testing-library/react";
 import { FakeShell, T0, baseTransport, renderApp } from "./support";
 
 const TOKEN = "7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e01";
@@ -36,7 +36,8 @@ describe("Settings → Command-line access (§5.2)", () => {
     fireEvent.click(within(laptop as HTMLElement).getByRole("button", { name: "Revoke" }));
     const ask = within(laptop as HTMLElement).getByRole("group", { name: /Sign it out\? Anything it has open closes now\./ });
     fireEvent.click(within(ask).getByRole("button", { name: "Revoke" }));
-    await waitFor(() => expect(within(s).queryByText(/on laptop/)).toBeNull());
+    // Not waitFor(() => expect(el).toBeNull()): each miss has bun format a whole happy-dom element (about 1 s).
+    await waitForElementToBeRemoved(() => within(s).queryByText(/on laptop/));
     expect(t.called("cli.tokens.revoke").map((c) => c.params)).toEqual([{ token_id: OTHER }]);
     expect(within(s).getByText(/on studio/)).toBeTruthy();
   });
