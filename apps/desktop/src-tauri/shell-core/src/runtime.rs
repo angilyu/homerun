@@ -152,6 +152,12 @@ impl Runtime {
         self.shared.tail.lock().unwrap().iter().cloned().collect()
     }
 
+    /// A shell event (quit, update, login item) in the same log as the runtime's, so one file
+    /// tells the whole story. Never pass secrets.
+    pub fn log_event(&self, msg: &str, fields: Value) {
+        self.shared.shell_log(msg, fields);
+    }
+
     pub fn log_path(&self) -> PathBuf {
         self.shared.log.lock().unwrap().path().to_path_buf()
     }

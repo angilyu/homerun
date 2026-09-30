@@ -20,6 +20,54 @@ pub enum Target {
     Home,
 }
 
+/// Whether macOS lets Homerun post, as Settings shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Permission {
+    NotDetermined,
+    Denied,
+    Allowed,
+    /// Not a bundle (`tauri dev`), or not macOS.
+    Unavailable,
+}
+
+impl Permission {
+    /// `UNAuthorizationStatus`: 0 notDetermined, 1 denied, 2 authorized, 3 provisional,
+    /// 4 ephemeral.
+    pub fn from_raw(raw: isize) -> Permission {
+        match raw {
+            0 => Permission::NotDetermined,
+            1 => Permission::Denied,
+            2..=4 => Permission::Allowed,
+            _ => Permission::Unavailable,
+        }
+    }
+}
+
+const HEALTH_THREAD: &str = "homerun.health";
+const HOME_THREAD: &str = "homerun.shell";
+
+impl Target {
+    /// The notification's `threadIdentifier`: it groups notifications in Notification Center and
+    /// carries the click's target, so nothing needs remembering between a post and its click.
+    pub fn thread_identifier(&self) -> String {
+        match self {
+            Target::Thread { thread_id } => thread_id.clone(),
+            Target::Health => HEALTH_THREAD.into(),
+            Target::Home => HOME_THREAD.into(),
+        }
+    }
+
+    /// Back from a clicked notification. Anything unexpected just opens the window.
+    pub fn from_thread_identifier(s: &str) -> Target {
+        match s {
+            HEALTH_THREAD => Target::Health,
+            t if id_ok(t) => Target::Thread { thread_id: t.into() },
+            _ => Target::Home,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Post {
     /// The notification's identifier: a newer post with the same key replaces the older one.
@@ -199,6 +247,25 @@ mod tests {
         match &n.status(&b)[..] {
             [Op::Post(p)] => assert_eq!((p.key.as_str(), p.body.as_str(), &p.target), (BLOCKED_KEY, "The database is newer.", &Target::Home)),
             o => panic!("{o:?}"),
+        }
+    }
+
+    #[test]
+    fn permission_from_the_system() {
+        assert_eq!(
+            [0, 1, 2, 3, 4, 9].map(Permission::from_raw),
+            [Permission::NotDetermined, Permission::Denied, Permission::Allowed, Permission::Allowed, Permission::Allowed, Permission::Unavailable]
+        );
+        assert_eq!(serde_json::to_value(Permission::NotDetermined).unwrap(), "not_determined");
+    }
+
+    #[test]
+    fn a_click_finds_its_way_back() {
+        for t in [Target::Thread { thread_id: "th_01H-x".into() }, Target::Health, Target::Home] {
+            assert_eq!(Target::from_thread_identifier(&t.thread_identifier()), t);
+        }
+        for junk in ["", "../x", "a b", "homerun.shell", &"x".repeat(65)] {
+            assert_eq!(Target::from_thread_identifier(junk), Target::Home, "{junk}");
         }
     }
 }

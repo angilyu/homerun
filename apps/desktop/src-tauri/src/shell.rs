@@ -1,19 +1,37 @@
-//! The shell's side of the runtime (§5.1): start the supervisor, pick the key store, and relay
-//! runtime notifications and status to the webview through one ordered Tauri channel.
+//! The shell's side of the runtime (§5.1): start the supervisor, pick the key store, relay
+//! runtime notifications and status to the webview through one ordered Tauri channel, post the
+//! runtime's local notifications (§8.2) and keep the menu bar's summary fresh.
 
 use crate::keychain::Keychain;
+use crate::notifications;
 use homerun_shell_core::keys::{KeyStore, MemoryKeyStore, API_KEY};
+use homerun_shell_core::notify::{Notices, Op};
+use homerun_shell_core::prefs::{self, Prefs};
 use homerun_shell_core::runtime::{Config, Host, Runtime};
+use homerun_shell_core::summary::{self, Summary};
 use homerun_shell_core::RuntimeStatus;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::time::Duration;
 use tauri::ipc::Channel;
+
+/// Shell events for the webview (`navigate`, `update`), queued until it attaches: a notification
+/// click can launch the app before the page has loaded.
+#[derive(Default)]
+struct Events {
+    ch: Option<Channel<Value>>,
+    queue: Vec<Value>,
+}
 
 pub struct AppHost {
     keys: Box<dyn KeyStore>,
     channel: Mutex<Option<Channel<Value>>>,
     status: Mutex<RuntimeStatus>,
+    events: Mutex<Events>,
+    notices: Mutex<Notices>,
+    /// Something the menu bar shows may have changed.
+    dirty: (Mutex<bool>, Condvar),
 }
 
 impl AppHost {
@@ -34,18 +52,77 @@ impl AppHost {
             let _ = ch.send(v);
         }
     }
+
+    pub fn attach_events(&self, ch: Channel<Value>) {
+        let mut e = self.events.lock().unwrap();
+        for v in e.queue.drain(..) {
+            let _ = ch.send(v);
+        }
+        e.ch = Some(ch);
+    }
+
+    pub fn event(&self, v: Value) {
+        let mut e = self.events.lock().unwrap();
+        if let Some(ch) = &e.ch {
+            if ch.send(v.clone()).is_ok() {
+                return;
+            }
+        }
+        // Only the latest few matter: the last navigation and the update state.
+        if e.queue.len() >= 8 {
+            e.queue.remove(0);
+        }
+        e.queue.push(v);
+    }
+
+    pub fn mark_dirty(&self) {
+        let (m, cv) = &self.dirty;
+        *m.lock().unwrap() = true;
+        cv.notify_all();
+    }
+
+    /// Wait until something changed, or `timeout`; then take the flag.
+    pub fn wait_dirty(&self, timeout: Duration) -> bool {
+        let (m, cv) = &self.dirty;
+        let mut g = cv.wait_timeout_while(m.lock().unwrap(), timeout, |d| !*d).unwrap().0;
+        std::mem::take(&mut *g)
+    }
+
+    fn apply(&self, ops: Vec<Op>) {
+        for op in ops {
+            match op {
+                Op::Post(p) => notifications::post(&p),
+                Op::Withdraw(k) => notifications::withdraw(&k),
+            }
+        }
+    }
 }
 
 impl Host for AppHost {
     fn status(&self, s: &RuntimeStatus) {
         *self.status.lock().unwrap() = s.clone();
         self.emit(json!({"type": "status", "status": s}));
+        let ops = self.notices.lock().unwrap().status(s);
+        self.apply(ops);
+        self.mark_dirty();
     }
     fn notification(&self, method: &str, params: Value) {
         self.emit(json!({"type": "notification", "method": method, "params": params}));
     }
     fn keys(&self) -> &dyn KeyStore {
         &*self.keys
+    }
+    fn shell_notification(&self, method: &str, params: Value) {
+        match method {
+            // The runtime sends these after the events behind them are committed, once per key
+            // per life; `Notices` holds the shell to once per key per launch (§8.2).
+            "notification.requested" | "notification.withdrawn" => {
+                let ops = self.notices.lock().unwrap().runtime(method, &params);
+                self.apply(ops);
+            }
+            "threads.changed" => self.mark_dirty(),
+            _ => {}
+        }
     }
 }
 
@@ -54,6 +131,42 @@ pub struct Shell {
     pub host: Arc<AppHost>,
     pub data_dir: PathBuf,
     pub version: String,
+    pub prefs: Mutex<Prefs>,
+    /// What the menu bar and the quit confirmation show; None until the runtime is ready.
+    pub summary: Mutex<Option<Summary>>,
+}
+
+impl Shell {
+    pub fn update_prefs(&self, f: impl FnOnce(&mut Prefs)) {
+        let mut p = self.prefs.lock().unwrap();
+        f(&mut p);
+        if let Err(e) = prefs::save(&prefs::path(&self.data_dir), &p) {
+            self.rt.log_event("prefs.save_failed", json!({"error": e.to_string()}));
+        }
+    }
+
+    /// Ask the runtime for a fresh summary, waiting at most `timeout` (the quit dialog can't
+    /// hang on a busy runtime); the last one otherwise.
+    pub fn refresh_summary(self: &Arc<Self>, timeout: Duration) -> Option<Summary> {
+        if !matches!(self.rt.status(), RuntimeStatus::Ready { .. }) {
+            *self.summary.lock().unwrap() = None;
+            return None;
+        }
+        let (tx, rx) = mpsc::channel();
+        let me = self.clone();
+        std::thread::spawn(move || {
+            let paused = me.prefs.lock().unwrap().paused_by_pause_all.clone();
+            let r = me.rt.shell().and_then(|c| summary::fetch(&*c, &paused).ok());
+            if let Some(s) = &r {
+                *me.summary.lock().unwrap() = Some(s.clone());
+            }
+            let _ = tx.send(r);
+        });
+        match rx.recv_timeout(timeout) {
+            Ok(Some(s)) => Some(s),
+            _ => self.summary.lock().unwrap().clone(),
+        }
+    }
 }
 
 /// `HOMERUN_DATA_DIR`, or `~/Library/Application Support/Homerun`, as `@homerun/client`'s
@@ -100,7 +213,15 @@ pub fn start(version: &str) -> Shell {
     let mut cfg = Config::new(runtime_program(), data_dir.join("logs").join("homerund.log"), version);
     // Secrets travel over the launch-token connection only, never the environment (§5.2).
     cfg.env_remove = vec!["ANTHROPIC_API_KEY".into(), "ANTHROPIC_AUTH_TOKEN".into()];
-    let host = Arc::new(AppHost { keys: key_store(), channel: Mutex::new(None), status: Mutex::new(RuntimeStatus::Starting) });
+    let host = Arc::new(AppHost {
+        keys: key_store(),
+        channel: Mutex::new(None),
+        status: Mutex::new(RuntimeStatus::Starting),
+        events: Mutex::new(Events::default()),
+        notices: Mutex::new(Notices::default()),
+        dirty: (Mutex::new(false), Condvar::new()),
+    });
+    let prefs = prefs::load(&prefs::path(&data_dir));
     let rt = Runtime::start(cfg, host.clone());
-    Shell { rt, host, data_dir, version: version.into() }
+    Shell { rt, host, data_dir, version: version.into(), prefs: Mutex::new(prefs), summary: Mutex::new(None) }
 }

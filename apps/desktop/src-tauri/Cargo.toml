@@ -11,13 +11,22 @@ tauri-build = { version = "=2.7.0", features = [] }
 
 [dependencies]
 homerun-shell-core = { path = "shell-core" }
-tauri = { version = "=2.12.0", features = [] }
+tauri = { version = "=2.12.0", features = ["tray-icon"] }
 tauri-plugin-single-instance = "=2.5.0"
+# §11: native TLS (Security.framework on macOS) instead of the default rustls, no zip (macOS
+# updates are .tar.gz), and no system-proxy (see apps/desktop/README.md, "Dependencies").
+tauri-plugin-updater = { version = "=2.13.0", default-features = false, features = ["native-tls"] }
+# Re-verifies the staged update at install time (§11); both already come with the updater.
+minisign-verify = "0.2"
+base64 = "0.22"
 serde_json = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3", features = ["NSNotification", "block2"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "block2"] }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSNotification", "block2", "NSAppleEventDescriptor", "NSAppleEventManager", "NSArray", "NSBundle", "NSDictionary", "NSError", "NSString", "NSThread"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "block2", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow", "NSRunningApplication"] }
+objc2-service-management = { version = "0.3", default-features = false, features = ["std", "objc2", "objc2-foundation", "SMAppService"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "bitflags", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 block2 = "0.6"
 security-framework = { version = "3.7", features = ["OSX_10_15"] }
 
