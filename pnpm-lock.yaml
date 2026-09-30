@@ -55,6 +55,9 @@ importers:
       '@happy-dom/global-registrator':
         specifier: 20.14.5
         version: 20.14.5
+      '@homerun/cli':
+        specifier: workspace:*
+        version: link:../cli
       '@homerun/client':
         specifier: workspace:*
         version: link:../../packages/client

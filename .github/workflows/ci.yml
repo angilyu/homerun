@@ -135,8 +135,9 @@ jobs:
     name: apps/desktop end-to-end
     # The production views in a browser, over a bridge that stands in for the Tauri shell, against
     # a real homerund: the fake engine, and recorded cassettes with the real bundled linux-x64
-    # claude (§16.2). WKWebView and the Rust shell itself are covered by the macOS checklist in
-    # apps/desktop/README.md.
+    # claude (§16.2). The CLI access test runs apps/cli from source, so @homerun/cli is a
+    # devDependency of the desktop app and this filtered install brings its modules. WKWebView
+    # and the Rust shell itself are covered by the macOS checklist in apps/desktop/README.md.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

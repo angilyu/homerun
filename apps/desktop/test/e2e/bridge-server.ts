@@ -186,6 +186,9 @@ class MeteredProxy {
   }
 }
 
+/** A CLI command started by `/__e2e/cli/start`; `exited` is set as soon as it ends. */
+type CliRun = { proc: Bun.Subprocess<"ignore", "pipe", "pipe">; done: Promise<{ code: number; stdout: string; stderr: string }>; exited: { code: number; stderr: string } | null };
+
 class Shell {
   keys = new Map<string, string>();
   status: Status = { state: "starting" };
@@ -198,7 +201,7 @@ class Shell {
   work: string | null = null;
   /** `cli.access_requested` prompts not yet answered or withdrawn: the stand-in for the NSAlert. */
   cliPrompts = new Map<string, Record<string, unknown>>();
-  cliRun: { proc: Bun.Subprocess<"ignore", "pipe", "pipe">; done: Promise<{ code: number; stdout: string; stderr: string }> } | null = null;
+  cliRun: CliRun | null = null;
 
   emit(event: unknown): void {
     const text = JSON.stringify({ event });
@@ -388,11 +391,13 @@ class Shell {
     const main = join(import.meta.dir, "..", "..", "..", "cli", "src", "main.ts");
     const dev = ["--socket", a.socketPath, "--dev-role", "cli", "--dev-skip-peer-check", "--dev-token-store", join(a.srt.dir, "cli-token")];
     const proc = Bun.spawn([process.execPath, main, ...args, ...dev], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1" } });
+    const run: Omit<CliRun, "done"> = { proc, exited: null };
     const done = (async () => {
       const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+      run.exited = { code, stderr };
       return { code, stdout, stderr };
     })();
-    this.cliRun = { proc, done };
+    this.cliRun = Object.assign(run, { done });
   }
 
   async waitCli(): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -545,7 +550,8 @@ const server = Bun.serve({
         const body = req.method === "POST" ? ((await req.json()) as Record<string, unknown>) : {};
         switch (url.pathname) {
           case "/__e2e/cli/prompts":
-            return Response.json({ prompts: [...shell.cliPrompts.values()] });
+            // `exited`: a CLI that is gone before it asked (a missing module, say) fails the poll with its reason.
+            return Response.json({ prompts: [...shell.cliPrompts.values()], exited: shell.cliRun?.exited ?? null });
           case "/__e2e/cli/answer":
             await shell.answerCli(String(body.request_id), body.allow === true);
             return Response.json({ ok: true });

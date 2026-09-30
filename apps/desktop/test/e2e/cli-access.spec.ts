@@ -18,7 +18,9 @@ async function prompt(request: APIRequestContext): Promise<{ request_id: string;
   let got: Array<{ request_id: string; hostname: string; client: { name: string } }> = [];
   await expect
     .poll(async () => {
-      got = ((await (await request.get("/__e2e/cli/prompts")).json()) as { prompts: typeof got }).prompts;
+      const r = (await (await request.get("/__e2e/cli/prompts")).json()) as { prompts: typeof got; exited: { code: number; stderr: string } | null };
+      if (r.exited) throw new Error(`the CLI exited ${r.exited.code} before it asked: ${r.exited.stderr}`);
+      got = r.prompts;
       return got.length;
     })
     .toBe(1);
