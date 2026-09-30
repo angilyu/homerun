@@ -2,7 +2,8 @@ name: Nightly
 
 # The full crash sweep: homerund killed at every event boundary (§16.2). Pull requests run a
 # sample of it (ci.yml). Also the desktop shell builds on macOS and Windows, which are too slow per
-# pull request, and on Windows the CLI's end-to-end tests and a sampled crash sweep.
+# pull request, on Windows the CLI's and remote access's end-to-end tests and a sampled crash
+# sweep, and remote access end to end against the relay in workerd.
 on:
   schedule:
     - cron: "0 9 * * *"
@@ -30,11 +31,31 @@ jobs:
         env:
           HOMERUN_CRASH_SWEEP: full
 
+  remote-workerd:
+    name: Remote access end to end, relay in workerd
+    # ci.yml's remote-e2e suite with the real Worker and Durable Object (wrangler's local runtime,
+    # driven from Node) in place of the Bun adapter. The one test that drops the Bun relay's
+    # connections skips (apps/homerund/test/remote/harness.ts).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..."
+      - name: Runtime, relay in workerd, and reference client
+        run: pnpm --filter @homerun/homerund test:remote
+        env:
+          HOMERUN_REMOTE_RELAY: workerd
+
   windows-full:
-    name: Windows CLI end to end and crash sweep (sampled)
+    name: Windows CLI and remote access end to end, crash sweep (sampled)
     # What per pull request runs on Linux only, on Windows: the CLI against a whole runtime over
-    # the named pipe, and homerund killed at a seeded sample of boundaries with TerminateProcess,
-    # recovering on the next life (§16.2). Tests that can't run on Windows are skipped one by one,
+    # the named pipe, remote access end to end (the relay's Bun adapter), and homerund killed at a
+    # seeded sample of boundaries with TerminateProcess, recovering on the next life (§16.2). Tests that can't run on Windows are skipped one by one,
     # each with its reason (§17 item 8).
     runs-on: windows-latest
     timeout-minutes: 45
@@ -53,6 +74,9 @@ jobs:
       - name: CLI end to end
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm --filter @homerun/cli test:e2e
+      - name: Remote access end to end
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm --filter @homerun/homerund test:remote
       - name: Crash tests (sampled)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm --filter @homerun/homerund test:crash

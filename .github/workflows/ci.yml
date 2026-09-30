@@ -105,6 +105,25 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ""
 
+  remote-e2e:
+    name: Remote access end to end
+    # The desktop runtime (fake engine, no API spend) signs in against a local OIDC issuer, links
+    # through the relay's Bun adapter, and a reference-client phone or browser pairs, opens live
+    # sessions, sends sealed instructions and answers pushes from a mock APNs (§9, §10, §16.2).
+    # About 10 seconds of tests. nightly.yml runs the same suite against workerd, and on Windows.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..."
+      - name: Runtime, relay and reference client
+        run: pnpm --filter @homerun/homerund test:remote
+
   homerund-crash:
     name: apps/homerund crash tests
     runs-on: ubuntu-latest
