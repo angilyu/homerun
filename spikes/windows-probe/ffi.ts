@@ -17,6 +17,24 @@ export const k32 = dlopen("kernel32.dll", {
   OpenProcess: { args: [u32, i32, u32], returns: u64 },
   QueryFullProcessImageNameW: { args: [u64, u32, P, P], returns: i32 },
   SetThreadExecutionState: { args: [u32], returns: u32 },
+  CreateNamedPipeW: { args: [P, u32, u32, u32, u32, u32, u32, P], returns: u64 },
+  ConnectNamedPipe: { args: [u64, P], returns: i32 },
+  ReadFile: { args: [u64, P, u32, P, P], returns: i32 },
+  WriteFile: { args: [u64, P, u32, P, P], returns: i32 },
+  FlushFileBuffers: { args: [u64], returns: i32 },
+  GetNamedPipeClientComputerNameW: { args: [u64, P, u32], returns: i32 },
+  GetNamedPipeClientSessionId: { args: [u64, P], returns: i32 },
+  GetCurrentThread: { args: [], returns: u64 },
+  CreateJobObjectW: { args: [P, P], returns: u64 },
+  SetInformationJobObject: { args: [u64, u32, P, u32], returns: i32 },
+  QueryInformationJobObject: { args: [u64, u32, P, u32, P], returns: i32 },
+  AssignProcessToJobObject: { args: [u64, u64], returns: i32 },
+  TerminateJobObject: { args: [u64, u32], returns: i32 },
+  IsProcessInJob: { args: [u64, u64, P], returns: i32 },
+  WaitForSingleObject: { args: [u64, u32], returns: u32 },
+  CreateToolhelp32Snapshot: { args: [u32, u32], returns: u64 },
+  Process32FirstW: { args: [u64, P], returns: i32 },
+  Process32NextW: { args: [u64, P], returns: i32 },
 }).symbols;
 
 export const adv = dlopen("advapi32.dll", {
@@ -28,6 +46,11 @@ export const adv = dlopen("advapi32.dll", {
   OpenProcessToken: { args: [u64, u32, P], returns: i32 },
   GetTokenInformation: { args: [u64, u32, P, u32, P], returns: i32 },
   ConvertSidToStringSidW: { args: [P, P], returns: i32 },
+  ImpersonateNamedPipeClient: { args: [u64], returns: i32 },
+  ImpersonateLoggedOnUser: { args: [u64], returns: i32 },
+  RevertToSelf: { args: [], returns: i32 },
+  OpenThreadToken: { args: [u64, u32, i32, P], returns: i32 },
+  LogonUserW: { args: [P, P, P, u32, u32, P], returns: i32 },
 }).symbols;
 
 export const INVALID = 0xffff_ffff_ffff_ffffn;
@@ -93,6 +116,39 @@ export function processImage(pid: number): string {
   const ok = k32.QueryFullProcessImageNameW(h, 0, buf, ptr(len));
   k32.CloseHandle(h);
   return ok ? buf.subarray(0, len[0]! * 2).toString("utf16le") : `QueryFullProcessImageNameW error ${k32.GetLastError()}`;
+}
+
+export const asPtr = (n: bigint | number) => Number(n) as unknown as Pointer;
+
+export function sidString(psid: bigint | number): string {
+  const s = new BigUint64Array(1);
+  if (!adv.ConvertSidToStringSidW(asPtr(psid), ptr(s))) return `ConvertSidToStringSidW error ${k32.GetLastError()}`;
+  const out = fromWide(Number(s[0]));
+  k32.LocalFree(asPtr(s[0]!));
+  return out;
+}
+
+/** A token's user SID, as a string. */
+export function tokenUser(tok: bigint): string {
+  const buf = Buffer.alloc(256);
+  const len = new Uint32Array(1);
+  if (!adv.GetTokenInformation(tok, 1 /* TokenUser */, buf, 256, ptr(len))) return `GetTokenInformation error ${k32.GetLastError()}`;
+  return sidString(buf.readBigUInt64LE(0));
+}
+
+/** A token's group SIDs, as strings (TOKEN_GROUPS: count, then 16-byte SID_AND_ATTRIBUTES). */
+export function tokenGroups(tok: bigint): string[] {
+  const buf = Buffer.alloc(8192);
+  const len = new Uint32Array(1);
+  if (!adv.GetTokenInformation(tok, 2 /* TokenGroups */, buf, buf.length, ptr(len))) return [`GetTokenInformation error ${k32.GetLastError()}`];
+  const n = buf.readUInt32LE(0);
+  return Array.from({ length: n }, (_, i) => sidString(buf.readBigUInt64LE(8 + i * 16)));
+}
+
+/** The well-known logon-type groups a token carries. */
+export function logonKinds(groups: string[]): string[] {
+  const known: Record<string, string> = { "S-1-5-2": "NETWORK", "S-1-5-3": "BATCH", "S-1-5-4": "INTERACTIVE", "S-1-5-6": "SERVICE", "S-1-5-14": "REMOTE_INTERACTIVE", "S-1-2-0": "LOCAL" };
+  return groups.filter((g) => g in known).map((g) => known[g]!);
 }
 
 export function processUserSid(pid?: number): string {

@@ -183,12 +183,11 @@ jobs:
 
   windows-probe:
     name: Windows probe (temporary, milestone 8b)
-    # Answers the milestone 8b plan's P1–P5 before the Windows design depends on them: Bun's
-    # named-pipe server and a post-hoc protected DACL (also as another local user, and over SMB),
-    # the bundled claude.exe under a minimal environment (a local stand-in API, nothing spent),
-    # and Windows timings. Every probe step reports rather than fails; removed before merge.
+    # Answers the milestone 8b plan's probe questions before the Windows design depends on them.
+    # Round 2: the DACL on later pipe instances, SMB loopback and other local users (logged on
+    # in-process), and job objects. Every probe step reports rather than fails; removed before merge.
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     defaults:
       run:
         shell: bash
@@ -199,32 +198,20 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Install (timed)
-        run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/cli..."
-      - name: P1–P3 named pipes from source (with another local user)
-        run: pnpm exec bun spikes/windows-probe/pipe.ts --cross-user
+      - name: Install
+        run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..."
+      - name: P1–P3 named pipes from source
+        run: pnpm exec bun spikes/windows-probe/pipe.ts
       - name: P1 named pipes, compiled
         run: |
           pnpm exec bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv spikes/windows-probe/pipe.ts --outfile probe.exe
           ./probe.exe
-      - name: P4 claude.exe
-        run: pnpm exec bun spikes/windows-probe/claude.ts
-      - name: P5 client tests as they stand (timed)
-        continue-on-error: true
-        run: pnpm --filter @homerun/client test
-      - name: P5 homerund unit tests as they stand (timed)
-        continue-on-error: true
-        timeout-minutes: 6
-        run: pnpm --filter @homerun/homerund test:unit
-      - name: P5 CLI unit tests as they stand (timed)
-        continue-on-error: true
-        timeout-minutes: 4
-        run: pnpm --filter @homerun/cli test:unit
-      - uses: dtolnay/rust-toolchain@1.94.0
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-      - name: P5 shell-core cold build (timed; fails until the Windows transport lands)
-        continue-on-error: true
-        working-directory: apps/desktop/src-tauri
-        run: cargo test -p homerun-shell-core --locked --no-run
+      - name: P2 SMB loopback and other local users
+        timeout-minutes: 2
+        run: pnpm exec bun spikes/windows-probe/acl.ts
+      - name: P6 job objects
+        timeout-minutes: 2
+        run: pnpm exec bun spikes/windows-probe/jobs.ts
+      - name: Windows denylist, against the real file system
+        working-directory: apps/homerund
+        run: pnpm exec bun test test/unit/denylist-windows.test.ts test/unit/denylist.test.ts

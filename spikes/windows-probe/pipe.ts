@@ -2,12 +2,14 @@
  * Milestone 8b probe (plan §4), Windows only. Answers:
  *   P1  does Bun's node:net named-pipe server work (from source and `bun build --compile`)?
  *   P2  does a post-hoc protected DACL, set through a client handle opened with WRITE_DAC, cover
- *       instances libuv creates later, and keep other users and remote (SMB) clients out?
+ *       instances libuv creates later?
  *   P3  can a separate process connect with node:net and with Bun.connect({unix}), and learn the
  *       server's pid, user and image through GetNamedPipeServerProcessId on its own handle?
  *   plus SetThreadExecutionState. Prints one JSON object; never fails the job on a "no".
  *
- *   bun spikes/windows-probe/pipe.ts [--cross-user]
+ * Other users and SMB clients are in acl.ts (round 2).
+ *
+ *   bun spikes/windows-probe/pipe.ts
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -159,14 +161,38 @@ async function main() {
     }
     return held.length;
   });
-  await safe("P2.sddlOnLaterInstance", () => {
-    const { h, err } = open(name, READ_CONTROL | GENERIC_READ | GENERIC_WRITE);
-    if (h === INVALID) return `open error ${err}`;
-    const s = sddlOf(h);
-    close(h);
-    return s;
+  // Round 2: open raw handles (each one holds a distinct instance) and read the DACL through each.
+  // libuv keeps a few instances listening and creates a new one after each accept, so after the
+  // 12 held connections every instance here was created after the DACL was set. ERROR_PIPE_BUSY
+  // (231) means libuv hasn't created the next instance yet: yield to its loop and retry.
+  await safe("P2.laterInstances", async () => {
+    const hs: bigint[] = [];
+    const sddls: string[] = [];
+    let busyRetries = 0;
+    try {
+      for (let n = 0; n < 8; n++) {
+        for (let tries = 0; ; tries++) {
+          const { h, err } = open(name, READ_CONTROL | GENERIC_READ | GENERIC_WRITE);
+          if (h !== INVALID) {
+            hs.push(h);
+            sddls.push(sddlOf(h));
+            break;
+          }
+          if (err !== 231 || tries > 100) {
+            sddls.push(`open error ${err}`);
+            break;
+          }
+          busyRetries++;
+          await Bun.sleep(20);
+        }
+      }
+    } finally {
+      for (const h of hs) close(h);
+    }
+    return { opened: hs.length, busyRetries, distinct: [...new Set(sddls)], allProtectedUserOnly: sddls.every((x) => /^O:[^D]+D:P\(D;;FA;;;NU\)\(A;;FA;;;[^)]+\)\(A;;FA;;;SY\)$/.test(x)) };
   });
   await safe("P2.echoAfterDacl", () => echo(name, "still-works"));
+  // Over SMB loopback. Round 1: CONNECTED despite the NETWORK deny. acl.ts measures why.
   for (const [k, p] of [["P2.remoteSecure", base], ["P2.remoteDefault", `${base}-default`]] as const) {
     await safe(k, () => {
       const { h, err } = open(`\\\\localhost\\pipe\\${p}`, GENERIC_READ | GENERIC_WRITE);
@@ -189,16 +215,6 @@ async function main() {
       }
     });
   }));
-
-  if (process.argv.includes("--cross-user")) {
-    await safe("P2.crossUser", () => new Promise((res) => {
-      const ps = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(import.meta.dir, "cross-user.ps1"), "-Secure", base, "-Default", `${base}-default`], { windowsHide: true });
-      let s = "";
-      ps.stdout.on("data", (d) => (s += d));
-      ps.stderr.on("data", (d) => (s += d));
-      ps.on("exit", () => res(s.split(/\r?\n/).filter(Boolean)));
-    }));
-  }
 
   await safe("power.SetThreadExecutionState", () => {
     const prev = k32.SetThreadExecutionState(0x8000_0001);
