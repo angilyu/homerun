@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AppClient, Store, errorMessage } from "@homerun/app-state";
-import type { KeyStatus, ShellApi } from "./platform/types";
+import type { KeyStatus, ShellApi, ShellTarget, UpdateState } from "./platform/types";
 
 /** A state-layer store in a React view (§9.8). React Native binds the same stores the same way. */
 export function useStore<T>(s: Store<T>): T {
@@ -24,8 +24,22 @@ export interface App {
   route: Store<Route>;
   /** The API key's status; null until the shell answers. */
   key: Store<KeyStatus | null>;
+  /** The updater (§11); null until the shell answers. */
+  update: Store<UpdateState | null>;
   refreshKey(): Promise<void>;
   go(r: Route): void;
+}
+
+/** A notification click or a menu-bar row (§8.2): the screen it names. */
+export function routeFor(t: ShellTarget): Route {
+  switch (t.screen) {
+    case "thread":
+      return { name: "thread", thread_id: t.thread_id };
+    case "health":
+      return { name: "health" };
+    default:
+      return { name: "home" };
+  }
 }
 
 export const AppContext = createContext<App | null>(null);

@@ -58,6 +58,8 @@ export interface HandlerDeps {
   settingsChanged?: () => void;
   /** `threads.changed` for changes that write no thread event (§9.8). */
   changes?: ThreadChanges;
+  /** The shell's connection said hello: replay what it should still show (§8.2 notifications). */
+  shellConnected?: (conn: Conn) => void;
   /** secrets.verify (§7.2): ask the provider about a candidate key. */
   verifyKey: (key: string) => Promise<{ outcome: "valid" | "invalid" | "unreachable"; detail?: string }>;
 }
@@ -89,13 +91,14 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       const ok = d.auth.check(p);
       if (!ok.ok) throw new RpcFail(RPC_ERROR.UNAUTHENTICATED, ok.message, undefined, true);
       conn.setRole(p.role);
-      return {
+      const result = {
         protocol,
         runtime_version: RUNTIME_VERSION,
         device_id: ctx.device.device_id,
         role: p.role,
         capabilities: negotiateCapabilities(CAPABILITIES, p.capabilities),
       };
+      return p.role === "shell" && d.shellConnected ? { result, after: () => d.shellConnected!(conn) } : result;
     },
 
     ping: () => ({ pong: true as const, runtime_version: RUNTIME_VERSION, protocol: PROTOCOL_VERSION }),

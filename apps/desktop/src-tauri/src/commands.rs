@@ -2,15 +2,20 @@
 //! `rpc_call`, which forwards only the webview allowlist on the webview-role connection; the
 //! launch token, the socket and the keychain stay here. Blocking work runs off the main thread.
 
+use crate::notifications::{self, Permission};
 use crate::shell::Shell;
+use crate::{lifecycle, login_item, updater};
 use homerun_shell_core::allowlist::{forward, ShellError};
 use homerun_shell_core::keys::{self, KeyError, KeyStatus, SetOutcome, ShellCalls};
+use homerun_shell_core::login::LoginItem;
+use homerun_shell_core::quit::Why;
+use homerun_shell_core::update::UpdateState;
 use homerun_shell_core::RuntimeStatus;
 use serde_json::{json, Value};
 use std::process::Command;
 use std::sync::Arc;
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 type Res<T> = Result<T, ShellError>;
 
@@ -116,9 +121,101 @@ pub fn app_info(shell: State<'_, Arc<Shell>>) -> Value {
     })
 }
 
+/// Notification clicks and menu rows (`navigate`) and the updater (`update`), in order (§5.1).
+#[tauri::command]
+pub fn shell_events_attach(shell: State<'_, Arc<Shell>>, channel: Channel<Value>) {
+    shell.host.attach_events(channel);
+}
+
+#[tauri::command]
+pub fn shell_prefs(shell: State<'_, Arc<Shell>>) -> Value {
+    let p = shell.prefs.lock().unwrap();
+    json!({"keep_running_asked": p.keep_running_asked, "auto_download_updates": p.auto_download_updates})
+}
+
+/// Onboarding's *Keep Homerun running* step was shown (plan Q2): it isn't shown again.
+#[tauri::command]
+pub fn keep_running_done(shell: State<'_, Arc<Shell>>) {
+    shell.update_prefs(|p| p.keep_running_asked = true);
+}
+
+#[tauri::command]
+pub async fn login_item_status() -> Res<LoginItem> {
+    blocking(|| Ok(login_item::status())).await
+}
+
+#[tauri::command]
+pub async fn login_item_set(shell: State<'_, Arc<Shell>>, on: bool) -> Res<LoginItem> {
+    let s = shell.inner().clone();
+    blocking(move || {
+        let r = login_item::set(on);
+        s.rt.log_event("login_item.set", json!({"on": on, "ok": r.is_ok()}));
+        r.map_err(ShellError::shell)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn open_login_items() {
+    login_item::open_settings();
+}
+
+#[tauri::command]
+pub async fn notifications_status() -> Res<Permission> {
+    blocking(|| Ok(notifications::status())).await
+}
+
+/// The system asks once; after that this only reports, and Settings links to System Settings.
+#[tauri::command]
+pub async fn notifications_request() -> Res<Permission> {
+    blocking(|| Ok(notifications::request())).await
+}
+
+#[tauri::command]
+pub fn open_notification_settings() -> Res<()> {
+    open(&[notifications::SETTINGS_URL])
+}
+
+#[tauri::command]
+pub fn update_status(app: AppHandle) -> UpdateState {
+    updater::get(&app).map(|u| u.state()).unwrap_or(UpdateState::Unavailable { message: "Updates aren't set up.".into() })
+}
+
+#[tauri::command]
+pub fn update_check(app: AppHandle) {
+    if let Some(u) = updater::get(&app) {
+        u.poke();
+    }
+}
+
+/// The banner's *Restart Now*: the same confirmation as quitting, then the update (§11).
+#[tauri::command]
+pub fn update_restart(app: AppHandle) {
+    lifecycle::request_quit(&app, Why::Update);
+}
+
+#[tauri::command]
+pub fn update_set_auto(app: AppHandle, shell: State<'_, Arc<Shell>>, on: bool) {
+    shell.update_prefs(|p| p.auto_download_updates = on);
+    if let Some(u) = updater::get(&app) {
+        u.set_auto(on);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_webview_gets_no_updater_or_shell_plugin_permissions() {
+        // §11, §13: the page asks the shell (update_*), which decides; it never drives the plugin.
+        let caps: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let perms: Vec<&str> = caps["permissions"].as_array().unwrap().iter().filter_map(|p| p.as_str()).collect();
+        assert!(perms.iter().all(|p| !p.starts_with("updater:") && !p.starts_with("shell:")), "{perms:?}");
+        for c in ["allow-update-restart", "allow-login-item-set", "allow-notifications-request"] {
+            assert!(perms.contains(&c), "{c}");
+        }
+    }
 
     #[test]
     fn only_web_and_mail_links_open() {

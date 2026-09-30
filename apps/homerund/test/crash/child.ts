@@ -5,7 +5,7 @@
  * thread to settle. With `approvals`, it also approves each call and answers each question. `killAt` SIGKILLs this process at that boundary; `dieAt` kills `claude` alone.
  * Prints `{"points": n}` when it ends on its own, with each boundary's kind when `label` is set.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isTerminal, type Origin, type RunState } from "@homerun/core";
 import { loadConfig } from "../../src/config";
@@ -75,7 +75,15 @@ const existing = rt.store.db.query<{ thread_id: string }, []>("SELECT thread_id 
 const threadId = existing?.thread_id ?? rt.manager.createTask(scenario.spec as never).thread.thread_id;
 rt.manager.sendMessage({ thread_id: threadId, client_msg_id: CLIENT_MSG_ID, text: scenario.message }, origin);
 
-const shell = await RpcClient.open(config.socketPath, "shell", { kind: "launch_token", token: TOKEN });
+// Every local notification this life's shell receives (§8.2), for the harness's checks: sent
+// only for committed requests, at most once per key per life.
+const shell = await RpcClient.connect(config.socketPath);
+shell.onNotification((method, params) => {
+  if (method === "notification.requested" || method === "notification.withdrawn") {
+    appendFileSync(join(args.dir, "notified.ndjson"), JSON.stringify({ life: process.pid, method, key: (params as { key: string }).key }) + "\n");
+  }
+});
+await shell.handshake("shell", { kind: "launch_token", token: TOKEN });
 const happened = (toolCallId: string) => existsSync(ledger) && readFileSync(ledger, "utf8").split("\n").some((l) => l.endsWith(` ${toolCallId}`));
 
 const deadline = Date.now() + 15_000;

@@ -1888,6 +1888,20 @@
         }
       ]
     },
+    "LocalNotificationKind": {
+      "type": "string",
+      "enum": [
+        "approval",
+        "question",
+        "ambiguous_call",
+        "monitor_report",
+        "monitor_failed",
+        "monitor_paused",
+        "missed_checks",
+        "digest"
+      ],
+      "description": "What a local notification is about (§8.2, §9.7)"
+    },
     "McpServerName": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
@@ -2558,6 +2572,96 @@
         "version",
         "last_run_id",
         "updated_at"
+      ]
+    },
+    "NotificationRequestedNotification": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z_]+:[0-9a-z_:-]{1,120}$"
+        },
+        "kind": {
+          "$ref": "#/$defs/LocalNotificationKind"
+        },
+        "target": {
+          "$ref": "#/$defs/NotificationTarget"
+        },
+        "thread_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "created_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "target",
+        "thread_id",
+        "title",
+        "body",
+        "created_at"
+      ]
+    },
+    "NotificationTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "screen": {
+              "type": "string",
+              "const": "thread"
+            },
+            "thread_id": {
+              "$ref": "#/$defs/ThreadId"
+            }
+          },
+          "required": [
+            "screen",
+            "thread_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "screen": {
+              "type": "string",
+              "const": "health"
+            }
+          },
+          "required": [
+            "screen"
+          ]
+        }
+      ]
+    },
+    "NotificationWithdrawnNotification": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z_]+:[0-9a-z_:-]{1,120}$"
+        }
+      },
+      "required": [
+        "key"
       ]
     },
     "Origin": {

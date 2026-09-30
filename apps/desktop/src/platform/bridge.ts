@@ -1,17 +1,18 @@
 import type { RuntimeStatus, Transport, TransportEvent } from "@homerun/app-state";
 import { fromShellError } from "./errors";
-import type { AppInfo, KeyStatus, Platform, SetKeyOutcome } from "./types";
+import { shellCommands, type Platform, type ShellEvent } from "./types";
 
 /**
  * A platform over a WebSocket to a stand-in shell (test/e2e/bridge-server.ts), for the E2E smoke
  * test and for working on the UI in a browser. Same protocol as the Tauri commands; never part
  * of the app bundle.
  *
- *   → {id, cmd, args}           ← {id, ok} | {id, err: ShellError}      ← {event: TransportEvent}
+ *   → {id, cmd, args}    ← {id, ok} | {id, err: ShellError}    ← {event: TransportEvent}    ← {shell_event: ShellEvent}
  */
 export function bridgePlatform(url: string): Platform {
   let status: RuntimeStatus = { state: "starting" };
   const listeners = new Set<(e: TransportEvent) => void>();
+  const shellListeners = new Set<(e: ShellEvent) => void>();
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
   let nextId = 1;
   let ws: WebSocket;
@@ -21,7 +22,11 @@ export function bridgePlatform(url: string): Platform {
     ws = new WebSocket(url);
     open = new Promise((resolve) => ws.addEventListener("open", () => resolve(), { once: true }));
     ws.addEventListener("message", (m) => {
-      const msg = JSON.parse(String(m.data)) as { id?: number; ok?: unknown; err?: unknown; event?: TransportEvent };
+      const msg = JSON.parse(String(m.data)) as { id?: number; ok?: unknown; err?: unknown; event?: TransportEvent; shell_event?: ShellEvent };
+      if (msg.shell_event) {
+        for (const l of [...shellListeners]) l(msg.shell_event);
+        return;
+      }
       if (msg.event) {
         if (msg.event.type === "status") status = msg.event.status;
         for (const l of [...listeners]) l(msg.event);
@@ -61,13 +66,11 @@ export function bridgePlatform(url: string): Platform {
   return {
     transport,
     shell: {
-      keyStatus: () => call<KeyStatus>("key_status"),
-      setKey: (value) => call<SetKeyOutcome>("key_set", { value }),
-      clearKey: () => call<void>("key_clear"),
-      restartRuntime: () => call<void>("runtime_restart"),
-      openExternal: (url) => call<void>("open_external", { url }),
-      revealLogs: () => call<void>("reveal_logs"),
-      appInfo: () => call<AppInfo>("app_info"),
+      ...shellCommands(call),
+      onEvent: (l) => {
+        shellListeners.add(l);
+        return () => void shellListeners.delete(l);
+      },
     },
   };
 }

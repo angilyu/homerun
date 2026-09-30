@@ -28,6 +28,13 @@
       "freezePrototype": true
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "HOMERUN_UPDATER_PUBKEY_NOT_SET",
+      "endpoints": ["https://github.com/angilyu/homerun/releases/latest/download/latest.json"],
+      "requireSignedVersion": true
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["app"],

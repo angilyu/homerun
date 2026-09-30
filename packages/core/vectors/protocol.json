@@ -2887,6 +2887,107 @@
       }
     },
     {
+      "schema": "NotificationRequestedNotification",
+      "name": "notification.requested: approval",
+      "valid": true,
+      "value": {
+        "key": "input:4f5a6b7c-8d9e-4f0a-9b2c-3d4e5f6a7b01",
+        "kind": "approval",
+        "target": {
+          "screen": "thread",
+          "thread_id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f01"
+        },
+        "thread_id": "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f01",
+        "title": "Deploy site",
+        "body": "Approval needed: Bash (destructive)",
+        "created_at": 1767225600000
+      }
+    },
+    {
+      "schema": "NotificationRequestedNotification",
+      "name": "notification.requested: missed checks",
+      "valid": true,
+      "value": {
+        "key": "missed:1767225600000",
+        "kind": "missed_checks",
+        "target": {
+          "screen": "health"
+        },
+        "thread_id": null,
+        "title": "Monitors missed checks",
+        "body": "",
+        "created_at": 1767225600000
+      }
+    },
+    {
+      "schema": "NotificationRequestedNotification",
+      "name": "notification.requested: title too long",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "key": "input:x",
+        "kind": "question",
+        "target": {
+          "screen": "health"
+        },
+        "thread_id": null,
+        "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "body": "",
+        "created_at": 1767225600000
+      }
+    },
+    {
+      "schema": "NotificationRequestedNotification",
+      "name": "notification.requested: unknown kind",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "key": "input:x",
+        "kind": "chat_done",
+        "target": {
+          "screen": "health"
+        },
+        "thread_id": null,
+        "title": "t",
+        "body": "",
+        "created_at": 1767225600000
+      }
+    },
+    {
+      "schema": "NotificationRequestedNotification",
+      "name": "notification.requested: key with spaces",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "key": "input: x",
+        "kind": "question",
+        "target": {
+          "screen": "health"
+        },
+        "thread_id": null,
+        "title": "t",
+        "body": "",
+        "created_at": 1767225600000
+      }
+    },
+    {
+      "schema": "NotificationWithdrawnNotification",
+      "name": "notification.withdrawn: key",
+      "valid": true,
+      "value": {
+        "key": "input:4f5a6b7c-8d9e-4f0a-9b2c-3d4e5f6a7b01"
+      }
+    },
+    {
+      "schema": "NotificationWithdrawnNotification",
+      "name": "notification.withdrawn: upper case key",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "key": "Input:X"
+      }
+    },
+    {
       "schema": "HealthDigestReadyNotification",
       "name": "health.digest_ready: digest",
       "valid": true,

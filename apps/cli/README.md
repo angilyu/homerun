@@ -111,7 +111,7 @@ A **release** build:
 - Exits 77 for every command that needs the runtime, without opening the socket or
   the dev token. `approve`, `deny`, `grants add` and `answer --completed|--not-run`
   say why: the release CLI answers questions only. A release CLI needs a `cli_token` approved in the Homerun app,
-  which arrives in milestone 8 (§5.2). Even then it will only answer
+  which arrives with §16 row 8a, CLI access (§5.2). Even then it will only answer
   questions: never approvals, and never "Did this happen?", which needs full
   authority (`INPUT_ANSWER_RIGHTS.cli`).
 

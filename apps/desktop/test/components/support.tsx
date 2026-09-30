@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { AppClient } from "@homerun/app-state";
 import { AppRoot, createApp } from "../../src/app";
 import type { Route } from "../../src/hooks";
-import type { AppInfo, KeyStatus, SetKeyOutcome, ShellApi } from "../../src/platform/types";
+import type { AppInfo, KeyStatus, LoginItemStatus, NotificationPermission, SetKeyOutcome, ShellApi, ShellEvent, ShellPrefs, UpdateState } from "../../src/platform/types";
 import { DEVICE, FakeTransport, T0, uuid } from "../../../../packages/app-state/test/helpers";
 
 export * from "../../../../packages/app-state/test/helpers";
@@ -29,6 +29,46 @@ export class FakeShell implements ShellApi {
   openExternal = async (url: string) => void this.opened.push(url);
   revealLogs = async () => void this.calls.push("revealLogs");
   appInfo = async (): Promise<AppInfo> => ({ version: "0.2.0", build: "debug", platform: "macos", data_dir: "/tmp/h", log_path: "/tmp/h/logs/x.log", key_store: "memory" });
+
+  shellPrefs: ShellPrefs = { keep_running_asked: true, auto_download_updates: true };
+  login: LoginItemStatus = "off";
+  permission: NotificationPermission = "not_determined";
+  update: UpdateState = { state: "idle" };
+  listeners = new Set<(e: ShellEvent) => void>();
+  /** A notification click, a menu-bar row or the updater, from the shell. */
+  emit(e: ShellEvent) {
+    for (const l of [...this.listeners]) l(e);
+  }
+  onEvent = (l: (e: ShellEvent) => void) => {
+    this.listeners.add(l);
+    return () => void this.listeners.delete(l);
+  };
+  prefs = async () => ({ ...this.shellPrefs });
+  keepRunningDone = async () => {
+    this.calls.push("keepRunningDone");
+    this.shellPrefs.keep_running_asked = true;
+  };
+  loginItem = async () => this.login;
+  setLoginItem = async (on: boolean) => {
+    this.calls.push(`setLoginItem:${on}`);
+    this.login = on ? "enabled" : "off";
+    return this.login;
+  };
+  openLoginItems = async () => void this.calls.push("openLoginItems");
+  notifications = async () => this.permission;
+  requestNotifications = async () => {
+    this.calls.push("requestNotifications");
+    if (this.permission === "not_determined") this.permission = "allowed";
+    return this.permission;
+  };
+  openNotificationSettings = async () => void this.calls.push("openNotificationSettings");
+  updateStatus = async () => this.update;
+  checkForUpdates = async () => void this.calls.push("checkForUpdates");
+  restartToUpdate = async () => void this.calls.push("restartToUpdate");
+  setAutoUpdate = async (on: boolean) => {
+    this.calls.push(`setAutoUpdate:${on}`);
+    this.shellPrefs.auto_download_updates = on;
+  };
 }
 
 export const TASK = "4f5a6b7c-8d9e-4f0a-8b1c-2d3e4f5a6b01";
@@ -128,6 +168,6 @@ export async function renderApp(opts: { t?: FakeTransport; shell?: FakeShell; ro
   client.start();
   if (opts.connect !== false) t.ready();
   render(<AppRoot app={app} />);
-  if (shell.key.present) await waitFor(() => expect(screen.getByRole("navigation")).toBeTruthy());
+  if (shell.key.present && shell.shellPrefs.keep_running_asked) await waitFor(() => expect(screen.getByRole("navigation")).toBeTruthy());
   return { t, shell, client, go: app.go };
 }

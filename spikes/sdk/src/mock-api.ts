@@ -16,6 +16,8 @@
  *    was interrupted counts as not done — i.e. a model that retries interrupted
  *    work when asked to continue — unless the latest instruction says "Do not run it again".
  *  - "AskUserQuestion" in the instruction → one AskUserQuestion call (Red/Blue).
+ *  - "Take N seconds" in the first instruction delays the reply to it by N seconds (at most 60), so
+ *    a run stays busy long enough to observe its power assertion (§8.1, update-test.sh).
  *  - Final text follows "reply with the single word X" / "Reply with exactly: X" /
  *    "if there is none, reply X" / "Then reply X", the secret-word question, and the
  *    colour question. Any BANANA-* token visible anywhere in the request is appended
@@ -171,6 +173,10 @@ Bun.serve({
       record({ status: 400, ...err });
       return Response.json(err, { status: 400 });
     }
+    const msgs: Msg[] = body.messages ?? [];
+    const first = !msgs.some((m) => m.role === "assistant") && msgs.find((m) => m.role === "user");
+    const slow = first ? /\bTake (\d+) seconds\b/.exec(textOf(first)) : null;
+    if (slow) await Bun.sleep(Math.min(Number(slow[1]), 60) * 1000);
     const { content, stop } = decide(body);
     record({ status: 200, content, stop });
     const inputTokens = Math.ceil(raw.length / 4);

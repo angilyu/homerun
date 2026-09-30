@@ -58,6 +58,50 @@ impl KeyStore for MemoryKeyStore {
     }
 }
 
+/// The keychain, plus what the shell has already read or written through it. The keychain stays
+/// the source of truth whenever it answers. When a read fails, the last value is used instead:
+/// the item is readable only while the Mac is unlocked (secd: errSecInteractionNotAllowed), and a
+/// runtime restarted overnight on a locked Mac must still get its key, or every monitor fails
+/// until morning (§8.2, §11). The runtime already holds the same secrets in memory (§5.1).
+pub struct Remembered<S> {
+    inner: S,
+    seen: Mutex<HashMap<String, Option<String>>>,
+}
+
+impl<S: KeyStore> Remembered<S> {
+    pub fn new(inner: S) -> Self {
+        Remembered { inner, seen: Mutex::new(HashMap::new()) }
+    }
+}
+
+impl<S: KeyStore> KeyStore for Remembered<S> {
+    fn get(&self, name: &str) -> Result<Option<String>, KeyError> {
+        match self.inner.get(name) {
+            Ok(v) => {
+                self.seen.lock().unwrap().insert(name.into(), v.clone());
+                Ok(v)
+            }
+            Err(e) => match self.seen.lock().unwrap().get(name) {
+                Some(v) => Ok(v.clone()),
+                None => Err(e),
+            },
+        }
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), KeyError> {
+        self.inner.set(name, value)?;
+        self.seen.lock().unwrap().insert(name.into(), Some(value.into()));
+        Ok(())
+    }
+    fn delete(&self, name: &str) -> Result<(), KeyError> {
+        self.inner.delete(name)?;
+        self.seen.lock().unwrap().insert(name.into(), None);
+        Ok(())
+    }
+    fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+}
+
 /// Calls on the shell connection. A trait so the flows test without a runtime.
 pub trait ShellCalls {
     fn call(&self, method: &str, params: Value) -> Result<Value, CallError>;
@@ -163,6 +207,68 @@ pub fn persist(store: &dyn KeyStore, params: &Value) -> Result<Value, RpcError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A keychain that refuses every call while "locked", as secd does for a locked Mac.
+    #[derive(Default)]
+    struct Lockable {
+        store: MemoryKeyStore,
+        locked: AtomicBool,
+    }
+
+    impl KeyStore for Lockable {
+        fn get(&self, name: &str) -> Result<Option<String>, KeyError> {
+            if self.locked.load(Ordering::Relaxed) {
+                return Err(KeyError::Other("keychain is locked".into()));
+            }
+            self.store.get(name)
+        }
+        fn set(&self, name: &str, value: &str) -> Result<(), KeyError> {
+            if self.locked.load(Ordering::Relaxed) {
+                return Err(KeyError::Other("keychain is locked".into()));
+            }
+            self.store.set(name, value)
+        }
+        fn delete(&self, name: &str) -> Result<(), KeyError> {
+            if self.locked.load(Ordering::Relaxed) {
+                return Err(KeyError::Other("keychain is locked".into()));
+            }
+            self.store.delete(name)
+        }
+        fn kind(&self) -> &'static str {
+            "keychain"
+        }
+    }
+
+    #[test]
+    fn a_runtime_restarted_while_the_mac_is_locked_still_gets_the_key() {
+        let kc = Lockable::default();
+        kc.store.set(API_KEY, KEY).unwrap();
+        let r = Remembered::new(kc);
+        let rt = FakeRuntime { verify: "ok", calls: Mutex::new(vec![]) };
+        assert_eq!(hand_over(&r, &rt).unwrap(), [API_KEY], "read while unlocked");
+        r.inner.locked.store(true, Ordering::Relaxed);
+        assert_eq!(hand_over(&r, &rt).unwrap(), [API_KEY], "locked: the value already read");
+        assert_eq!(r.kind(), "keychain");
+    }
+
+    #[test]
+    fn the_keychain_stays_the_source_of_truth_when_it_answers() {
+        let r = Remembered::new(Lockable::default());
+        r.inner.locked.store(true, Ordering::Relaxed);
+        assert!(r.get(API_KEY).is_err(), "nothing read yet: the error stands");
+        r.inner.locked.store(false, Ordering::Relaxed);
+        r.set(API_KEY, KEY).unwrap();
+        r.inner.store.delete(API_KEY).unwrap();
+        assert_eq!(r.get(API_KEY).unwrap(), None, "unlocked: the keychain wins");
+        r.inner.store.set(API_KEY, "sk-ant-other").unwrap();
+        assert_eq!(r.get(API_KEY).unwrap().as_deref(), Some("sk-ant-other"));
+        r.delete(API_KEY).unwrap();
+        r.inner.locked.store(true, Ordering::Relaxed);
+        assert_eq!(r.get(API_KEY).unwrap(), None, "a removed key isn't remembered");
+        assert!(r.set(API_KEY, KEY).is_err(), "a failed write isn't remembered");
+        assert_eq!(r.get(API_KEY).unwrap(), None);
+    }
 
     struct FakeRuntime {
         verify: &'static str,

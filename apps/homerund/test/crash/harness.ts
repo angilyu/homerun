@@ -110,6 +110,19 @@ function check(dir: string, scenario: string): string[] {
       const n = count("SELECT COUNT(*) AS n FROM thread_events WHERE thread_id = ? AND type = 'input.resolved' AND json_extract(payload, '$.request_id') = ?", threadId, a.id);
       if (n !== 1) problems.push(`request ${a.id} resolved ${n} times`);
     }
+    // Local notifications (§8.2): only for requests that committed, at most once per key per life.
+    const notifiedPath = join(dir, "notified.ndjson");
+    const notified = existsSync(notifiedPath)
+      ? readFileSync(notifiedPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { life: number; method: string; key: string })
+      : [];
+    const perLife = new Set<string>();
+    for (const n of notified) {
+      if (n.method !== "notification.requested") continue;
+      if (perLife.has(`${n.life} ${n.key}`)) problems.push(`notification ${n.key} sent twice in one life`);
+      perLife.add(`${n.life} ${n.key}`);
+      const id = n.key.startsWith("input:") ? n.key.slice("input:".length) : null;
+      if (id && !count("SELECT COUNT(*) AS n FROM input_requests WHERE request_id = ?", id)) problems.push(`notification for request ${id}, which never committed`);
+    }
     const pending = count("SELECT COUNT(*) AS n FROM input_requests WHERE state = 'pending'");
     if (pending) problems.push(`${pending} pending input requests`);
     const unconsumed = count("SELECT COUNT(*) AS n FROM run_inputs WHERE consumed_at IS NULL");

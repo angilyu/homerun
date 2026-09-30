@@ -31,6 +31,7 @@ import { SqliteSessionStore } from "./store/session-store";
 import { Store } from "./store/store";
 import { verifyAnthropicKey, type KeyCheck } from "./secrets/verify";
 import { ThreadChanges } from "./threads/changes";
+import { Notifier } from "./notify/notifier";
 
 export interface RuntimeOptions {
   config: Config;
@@ -51,6 +52,8 @@ export interface RuntimeOptions {
   setTmpdir?: boolean;
   /** secrets.verify; defaults to asking the Anthropic API (§7.2). Tests answer themselves. */
   verifyKey?: (key: string) => Promise<KeyCheck>;
+  /** How long missed-check notifications from one wake are coalesced (§8.2). */
+  notifyCoalesceMs?: number;
 }
 
 export interface StartupReport {
@@ -74,6 +77,7 @@ export interface Runtime {
   digest: DigestScheduler;
   timeouts: InputTimeouts;
   changes: ThreadChanges;
+  notifier: Notifier;
   clock: Clock;
   devToken: string | null;
   report: StartupReport;
@@ -160,7 +164,12 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     const manager = new RunManager(ctx, scheduler);
     const timeouts = new InputTimeouts(ctx, clock, manager.gateResolver, scheduler);
     let server: RpcServer | null = null;
-    const digest = new DigestScheduler(store, deviceZone, (d) => server?.broadcast("health.digest_ready", { digest: d }));
+    // Local notifications go to the shell connection only: `notification.*` lists no other recipient (§8.2, §9.7).
+    const notifier = new Notifier(store, (m, p) => server?.broadcast(m, p), o.notifyCoalesceMs);
+    const digest = new DigestScheduler(store, deviceZone, (d) => {
+      server?.broadcast("health.digest_ready", { digest: d });
+      notifier.digestReady(d);
+    });
     const fires = new FireScheduler(
       store,
       clock,
@@ -189,6 +198,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         digest,
         changes,
         settingsChanged: () => fires.run(),
+        shellConnected: (conn) => notifier.replayPending((m, p) => conn.notify(m, p)),
         verifyKey: o.verifyKey ?? ((key) => verifyAnthropicKey(key, config.anthropicBaseUrl)),
       }),
       ...(o.checkResults ? { checkResults: true } : {}),
@@ -202,6 +212,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     });
     await server.start();
     changes.start();
+    notifier.start();
     fires.start();
     timeouts.start();
     scheduler.kick();
@@ -221,6 +232,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       digest,
       timeouts,
       changes,
+      notifier,
       clock,
       devToken,
       report: { migration, killedGroups, killedTools, swept, recovered },
@@ -228,6 +240,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         (stopping ??= (async () => {
           srv.stop();
           changes.stop();
+          notifier.stop();
           fires.stop();
           timeouts.stop();
           await scheduler.shutdown(config.shutdownGraceMs);

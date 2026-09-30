@@ -697,6 +697,22 @@
       "params": "CliAccessRequestedNotification",
       "description": "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`."
     },
+    "notification.requested": {
+      "direction": "runtime_to_shell",
+      "recipients": [
+        "shell"
+      ],
+      "params": "NotificationRequestedNotification",
+      "description": "Show a local notification (§8.2, §9.7). The runtime writes the text; clicking opens `target`. Never carries tool input or secrets, and never offers an answer: destructive approvals are answered in the app only."
+    },
+    "notification.withdrawn": {
+      "direction": "runtime_to_shell",
+      "recipients": [
+        "shell"
+      ],
+      "params": "NotificationWithdrawnNotification",
+      "description": "Remove the notification with this key: the request it announced was answered, expired or cancelled."
+    },
     "health.digest_ready": {
       "direction": "runtime_to_client",
       "recipients": [

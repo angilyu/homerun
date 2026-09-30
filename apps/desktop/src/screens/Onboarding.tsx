@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { errorMessage } from "@homerun/app-state";
 import { useApp } from "../hooks";
+import type { LoginItemStatus, NotificationPermission } from "../platform/types";
 import { useAutofocus } from "../ui/bits";
 
 const CONSOLE_URL = "https://console.anthropic.com/settings/keys";
@@ -113,5 +114,72 @@ export function KeyForm({ submitLabel, onDone }: { submitLabel: string; onDone?:
         {phase.s === "checking" ? "Checking…" : submitLabel}
       </button>
     </form>
+  );
+}
+
+/**
+ * Shown once after the key (§5.1, plan Q2): Homerun stays in the menu bar when the window
+ * closes, opens at login (pre-checked, so it is the user's choice), and asks for notifications
+ * so approvals and monitor news reach them (§8.2).
+ */
+export function KeepRunning({ onDone }: { onDone: () => void }) {
+  const app = useApp();
+  const [login, setLogin] = useState<LoginItemStatus | null>(null);
+  const [atLogin, setAtLogin] = useState(true);
+  const [notify, setNotify] = useState<NotificationPermission | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    app.shell.loginItem().then(setLogin, () => setLogin("unavailable"));
+    app.shell.notifications().then(setNotify, () => setNotify("unavailable"));
+  }, [app]);
+
+  const done = async () => {
+    await app.shell.keepRunningDone().catch(() => {});
+    onDone();
+  };
+  const finish = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (login && login !== "unavailable" && atLogin !== (login === "enabled")) await app.shell.setLoginItem(atLogin);
+    } catch (e) {
+      setBusy(false);
+      return setError(`${errorMessage(e)} You can change this later in Settings.`);
+    }
+    await done();
+  };
+
+  return (
+    <main className="center">
+      <div className="card narrow onboarding">
+        <h1>Keep Homerun running</h1>
+        <p>When you close the window, Homerun stays in the menu bar so your monitors keep running. Quit it from the menu bar. Monitors don't run while Homerun is quit.</p>
+        {login !== null && login !== "unavailable" && (
+          <label className="check">
+            <input type="checkbox" checked={atLogin} onChange={(e) => setAtLogin(e.target.checked)} />
+            Open Homerun when you log in
+          </label>
+        )}
+        {notify === "not_determined" && (
+          <div className="row">
+            <button type="button" onClick={() => void app.shell.requestNotifications().then(setNotify, () => {})}>
+              Allow notifications
+            </button>
+            <span className="muted small">For approvals, questions and monitor news. Never your data or API key.</span>
+          </div>
+        )}
+        {notify === "allowed" && <p className="muted small">Notifications are on.</p>}
+        {notify === "denied" && <p className="muted small">Notifications are off. You can turn them on in System Settings.</p>}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        <button type="button" className="primary" disabled={busy} onClick={() => void (error ? done() : finish())}>
+          Continue
+        </button>
+      </div>
+    </main>
   );
 }

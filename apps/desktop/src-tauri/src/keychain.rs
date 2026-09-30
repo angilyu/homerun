@@ -9,10 +9,20 @@
 
 use homerun_shell_core::keys::{KeyError, KeyStore};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Duration;
 
-const SERVICE: &str = "com.angilyu.homerun";
+static SERVICE: OnceLock<String> = OnceLock::new();
+
+fn service() -> &'static str {
+    SERVICE.get().map(String::as_str).unwrap_or("com.angilyu.homerun")
+}
+
+/// Update-test builds only (scripts/macos/update-test.sh): keep the test's key away from the
+/// user's real item. Must run before the first keychain call.
+pub fn use_test_service(name: &str) {
+    let _ = SERVICE.set(name.to_string());
+}
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 const ERR_MISSING_ENTITLEMENT: i32 = -34018;
@@ -58,7 +68,7 @@ mod ops {
     use security_framework::passwords_options::PasswordOptions;
 
     fn opts(account: &str, legacy: bool) -> PasswordOptions {
-        let mut o = PasswordOptions::new_generic_password(SERVICE, account);
+        let mut o = PasswordOptions::new_generic_password(service(), account);
         if !legacy {
             o.use_protected_keychain();
         }

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { errorMessage } from "@homerun/app-state";
 import type { HealthSettings } from "@homerun/core";
+import type { LoginItemStatus, NotificationPermission, UpdateState } from "../platform/types";
 import { useAction, useApp, useLoad, useStore } from "../hooks";
 import { ConfirmButton, Empty, ErrorText, Page, Time } from "../ui/bits";
 import { runtimeText } from "./Layout";
@@ -10,8 +11,10 @@ export function Settings() {
   return (
     <Page title="Settings">
       <KeySection />
+      <BackgroundSection />
       <DigestSection />
       <CliSection />
+      <UpdatesSection />
       <RuntimeSection />
     </Page>
   );
@@ -50,6 +53,141 @@ function KeySection() {
     </section>
   );
 }
+
+/** Re-read when the window comes back: the user may have changed it in System Settings. */
+function useOnFocus<T>(read: () => Promise<T>): [T | null, (v: T) => void] {
+  const [v, setV] = useState<T | null>(null);
+  const load = useCallback(() => void read().then(setV, () => {}), [read]);
+  useEffect(() => {
+    load();
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
+  }, [load]);
+  return [v, setV];
+}
+
+/** Menu-bar residency, open at login and notifications (§5.1, §8.2). */
+function BackgroundSection() {
+  const app = useApp();
+  const [login, setLogin] = useOnFocus<LoginItemStatus>(useCallback(() => app.shell.loginItem(), [app]));
+  const [notify, setNotify] = useOnFocus<NotificationPermission>(useCallback(() => app.shell.notifications(), [app]));
+  const setAtLogin = useAction(async (on: boolean) => setLogin(await app.shell.setLoginItem(on)));
+  const ask = useAction(async () => setNotify(await app.shell.requestNotifications()));
+  return (
+    <section aria-label="Running in the background">
+      <h2>Running in the background</h2>
+      <p className="muted">Closing the window keeps Homerun in the menu bar, so monitors keep running. Monitors don't run while Homerun is quit.</p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={login === "enabled" || login === "needs_approval"}
+          disabled={login === null || login === "unavailable" || setAtLogin.busy}
+          onChange={(e) => void setAtLogin.run(e.target.checked)}
+        />
+        Open Homerun when you log in
+      </label>
+      {login === "needs_approval" && (
+        <p className="notice warn">
+          Turned off in System Settings, so Homerun won't open at login.{" "}
+          <button type="button" className="link" onClick={() => void app.shell.openLoginItems()}>
+            Open Login Items
+          </button>
+        </p>
+      )}
+      {login === "unavailable" && <p className="muted small">Available in the installed app.</p>}
+      <ErrorText error={setAtLogin.error} />
+      <h3>Notifications</h3>
+      <p className="muted small">Approvals, questions, monitor news and problems. They never show your data, tool input or API key, and approvals are answered here, not from a notification.</p>
+      {notify === "not_determined" && (
+        <button type="button" onClick={() => void ask.run()}>
+          Allow notifications
+        </button>
+      )}
+      {(notify === "allowed" || notify === "denied") && (
+        <p>
+          {notify === "allowed" ? "On." : "Off in System Settings."}{" "}
+          <button type="button" className="link" onClick={() => void app.shell.openNotificationSettings()}>
+            Notification settings
+          </button>
+        </p>
+      )}
+      {notify === "unavailable" && <p className="muted small">Available in the installed app.</p>}
+      <ErrorText error={ask.error} />
+    </section>
+  );
+}
+
+export function updateText(u: UpdateState): string {
+  switch (u.state) {
+    case "idle":
+      return "Homerun checks for updates every few hours.";
+    case "unavailable":
+      return u.message;
+    case "checking":
+      return "Checking for updates…";
+    case "up_to_date":
+      return "Homerun is up to date.";
+    case "downloading":
+      return `Downloading Homerun ${u.version}…`;
+    case "ready":
+      return `Homerun ${u.version} is ready. It installs when you quit Homerun.${u.note ? ` ${u.note}` : ""}`;
+    case "manual":
+      return `Homerun ${u.version} is available. ${u.reason}`;
+    case "failed":
+      return u.message;
+  }
+}
+
+/** The signed updater (§11): downloads in the background, installs when Homerun quits. */
+function UpdatesSection() {
+  const app = useApp();
+  const u = useStore(app.update);
+  const prefs = useLoad(() => app.shell.prefs(), []);
+  const [auto, setAuto] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (prefs.data) setAuto(prefs.data.auto_download_updates);
+  }, [prefs.data]);
+  if (!u) return null;
+  const off = u.state === "unavailable";
+  return (
+    <section aria-label="Updates">
+      <h2>Updates</h2>
+      <p role="status">{updateText(u)}</p>
+      {!off && (
+        <>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={auto ?? true}
+              onChange={(e) => {
+                setAuto(e.target.checked);
+                void app.shell.setAutoUpdate(e.target.checked);
+              }}
+            />
+            Check for and download updates automatically
+          </label>
+          <div className="row">
+            {u.state === "ready" ? (
+              <button type="button" className="primary" onClick={() => void app.shell.restartToUpdate()}>
+                Restart to update
+              </button>
+            ) : u.state === "manual" ? (
+              <button type="button" onClick={() => void app.shell.openExternal(DOWNLOAD_PAGE)}>
+                Download
+              </button>
+            ) : (
+              <button type="button" disabled={u.state === "checking" || u.state === "downloading"} onClick={() => void app.shell.checkForUpdates()}>
+                Check now
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+export const DOWNLOAD_PAGE = "https://github.com/angilyu/homerun/releases/latest";
 
 /** The daily health summary (§8.3). */
 function DigestSection() {

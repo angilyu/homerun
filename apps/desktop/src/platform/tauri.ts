@@ -1,7 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { RuntimeStatus, Transport, TransportEvent } from "@homerun/app-state";
 import { fromShellError } from "./errors";
-import type { AppInfo, KeyStatus, Platform, SetKeyOutcome } from "./types";
+import { shellCommands, type Platform, type ShellEvent } from "./types";
 
 /**
  * The desktop platform: every call goes to the shell over Tauri IPC (§5.2). Runtime methods go
@@ -17,6 +17,16 @@ export function tauriPlatform(): Platform {
     for (const l of [...listeners]) l(e);
   };
   void invoke("rpc_attach", { channel });
+
+  // Notification clicks can arrive before React mounts: the shell queues them until this attaches.
+  const shellListeners = new Set<(e: ShellEvent) => void>();
+  const early: ShellEvent[] = [];
+  const shellChannel = new Channel<ShellEvent>();
+  shellChannel.onmessage = (e) => {
+    if (shellListeners.size === 0) early.push(e);
+    for (const l of [...shellListeners]) l(e);
+  };
+  void invoke("shell_events_attach", { channel: shellChannel });
 
   const call = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
     try {
@@ -38,13 +48,12 @@ export function tauriPlatform(): Platform {
   return {
     transport,
     shell: {
-      keyStatus: () => call<KeyStatus>("key_status"),
-      setKey: (value) => call<SetKeyOutcome>("key_set", { value }),
-      clearKey: () => call<void>("key_clear"),
-      restartRuntime: () => call<void>("runtime_restart"),
-      openExternal: (url) => call<void>("open_external", { url }),
-      revealLogs: () => call<void>("reveal_logs"),
-      appInfo: () => call<AppInfo>("app_info"),
+      ...shellCommands(call),
+      onEvent: (l) => {
+        shellListeners.add(l);
+        for (const e of early.splice(0)) l(e);
+        return () => void shellListeners.delete(l);
+      },
     },
   };
 }
