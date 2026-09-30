@@ -20,6 +20,26 @@ export interface Spawned {
   done: Promise<CliResult>;
 }
 
+export const WIN = process.platform === "win32";
+
+/**
+ * Windows can't send one child a Ctrl-C: `kill("SIGINT")` terminates it (libuv's `uv_kill`), and
+ * `GenerateConsoleCtrlEvent` reaches every process on the console, this test runner included. The
+ * tests of what the CLI does on Ctrl-C run on macOS and Linux; the CLI's handler is the same code
+ * on Windows (§17 item 8).
+ */
+export const NO_CTRL_C = WIN;
+
+/**
+ * A child's whole environment: the data dir as its home, and on Windows what Win32 itself needs
+ * (sockets and crypto fail to load without `SystemRoot`).
+ */
+export function childEnv(dataDir: string, extra: Record<string, string> = {}): Record<string, string> {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dataDir, TMPDIR: tmpdir(), HOMERUN_DATA_DIR: dataDir, NO_COLOR: "1" };
+  if (WIN) Object.assign(env, { SystemRoot: process.env.SystemRoot ?? "C:\\Windows", TEMP: tmpdir(), TMP: tmpdir(), USERPROFILE: dataDir });
+  return { ...env, ...extra };
+}
+
 export interface CliOptions {
   stdin?: string;
   env?: Record<string, string>;
@@ -30,7 +50,7 @@ export interface CliOptions {
 /** Start the CLI from source (a development build) against a data dir. */
 export function spawnCli(dataDir: string, args: string[], o: CliOptions = {}): Spawned {
   const proc = Bun.spawn([process.execPath, MAIN, ...args], {
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dataDir, TMPDIR: tmpdir(), HOMERUN_DATA_DIR: dataDir, NO_COLOR: "1", ...o.env },
+    env: childEnv(dataDir, o.env),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

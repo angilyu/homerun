@@ -11,6 +11,7 @@ import { chainEntries, chainTo, chainTools } from "../../src/store/transcript";
 import { crashSeed, sampleBoundaries, sampleItems, sweepMode } from "./sampler";
 import { CLIENT_MSG_ID, HELD_MSG_ID, SCENARIOS, type ChildArgs } from "./scenarios";
 import { INTERRUPTED, NO_EFFECT } from "./sim-claude";
+import { killSignal } from "./die";
 
 /** The crash sweep shared by crash.test.ts and approval.test.ts (§16.2). */
 
@@ -41,7 +42,7 @@ async function life(a: ChildArgs): Promise<ChildResult> {
   await p.exited;
   const m = /^\{"points":.*\}$/m.exec(out);
   const r = m ? (JSON.parse(m[0]) as { points: number; kinds?: string[] }) : null;
-  return { code: p.exitCode, signal: p.signalCode, points: r?.points ?? null, kinds: r?.kinds ?? null, stderr: err };
+  return { code: p.exitCode, signal: killSignal(p), points: r?.points ?? null, kinds: r?.kinds ?? null, stderr: err };
 }
 
 /** The kind of each boundary of a life on `dir`, which is used up. */

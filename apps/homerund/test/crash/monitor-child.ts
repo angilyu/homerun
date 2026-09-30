@@ -30,6 +30,7 @@ import { MOCK_KEY, monitorSpec } from "../helpers";
 import { TOKEN } from "./scenarios";
 import { BoundaryKinds } from "./boundaries";
 import { SimEngine, type Step } from "./sim-claude";
+import { killSelf } from "./die";
 
 export interface MonitorChildArgs {
   dir: string;
@@ -55,7 +56,7 @@ const kinds = args.label ? new BoundaryKinds(args.dir) : null;
 Store.commitObserver = () => {
   kinds?.commit();
   points++;
-  if (args.killAt === points) process.kill(process.pid, "SIGKILL");
+  if (args.killAt === points) killSelf();
 };
 setLogSink(() => {}, "error");
 
@@ -71,7 +72,7 @@ const rt = await startRuntime({
       point: (where) => {
         kinds?.tool(where);
         points++;
-        if (args.killAt === points) process.kill(process.pid, "SIGKILL");
+        if (args.killAt === points) killSelf();
       },
       dead: () => false,
     }, args.lagging ? "report" : undefined),
