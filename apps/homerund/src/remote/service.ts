@@ -221,6 +221,7 @@ export class RemoteService {
 
   startPairing(): { offer_id: string; qr_url: string; expires_at: number } {
     if (!this.link?.connected || !this.account.subject) throw new RemoteError("unavailable", "Connect to the relay first: sign in and check your connection.");
+    if (!this.keysStored()) throw new RemoteError("unavailable", "Homerun is still saving this computer's keys. Try again in a moment.");
     return this.pairing.start();
   }
 
@@ -314,6 +315,11 @@ export class RemoteService {
     this.devicesChanged();
   }
 
+  /** A phone pins the key it pairs with, so pairing waits until the shell has stored it (§5.2). */
+  private keysStored(): boolean {
+    return !this.d.shellSecrets.isPending("device_static_key");
+  }
+
   private onFrame(f: ServerFrame): void {
     switch (f.type) {
       case "links":
@@ -327,6 +333,11 @@ export class RemoteService {
         return this.sessions.onClose(f.from, f.session);
       case "rendezvous":
         if (f.kind === "pair") return this.pairing.onRendezvous(f);
+        if (!this.keysStored()) {
+          log.info("refused a link request: the device keys aren't stored yet");
+          this.link?.send({ type: "rendezvous_close", to: f.from, session: f.session });
+          return;
+        }
         return this.linking.onRendezvous(f);
       case "rendezvous_close":
         return this.linking.onClose(f.from, f.session);

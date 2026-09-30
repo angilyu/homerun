@@ -172,6 +172,32 @@ describe("QR pairing (§9.6)", () => {
   });
 });
 
+describe("keys the keychain hasn't stored yet (§5.2)", () => {
+  test("aren't used for pairing or linking until the shell confirms them", async () => {
+    newUser(w);
+    let release!: () => void;
+    const hold = new Promise<void>((r) => (release = r));
+    const srt = await socketRuntime({ env: envFor(w), remote: { linkBackoff: { initialMs: 50, maxMs: 500 } } });
+    cleanup.push(() => srt.close());
+    const sh = await shellFor(srt, w.issuer, { hold });
+    await sh.c.call("account.sign_in", {});
+    await settled(sh, "signed_in");
+    await connected(sh);
+    expect(srt.rt.shellSecrets.isPending("device_static_key")).toBe(true);
+    const e = (await sh.c.call("devices.pairing.start", {}).catch((x) => x)) as LocalCallError;
+    expect(e.code).toBe(RPC_ERROR.UNAVAILABLE);
+    const p = await aPhone();
+    const deskId = (await p.client.accountDevices()).find((x) => x.kind === "desktop")!.device_id;
+    await expect(p.client.linkByCode(deskId, () => {}, 2000)).rejects.toThrow();
+    expect(sh.prompts).toEqual([]);
+    release();
+    await until(() => !srt.rt.shellSecrets.isPending("device_static_key"), 5000, "keys stored");
+    expect(sh.keychain.has("device_static_key")).toBe(true);
+    await pairWith(sh, p.client);
+    expect((await sh.c.call("devices.list", {})).devices.map((x: PairedDevice) => x.device_id)).toEqual([p.client.deviceId]);
+  });
+});
+
 describe("linking by matching codes (§10.5)", () => {
   test("the shell's prompt shows the phone's code; approving links it", async () => {
     newUser(w);

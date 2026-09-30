@@ -86,12 +86,12 @@ export interface LinkPrompt {
  * The shell, as far as remote access goes: keeps what the runtime persists in a keychain (a Map
  * that outlives the runtime), hands it over after hello as the Rust shell does, opens the
  * browser (signing in as the issuer's current user when `browse` is "auto"), and records
- * notifications and link prompts.
+ * notifications and link prompts. `hold` delays every answer to the runtime until it settles.
  */
 export async function shellFor(
   s: SocketRuntime,
   issuer: OidcIssuer,
-  o: { browse?: "auto" | "manual"; keychain?: Map<string, string>; hand?: boolean; hang?: boolean } = {},
+  o: { browse?: "auto" | "manual"; keychain?: Map<string, string>; hand?: boolean; hang?: boolean; hold?: Promise<unknown> } = {},
 ) {
   const keychain = o.keychain ?? new Map<string, string>();
   const opened: string[] = [];
@@ -101,9 +101,10 @@ export async function shellFor(
   const withdrawn: { request_id: string; reason: string }[] = [];
   const notes: { method: string; params: unknown }[] = [];
   const c = await RpcClient.connect(s.rt.config.socketPath);
-  c.onRequest((method, params) => {
+  c.onRequest(async (method, params) => {
     const p = params as { name: string; value?: string };
     if (o.hang) return new Promise(() => {});
+    await o.hold;
     if (method === "secrets.persist") keychain.set(p.name, p.value!);
     else if (method === "secrets.delete") keychain.delete(p.name);
     return method === "secrets.persist" ? { stored: true } : { deleted: true };
