@@ -6,8 +6,9 @@ monitors' health digest. It talks JSON-RPC over the runtime's
 unix socket (design §5.2), and every result and event it gets is checked against
 the `@homerun/core` schemas.
 
-Milestone 3: it authenticates with homerund's **development token**, so it only
-works in development builds (see [Builds](#builds-and-access)).
+A development build authenticates with homerund's **development token**. The release
+CLI, which ships inside Homerun.app, asks the app for its own token the first time and
+keeps it in the login keychain (milestone 8a; see [Builds and access](#builds-and-access)).
 
 ## Running
 
@@ -102,18 +103,55 @@ Development-only switches:
 |--------|--------|
 | `--socket PATH` / `HOMERUN_SOCKET` | Use this socket instead of the data dir's |
 | `--dev-token-file PATH` | Read the development token from here |
+| `--dev-role cli` | Use the release role and token flow below instead of the development token |
+| `--dev-token-store PATH` / `HOMERUN_DEV_TOKEN_STORE` | With `--dev-role cli`: keep the token in a 0600 file, not the keychain |
+| `--dev-keychain PATH` | With `--dev-role cli`: use this keychain file instead of the login keychain |
+| `--dev-peer-requirement REQ` | With `--dev-role cli`: the code requirement homerund must satisfy |
+| `--dev-skip-peer-check` / `HOMERUN_DEV_SKIP_PEER_CHECK=1` | With `--dev-role cli`: don't check who is listening, with a warning on every run |
 
-A **release** build:
-- Refuses the switches above with exit 64 and
+The last four without `--dev-role cli` are a usage error (64). A development build has no
+compiled-in requirement, so `--dev-role cli` fails the peer check unless it is given one or
+told to skip it: the escape hatch is explicit, and loud.
+
+A **release** build connects as `cli`:
+- It refuses every switch above with exit 64 and
   `<switch> is only available in development builds; this is a release build`,
-  before anything else.
-- Runs `version` and `help`.
-- Exits 77 for every command that needs the runtime, without opening the socket or
-  the dev token. `approve`, `deny`, `grants add` and `answer --completed|--not-run`
-  say why: the release CLI answers questions only. A release CLI needs a `cli_token` approved in the Homerun app,
-  which arrives with §16 row 8a, CLI access (§5.2). Even then it will only answer
-  questions: never approvals, and never "Did this happen?", which needs full
-  authority (`INPUT_ANSWER_RIGHTS.cli`).
+  before anything else. It is compiled with `--no-compile-autoload-bunfig` and
+  `--no-compile-autoload-dotenv`, so a `bunfig.toml` or `.env` in the working directory
+  can't add a preload or set these switches.
+- It answers questions only (§5.2). `approve`, `deny`, `grants add` and
+  `answer --completed|--not-run` exit 77 before connecting; homerund refuses them from
+  `cli` too, and refuses a `tasks create` or `tasks update` whose policy would need the app.
+- Before it sends anything, it checks who is listening on the socket: the same user
+  (`getpeereid`), and a process whose code signature satisfies the requirement compiled
+  in by `scripts/macos/package.sh` (`LOCAL_PEERPID`, `LOCAL_PEERTOKEN`, then
+  `SecCodeCopyGuestWithAttributes` and `SecCodeCheckValidity`). If it can't tell, it
+  refuses (77): the check fails closed, including a build with no requirement.
+- Its token is a generic password in the login keychain: service
+  `com.angilyu.homerun.cli`, labelled "Homerun command-line tool", account `default`
+  (or `data:<sha256 of the data dir>` under `HOMERUN_DATA_DIR`). homerund keeps only its
+  sha256.
+
+### Getting a token
+
+`homerun login`, or the first command that needs the runtime in a terminal, asks the
+app. Homerun asks "Allow the Homerun CLI to control your agents?", naming the CLI's version
+and host, with Don't Allow as the default. Until someone answers, the CLI waits
+(a spinner on a terminal, one line otherwise; Ctrl-C withdraws the request).
+The request expires after 2 minutes. Revoke a token in Settings → Command-line access,
+which also closes its connections; `homerun logout` revokes this CLI's token and
+deletes the keychain item. Without a terminal, a command with no token exits 77 and
+says to run `homerun login`.
+
+Exit codes for access:
+
+| Code | When |
+|------|------|
+| 0 | Approved, or signed out |
+| 64 | A development switch in a release build, or a `--dev-role cli` switch without it |
+| 69 | Homerun is not running, closed the connection, or has three requests waiting already |
+| 77 | Not approved yet, denied, no answer in 2 minutes, the token was revoked, the peer check failed, the keychain is locked or refused, or a command the release CLI can't run |
+| 130 | Ctrl-C while waiting |
 
 ## Tests
 
@@ -122,8 +160,13 @@ pnpm --filter @homerun/cli typecheck
 pnpm --filter @homerun/cli test:unit     # arguments, ids, rendering, the release refusals
 pnpm --filter @homerun/cli test:e2e      # the CLI spawned against homerund with the fake engine; both builds compiled
 pnpm --filter @homerun/cli test:replay   # the CLI driving real claude against recorded cassettes, no key
+pnpm --filter @homerun/cli test:macos    # macOS: the real keychain and peer-check calls (nightly)
 ```
 
 None of them need an API key. The e2e tests start homerund in-process on a temporary
 data dir, play the shell to set a mock key, and spawn the CLI from source.
 `test/e2e/build-gate.test.ts` compiles the CLI both ways and checks the rules above.
+`test/e2e/access.test.ts` drives login, deny, expiry, Ctrl-C, revocation and logout with an
+in-memory token store and a fake peer inspector. `test/macos` makes the real Security.framework
+calls against a throwaway keychain file, never the login keychain; the checks that need the
+login keychain or a person are in [apps/desktop/README.md](../desktop/README.md).

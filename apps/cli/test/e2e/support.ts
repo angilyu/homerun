@@ -57,7 +57,7 @@ export function spawnCli(dataDir: string, args: string[], o: CliOptions = {}): S
 export const cli = (dataDir: string, args: string[], o: CliOptions = {}) => spawnCli(dataDir, args, o).done;
 
 /** A runtime with the fake engine and the mock API key, as the dev shell would set it up. */
-export async function runtime(opts: { script?: FakeScript; env?: Record<string, string> } = {}): Promise<SocketRuntime> {
+export async function runtime(opts: Parameters<typeof socketRuntime>[0] & { script?: FakeScript } = {}): Promise<SocketRuntime> {
   const srt = await socketRuntime(opts);
   const shell = await srt.shell();
   await shell.call("secrets.set", { name: "anthropic_api_key", value: MOCK_KEY });

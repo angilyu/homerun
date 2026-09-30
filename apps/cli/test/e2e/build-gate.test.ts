@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runtime } from "./support";
@@ -11,21 +11,27 @@ import { runtime } from "./support";
 
 const MAIN = join(import.meta.dir, "..", "..", "src", "main.ts");
 const work = mkdtempSync(join(tmpdir(), "hr-cli-build-"));
-const bins = { plain: join(work, "homerun-plain"), dev: join(work, "homerun-dev") };
+const bins = { plain: join(work, "homerun-plain"), dev: join(work, "homerun-dev"), pinned: join(work, "homerun-pinned") };
 
-function compile(out: string, define?: string): void {
-  const r = Bun.spawnSync([process.execPath, "build", "--compile", MAIN, "--outfile", out, ...(define ? ["--define", define] : [])], { stderr: "pipe", stdout: "pipe" });
+/** As package.json and the packaging scripts build it: a compiled binary never reads bunfig.toml or .env from where it runs. */
+const NO_AUTOLOAD = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv"];
+const NOBODY = 'cdhash H"0000000000000000000000000000000000000000"';
+
+function compile(out: string, ...defines: string[]): void {
+  const r = Bun.spawnSync([process.execPath, "build", "--compile", ...NO_AUTOLOAD, MAIN, "--outfile", out, ...defines.flatMap((d) => ["--define", d])], { stderr: "pipe", stdout: "pipe" });
   if (r.exitCode !== 0) throw new Error(`bun build failed: ${r.stderr.toString()}`);
 }
 
 beforeAll(() => {
   compile(bins.plain);
   compile(bins.dev, `HOMERUN_CLI_BUILD="development"`);
+  compile(bins.pinned, `HOMERUN_CLI_PEER_REQUIREMENT=${JSON.stringify(NOBODY)}`);
 }, 120_000);
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-async function run(bin: string, dataDir: string, args: string[], env: Record<string, string> = {}) {
+async function run(bin: string, dataDir: string, args: string[], env: Record<string, string> = {}, cwd?: string) {
   const p = Bun.spawn([bin, ...args], {
+    cwd,
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dataDir, TMPDIR: tmpdir(), HOMERUN_DATA_DIR: dataDir, NO_COLOR: "1", ...env },
     stdin: "ignore",
     stdout: "pipe",
@@ -37,36 +43,82 @@ async function run(bin: string, dataDir: string, args: string[], env: Record<str
   return { code, stdout, stderr };
 }
 
+/** A socket that counts what it is sent. */
+function listener(dir: string) {
+  mkdirSync(join(dir, "run"), { recursive: true, mode: 0o700 });
+  const seen = { connections: 0, bytes: 0 };
+  const l = Bun.listen({ unix: join(dir, "run", "homerund.sock"), socket: { open: () => void seen.connections++, data: (_s, d) => void (seen.bytes += d.length) } });
+  return { seen, stop: () => l.stop(true) };
+}
+
 describe("a compiled homerun without a build define is release", () => {
-  test("it says so, and refuses runtime commands with 77 even when a development runtime is up", async () => {
-    const srt = await runtime();
+  test("it says so; with no code requirement compiled in, it refuses with 77 and sends nothing", async () => {
+    const dir = mkdtempSync(join(work, "d-"));
+    const l = listener(dir);
     try {
-      const v = await run(bins.plain, srt.dir, ["version"]);
+      const v = await run(bins.plain, dir, ["version"]);
       expect(v.code).toBe(0);
       expect(v.stdout).toContain("(release)");
-      for (const args of [["status"], ["send", "--new", "hi"], ["threads", "list"]]) {
-        const r = await run(bins.plain, srt.dir, args);
+      for (const args of [["status"], ["send", "--new", "hi"], ["threads", "list"], ["login"], ["logout"]]) {
+        const r = await run(bins.plain, dir, args);
         expect(r.code).toBe(77);
-        expect(r.stderr).toContain("needs access approved in the Homerun app");
+        expect(r.stderr).toContain("homerund's identity could not be verified, so the token was not used: this build has no code requirement");
       }
-      expect((await srt.dev().then((d) => d.call("threads.list", {}))).threads).toHaveLength(0);
+      expect(l.seen.connections).toBeGreaterThan(0);
+      expect(l.seen.bytes).toBe(0);
     } finally {
-      await srt.close();
+      l.stop();
     }
   }, 30_000);
 
-  test("it refuses --socket, --dev-token-file and HOMERUN_SOCKET with 64", async () => {
+  test("with a requirement compiled in, a listener that doesn't satisfy it gets nothing", async () => {
+    const dir = mkdtempSync(join(work, "d-"));
+    const l = listener(dir);
+    try {
+      const r = await run(bins.pinned, dir, ["status"]);
+      expect(r.code).toBe(77);
+      expect(r.stderr).toContain(process.platform === "darwin" ? "is not Homerun's homerund" : "it can only be checked on macOS");
+      expect(l.seen.bytes).toBe(0);
+    } finally {
+      l.stop();
+    }
+  }, 30_000);
+
+  test("it refuses every development switch and variable with 64", async () => {
     const dir = mkdtempSync(join(work, "d-"));
     for (const [args, env, what] of [
       [["status", "--socket", "/tmp/x.sock"], {}, "--socket"],
       [["status", "--dev-token-file", "/tmp/t"], {}, "--dev-token-file"],
       [["version"], { HOMERUN_SOCKET: "/tmp/x.sock" }, "HOMERUN_SOCKET"],
+      [["status", "--dev-role", "cli"], {}, "--dev-role"],
+      [["login", "--dev-token-store", "/tmp/t"], {}, "--dev-token-store"],
+      [["status", "--dev-skip-peer-check"], {}, "--dev-skip-peer-check"],
+      [["status", "--dev-peer-requirement", "anchor apple"], {}, "--dev-peer-requirement"],
+      [["login", "--dev-keychain", "/tmp/k"], {}, "--dev-keychain"],
+      [["status"], { HOMERUN_DEV_TOKEN_STORE: "/tmp/t" }, "HOMERUN_DEV_TOKEN_STORE"],
+      [["status"], { HOMERUN_DEV_SKIP_PEER_CHECK: "1" }, "HOMERUN_DEV_SKIP_PEER_CHECK"],
     ] as const) {
       const r = await run(bins.plain, dir, [...args], { ...env });
       expect(r.code).toBe(64);
       expect(r.stderr).toContain(`${what} is only available in development builds; this is a release build`);
     }
   }, 30_000);
+
+  test("it never reads bunfig.toml (a preload) or .env from the directory it runs in", async () => {
+    const dir = mkdtempSync(join(work, "cwd-"));
+    const marker = join(dir, "preloaded");
+    writeFileSync(join(dir, "evil.ts"), `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "x");\n`);
+    writeFileSync(join(dir, "bunfig.toml"), `preload = ["./evil.ts"]\n`);
+    writeFileSync(join(dir, ".env"), "HOMERUN_DEV_SKIP_PEER_CHECK=1\nHOMERUN_SOCKET=/tmp/elsewhere.sock\n");
+    const r = await run(bins.plain, dir, ["version"], {}, dir);
+    expect(r.code).toBe(0);
+    expect(() => readFileSync(marker)).toThrow();
+  }, 30_000);
+
+  test("package.json builds it the same way", () => {
+    const pkg = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8"));
+    for (const script of [pkg.scripts.build, pkg.scripts["build:dev"]]) for (const f of NO_AUTOLOAD) expect(script).toContain(f);
+  });
 });
 
 describe("a compiled homerun built with HOMERUN_CLI_BUILD=development", () => {

@@ -18,7 +18,7 @@ import { CliError, EXIT } from "./exit";
 
 export type Env = Record<string, string | undefined>;
 
-export const START_HINT = "start it with `pnpm --filter @homerun/homerund dev` (or open the Homerun app, once it exists)";
+export const START_HINT = "open Homerun, or start a development runtime with `pnpm --filter @homerun/homerund dev`";
 
 /** The switches only a development build honours. A release build exits 64 on any of them. */
 export function devSwitchesUsed(values: Values, env: Env): string[] {
@@ -26,6 +26,10 @@ export function devSwitchesUsed(values: Values, env: Env): string[] {
   if (values.socket !== undefined) used.push("--socket");
   if (env.HOMERUN_SOCKET) used.push("HOMERUN_SOCKET");
   if (values["dev-token-file"] !== undefined) used.push("--dev-token-file");
+  for (const flag of ["dev-role", "dev-token-store", "dev-skip-peer-check", "dev-peer-requirement", "dev-keychain"])
+    if (values[flag] !== undefined) used.push(`--${flag}`);
+  if (env.HOMERUN_DEV_TOKEN_STORE) used.push("HOMERUN_DEV_TOKEN_STORE");
+  if (env.HOMERUN_DEV_SKIP_PEER_CHECK) used.push("HOMERUN_DEV_SKIP_PEER_CHECK");
   return used;
 }
 
@@ -34,13 +38,6 @@ export function refuseDevSwitches(channel: BuildChannel, values: Values, env: En
   const [first] = devSwitchesUsed(values, env);
   if (first) throw new CliError(`${first} is only available in development builds; this is a release build`, EXIT.USAGE);
 }
-
-export const releaseRefusal = () =>
-  new CliError(
-    "this CLI needs access approved in the Homerun app, which arrives with the desktop app",
-    EXIT.NOPERM,
-    "for now, use a development build: `pnpm homerun …` from the repository",
-  );
 
 /** Commands only full authority may run: approvals, "Did this happen?" and grants (INPUT_ANSWER_RIGHTS.cli). */
 export function fullAuthorityOnly(command: string, values: Values): boolean {
@@ -67,13 +64,12 @@ export function resolveTarget(values: Values, env: Env): Target {
 }
 
 /**
- * Connect and authenticate. A development build uses the `cli_dev` role and the development
- * token homerund writes at each start, read fresh on every call. A release build never reads it:
- * its `cli_token` arrives with the desktop app (M7), which must also check the socket's peer
- * before sending a real token.
+ * Connect and authenticate a development build as `cli_dev`, with the development token homerund
+ * writes at each start, read fresh on every call. The release role (`cli`) goes through
+ * `CliAccess` instead: a peer check, then its own token (§5.2).
  */
-export async function connect(channel: BuildChannel, target: Target): Promise<RpcClient> {
-  if (channel !== "development") throw releaseRefusal();
+export async function connectDev(channel: BuildChannel, target: Target): Promise<RpcClient> {
+  if (channel !== "development") throw new CliError("a release build never uses the development token", EXIT.NOPERM);
   let c: RpcClient;
   try {
     c = await RpcClient.connect(target.socketPath);

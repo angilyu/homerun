@@ -11,3 +11,10 @@ export const BUILD_CHANNEL: BuildChannel = resolveBuildChannel(
   typeof HOMERUN_CLI_BUILD === "string" ? HOMERUN_CLI_BUILD : undefined,
   isCompiledUrl(import.meta.url),
 );
+
+/**
+ * The code requirement homerund must satisfy before the release CLI sends its token (§5.2),
+ * compiled in by the packaging scripts. Absent in any other build, which then refuses.
+ */
+export const PEER_REQUIREMENT: string | undefined =
+  typeof HOMERUN_CLI_PEER_REQUIREMENT === "string" && HOMERUN_CLI_PEER_REQUIREMENT ? HOMERUN_CLI_PEER_REQUIREMENT : undefined;

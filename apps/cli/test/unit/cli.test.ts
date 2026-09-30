@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, helpText, COMMANDS } from "../../src/args";
 import { devSwitchesUsed, refuseDevSwitches } from "../../src/connect";
+import { auditTokenPid, peerRefusal, verifyPeer, type PeerInspector, type PeerVerdict } from "../../src/peer";
+import { FileTokenStore, KeychainTokenStore, keychainAccount, keychainFailure, type TokenStore } from "../../src/token-store";
+import { Waiting, mmss } from "../../src/waiting";
 import { CliError } from "../../src/exit";
 import { contentText, headLines, inputSummary, partialStdout, table, truncate } from "../../src/format";
 import { matchPrefix } from "../../src/ids";
-import { main } from "../../src/main";
-import { Output, colorWanted } from "../../src/output";
+import { main, roleFor } from "../../src/main";
+import { Output, colorWanted, colors } from "../../src/output";
 import { EventRenderer, resendCommand } from "../../src/render";
 import type { Io } from "../../src/context";
 import { alwaysGrant, inlineAnswer, questionResponse } from "../../src/commands/input";
@@ -267,39 +270,56 @@ describe("a release build (in process)", () => {
     };
   }
 
-  test("refuses runtime commands with 77 without touching the socket", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "hr-cli-rel-"));
+  /** A socket that counts connections and bytes, and a token store that counts reads. */
+  function listener(dir: string) {
     mkdirSync(join(dir, "run"), { mode: 0o700 });
-    let connections = 0;
-    const listener = Bun.listen({ unix: join(dir, "run", "homerund.sock"), socket: { open: () => void connections++, data() {} } });
+    const seen = { connections: 0, bytes: 0 };
+    const l = Bun.listen({
+      unix: join(dir, "run", "homerund.sock"),
+      socket: { open: () => void seen.connections++, data: (_s, d) => void (seen.bytes += d.length) },
+    });
+    return { seen, stop: () => l.stop(true) };
+  }
+
+  test("without a compiled-in code requirement it refuses with 77 before reading or sending the token", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-cli-rel-"));
+    const l = listener(dir);
+    const store = new MemoryStore("A".repeat(43));
     try {
-      for (const argv of [["status"], ["threads", "list"], ["send", "--new", "hi"], ["chat"]]) {
+      for (const argv of [["status"], ["threads", "list"], ["send", "--new", "hi"], ["answer", "abcd1234", "--choice", "Blue"], ["login"], ["logout"]]) {
         const x = io(argv, { HOMERUN_DATA_DIR: dir });
-        expect(await main(x)).toBe(77);
-        expect(x.err()).toContain("needs access approved in the Homerun app");
+        expect(await main(x, { store, inspector: () => fakeInspector(), platform: "darwin" })).toBe(77);
+        expect(x.err()).toContain("homerund's identity could not be verified, so the token was not used: this build has no code requirement");
       }
+      await Bun.sleep(20);
+      expect(l.seen.connections).toBeGreaterThan(0);
+      expect(l.seen.bytes).toBe(0);
+      expect(store.reads).toBe(0);
       const v = io(["version"], { HOMERUN_DATA_DIR: dir });
       expect(await main(v)).toBe(0);
       expect(v.out()).toContain("(release)");
       expect(await main(io(["help"], {}))).toBe(0);
-      await Bun.sleep(20);
-      expect(connections).toBe(0);
     } finally {
-      listener.stop(true);
+      l.stop();
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("answers questions only: approvals, grants and \"Did this happen?\" are refused with 77 (§5.2)", async () => {
-    for (const argv of [["approve", "abcd1234"], ["deny", "abcd1234"], ["answer", "abcd1234", "--completed"], ["grants", "add", "abcd", "--tool", "Bash", "--class", "read"]]) {
-      const x = io(argv, {});
-      expect(await main(x)).toBe(77);
-      expect(x.err()).toContain("the release CLI answers questions only");
+  test("answers questions only: approvals, grants and \"Did this happen?\" are refused with 77 before connecting (§5.2)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-cli-rel-"));
+    const l = listener(dir);
+    try {
+      for (const argv of [["approve", "abcd1234"], ["deny", "abcd1234"], ["answer", "abcd1234", "--completed"], ["answer", "abcd1234", "--not-run"], ["grants", "add", "abcd", "--tool", "Bash", "--class", "read"]]) {
+        const x = io(argv, { HOMERUN_DATA_DIR: dir });
+        expect(await main(x)).toBe(77);
+        expect(x.err()).toContain("the release CLI answers questions only");
+      }
+      await Bun.sleep(20);
+      expect(l.seen.connections).toBe(0);
+    } finally {
+      l.stop();
+      rmSync(dir, { recursive: true, force: true });
     }
-    // A question needs only a credential, which arrives with the desktop app.
-    const x = io(["answer", "abcd1234", "--choice", "Blue"], {});
-    expect(await main(x)).toBe(77);
-    expect(x.err()).toContain("needs access approved in the Homerun app");
   });
 
   test("refuses development switches with 64, whatever the command", async () => {
@@ -307,10 +327,177 @@ describe("a release build (in process)", () => {
       [["status", "--socket", "/tmp/x.sock"], {}],
       [["version", "--dev-token-file", "/tmp/t"], {}],
       [["status"], { HOMERUN_SOCKET: "/tmp/x.sock" }],
+      [["status", "--dev-role", "cli"], {}],
+      [["status", "--dev-token-store", "/tmp/t"], {}],
+      [["status", "--dev-skip-peer-check"], {}],
+      [["status", "--dev-peer-requirement", "anchor apple"], {}],
+      [["login", "--dev-keychain", "/tmp/k"], {}],
+      [["status"], { HOMERUN_DEV_TOKEN_STORE: "/tmp/t" }],
+      [["logout"], { HOMERUN_DEV_SKIP_PEER_CHECK: "1" }],
     ] as const) {
       const x = io([...argv], { ...env });
       expect(await main(x)).toBe(64);
       expect(x.err()).toContain("is only available in development builds; this is a release build");
     }
+  });
+});
+
+describe("the release role from a development build", () => {
+  test("--dev-role picks the role; the release-flow switches need it; login and logout need it", async () => {
+    expect(roleFor("release", {})).toBe("cli");
+    expect(roleFor("development", {})).toBe("cli_dev");
+    expect(roleFor("development", { "dev-role": "cli" })).toBe("cli");
+    expect(code(() => roleFor("development", { "dev-role": "shell" }))).toBe(64);
+    expect(code(() => roleFor("development", { "dev-token-store": "/tmp/t" }))).toBe(64);
+    let err = "";
+    const x: Io = { argv: ["login"], env: {}, channel: "development", stdout: { write() {} }, stderr: { write: (s) => void (err += s) }, stdin: process.stdin, onInterrupt: () => () => {} };
+    expect(await main(x)).toBe(64);
+    expect(err).toContain("login is for the release CLI");
+  });
+});
+
+class MemoryStore implements TokenStore {
+  readonly where = "memory";
+  reads = 0;
+  constructor(public token: string | null = null) {}
+  read() {
+    this.reads++;
+    return this.token;
+  }
+  write(t: string) {
+    this.token = t;
+  }
+  delete() {
+    const had = this.token !== null;
+    this.token = null;
+    return had;
+  }
+}
+
+/** Audit token with pid 4242 in val[5]. */
+const audit = (pid: number) => Uint32Array.from([0, 501, 501, 501, 501, pid, 0, 1]);
+
+function fakeInspector(o: Partial<PeerInspector> = {}): PeerInspector {
+  return {
+    ownUid: () => 501,
+    peerUid: () => 501,
+    peerPid: () => 4242,
+    peerAuditToken: () => audit(4242),
+    checkRequirement: () => 0,
+    ...o,
+  };
+}
+
+describe("the peer check (§5.2)", () => {
+  const REQ = 'identifier "com.angilyu.homerun.homerund"';
+  const check = (o: Partial<PeerInspector>, req: string | undefined = REQ, platform = "darwin", fd: number | null = 7) => verifyPeer(fd, req, platform, () => fakeInspector(o));
+
+  test("passes when the uid, pid, audit token and code requirement all agree", async () => {
+    let asked: [Uint32Array, string] | null = null;
+    expect(await check({ checkRequirement: (t, r) => ((asked = [t, r]), 0) })).toEqual({ ok: true, pid: 4242 });
+    expect(asked![1]).toBe(REQ);
+    expect(auditTokenPid(asked![0])).toBe(4242);
+  });
+
+  test("fails closed", async () => {
+    const cases: [string, Promise<PeerVerdict>][] = [
+      ["no code requirement", verifyPeer(7, undefined, "darwin", () => fakeInspector())],
+      ["no code requirement", check({}, "")],
+      ["only be checked on macOS", check({}, REQ, "linux")],
+      ["no file descriptor", check({}, REQ, "darwin", null)],
+      ["another user (uid 0)", check({ peerUid: () => 0 })],
+      ["pid and audit token disagree", check({ peerPid: () => 4243 })],
+      ["pid and audit token disagree", check({ peerPid: () => 0, peerAuditToken: () => audit(0) })],
+      ["audit token is malformed", check({ peerAuditToken: () => new Uint32Array(4) })],
+      ["not Homerun's homerund", check({ checkRequirement: () => -67050 })],
+      ["is not signed", check({ checkRequirement: () => -67062 })],
+      ["OSStatus -67030", check({ checkRequirement: () => -67030 })],
+      ["the check failed: getsockopt LOCAL_PEERTOKEN failed", check({ peerAuditToken: () => { throw new Error("getsockopt LOCAL_PEERTOKEN failed"); } })],
+    ];
+    for (const [why, p] of cases) {
+      const v = await p;
+      expect(v.ok).toBe(false);
+      expect(v.ok ? "" : v.why).toContain(why);
+    }
+    const loading = await verifyPeer(7, REQ, "darwin", () => Promise.reject(new Error("dlopen failed")));
+    expect(loading).toEqual({ ok: false, why: "the check failed: dlopen failed" });
+    expect(peerRefusal("x").code).toBe(77);
+  });
+});
+
+describe("the token store", () => {
+  test("a 0600 file: round trip, replace, delete; readable by others or malformed is refused", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-cli-store-"));
+    try {
+      const s = new FileTokenStore(join(dir, "token"));
+      expect(s.read()).toBeNull();
+      s.write("A".repeat(43));
+      expect(statSync(join(dir, "token")).mode & 0o777).toBe(0o600);
+      expect(s.read()).toBe("A".repeat(43));
+      s.write("B".repeat(43));
+      expect(s.read()).toBe("B".repeat(43));
+      chmodSync(join(dir, "token"), 0o644);
+      expect(code(() => s.read())).toBe(77);
+      chmodSync(join(dir, "token"), 0o600);
+      writeFileSync(join(dir, "token"), "not a token", { mode: 0o600 });
+      expect(s.read()).toBeNull();
+      expect(s.delete()).toBe(true);
+      expect(s.delete()).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("one keychain item per data directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-cli-acct-"));
+    try {
+      expect(keychainAccount({})).toBe("default");
+      const a = keychainAccount({ HOMERUN_DATA_DIR: dir });
+      expect(a).toMatch(/^data:[0-9a-f]{64}$/);
+      expect(keychainAccount({ HOMERUN_DATA_DIR: join(dir, ".") })).toBe(a);
+      expect(keychainAccount({ HOMERUN_DATA_DIR: join(dir, "other") })).not.toBe(a);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("keychain errors: locked is 77 with an unlock hint, refused is 77, anything else is 1", () => {
+    const locked = keychainFailure("read", -25308);
+    expect([locked.code, locked.hint]).toEqual([77, "unlock it first (over ssh: `security unlock-keychain`), then try again"]);
+    expect(keychainFailure("read", -128).code).toBe(77);
+    expect(keychainFailure("save", -25293).code).toBe(77);
+    const other = keychainFailure("save", -34018);
+    expect([other.code, other.message]).toEqual([1, "the keychain failed to save the token (OSStatus -34018)"]);
+  });
+
+  test("off macOS the keychain refuses rather than failing oddly", () => {
+    if (process.platform === "darwin") return;
+    expect(code(() => new KeychainTokenStore("default").read())).toBe(77);
+  });
+});
+
+describe("waiting for approval", () => {
+  test("m:ss", () => {
+    expect(mmss(120_000)).toBe("2:00");
+    expect(mmss(112_001)).toBe("1:53");
+    expect(mmss(-5)).toBe("0:00");
+  });
+
+  test("a terminal gets a spinner redrawn in place; anything else one line in, one out", () => {
+    let t = 1_000;
+    let tty = "";
+    const w = new Waiting({ write: (s) => void (tty += s) }, true, colors(false), () => t);
+    w.start(t + 120_000);
+    t += 8_000;
+    expect(w.line()).toMatch(/^. Waiting for approval… 1:52$/);
+    w.finish("✓ Approved.");
+    expect(tty).toContain("Ctrl-C cancels.");
+    expect(tty).toContain("\r\x1b[K✓ Approved.\n");
+
+    let plain = "";
+    const p = new Waiting({ write: (s) => void (plain += s) }, false, colors(false), () => 0);
+    p.start(120_000);
+    p.finish("✗ Denied in the Homerun app.");
+    expect(plain).toBe('Homerun needs to approve this command-line tool.\n  Click "Allow" in the Homerun app. It waits up to 2:00.\n✗ Denied in the Homerun app.\n');
   });
 });
