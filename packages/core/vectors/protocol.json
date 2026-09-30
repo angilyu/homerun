@@ -2574,6 +2574,365 @@
       }
     },
     {
+      "schema": "AccountStatusParams",
+      "name": "account.status: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "AccountStatusParams",
+      "name": "account.status: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "AccountStatusResult",
+      "name": "account.status: signed out",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        }
+      }
+    },
+    {
+      "schema": "AccountStatusResult",
+      "name": "account.status: signed in, linking",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_in",
+          "email": "ada@example.com",
+          "error": null,
+          "relay": {
+            "state": "connected",
+            "since": 1767225600000,
+            "error": null
+          },
+          "link_request": {
+            "name": "Ada's iPhone",
+            "platform": "ios"
+          }
+        }
+      }
+    },
+    {
+      "schema": "AccountStatusResult",
+      "name": "account.status: unknown state",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "status": {
+          "state": "online",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        }
+      }
+    },
+    {
+      "schema": "AccountSignInParams",
+      "name": "account.sign_in: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "AccountSignInParams",
+      "name": "account.sign_in: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "AccountSignInResult",
+      "name": "account.sign_in: signing in",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signing_in",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        }
+      }
+    },
+    {
+      "schema": "AccountCancelSignInParams",
+      "name": "account.cancel_sign_in: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "AccountCancelSignInParams",
+      "name": "account.cancel_sign_in: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "AccountCancelSignInResult",
+      "name": "account.cancel_sign_in: signed out",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": "Sign-in was cancelled.",
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        }
+      }
+    },
+    {
+      "schema": "AccountSignOutParams",
+      "name": "account.sign_out: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "AccountSignOutParams",
+      "name": "account.sign_out: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "AccountSignOutResult",
+      "name": "account.sign_out: signed out",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        }
+      }
+    },
+    {
+      "schema": "AccountDeleteParams",
+      "name": "account.delete: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "AccountDeleteParams",
+      "name": "account.delete: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: signed out",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        }
+      }
+    },
+    {
+      "schema": "DevicesListParams",
+      "name": "devices.list: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "DevicesListParams",
+      "name": "devices.list: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "DevicesListResult",
+      "name": "devices.list: one phone",
+      "valid": true,
+      "value": {
+        "devices": [
+          {
+            "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+            "name": "Ada's iPhone",
+            "platform": "ios",
+            "method": "qr",
+            "paired_at": 1767225600000,
+            "online": false,
+            "last_seen_at": 1767225660000
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DevicesListResult",
+      "name": "devices.list: a desktop",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "devices": [
+          {
+            "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+            "name": "Ada's iPhone",
+            "platform": "desktop",
+            "method": "qr",
+            "paired_at": 1767225600000,
+            "online": false,
+            "last_seen_at": 1767225660000
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DevicesUnpairParams",
+      "name": "devices.unpair: by id",
+      "valid": true,
+      "value": {
+        "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02"
+      }
+    },
+    {
+      "schema": "DevicesUnpairParams",
+      "name": "devices.unpair: missing id",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {}
+    },
+    {
+      "schema": "DevicesUnpairResult",
+      "name": "devices.unpair: ok",
+      "valid": true,
+      "value": {
+        "ok": true
+      }
+    },
+    {
+      "schema": "DevicesPairingStartParams",
+      "name": "devices.pairing.start: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "DevicesPairingStartParams",
+      "name": "devices.pairing.start: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "DevicesPairingStartResult",
+      "name": "devices.pairing.start: offer",
+      "valid": true,
+      "value": {
+        "offer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01",
+        "qr_url": "homerun://pair?d=eyJ2IjoxfQ",
+        "expires_at": 1767225900000
+      }
+    },
+    {
+      "schema": "DevicesPairingStartResult",
+      "name": "devices.pairing.start: no expiry",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "offer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01",
+        "qr_url": "homerun://pair?d=eyJ2IjoxfQ"
+      }
+    },
+    {
+      "schema": "DevicesPairingCancelParams",
+      "name": "devices.pairing.cancel: by id",
+      "valid": true,
+      "value": {
+        "offer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
+      }
+    },
+    {
+      "schema": "DevicesPairingCancelParams",
+      "name": "devices.pairing.cancel: missing id",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {}
+    },
+    {
+      "schema": "DevicesPairingCancelResult",
+      "name": "devices.pairing.cancel: ok",
+      "valid": true,
+      "value": {
+        "ok": true
+      }
+    },
+    {
+      "schema": "DevicesLinkDecideParams",
+      "name": "devices.link.decide: link",
+      "valid": true,
+      "value": {
+        "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
+        "approve": true
+      }
+    },
+    {
+      "schema": "DevicesLinkDecideParams",
+      "name": "devices.link.decide: don't link",
+      "valid": true,
+      "value": {
+        "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
+        "approve": false
+      }
+    },
+    {
+      "schema": "DevicesLinkDecideParams",
+      "name": "devices.link.decide: no decision",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01"
+      }
+    },
+    {
+      "schema": "DevicesLinkDecideResult",
+      "name": "devices.link.decide: ok",
+      "valid": true,
+      "value": {
+        "ok": true
+      }
+    },
+    {
       "schema": "CliApproveParams",
       "name": "cli.approve: approve",
       "valid": true,
@@ -2775,6 +3134,40 @@
       "layer": "json_schema",
       "value": {
         "stored": false
+      }
+    },
+    {
+      "schema": "SecretsDeleteParams",
+      "name": "secrets.delete: refresh token",
+      "valid": true,
+      "value": {
+        "name": "refresh_token"
+      }
+    },
+    {
+      "schema": "SecretsDeleteParams",
+      "name": "secrets.delete: unknown secret",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "name": "github_token"
+      }
+    },
+    {
+      "schema": "SecretsDeleteResult",
+      "name": "secrets.delete: deleted",
+      "valid": true,
+      "value": {
+        "deleted": true
+      }
+    },
+    {
+      "schema": "SecretsDeleteResult",
+      "name": "secrets.delete: not deleted",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "deleted": false
       }
     },
     {
@@ -3113,6 +3506,151 @@
       "value": {
         "key": "Input:X"
       }
+    },
+    {
+      "schema": "AccountChangedNotification",
+      "name": "account.changed: connecting",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_in",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "connecting",
+            "since": 1767225600000,
+            "error": null
+          },
+          "link_request": null
+        }
+      }
+    },
+    {
+      "schema": "AccountChangedNotification",
+      "name": "account.changed: missing status",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {}
+    },
+    {
+      "schema": "DevicesChangedNotification",
+      "name": "devices.changed: one phone",
+      "valid": true,
+      "value": {
+        "devices": [
+          {
+            "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+            "name": "Ada's iPhone",
+            "platform": "ios",
+            "method": "qr",
+            "paired_at": 1767225600000,
+            "online": false,
+            "last_seen_at": 1767225660000
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DevicesChangedNotification",
+      "name": "devices.changed: none",
+      "valid": true,
+      "value": {
+        "devices": []
+      }
+    },
+    {
+      "schema": "DevicesChangedNotification",
+      "name": "devices.changed: missing devices",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {}
+    },
+    {
+      "schema": "DevicesPairingCompletedNotification",
+      "name": "devices.pairing_completed: paired",
+      "valid": true,
+      "value": {
+        "offer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01",
+        "device": {
+          "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+          "name": "Ada's iPhone",
+          "platform": "ios",
+          "method": "qr",
+          "paired_at": 1767225600000,
+          "online": false,
+          "last_seen_at": 1767225660000
+        }
+      }
+    },
+    {
+      "schema": "DevicesPairingCompletedNotification",
+      "name": "devices.pairing_completed: missing device",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "offer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01"
+      }
+    },
+    {
+      "schema": "DevicesLinkRequestedNotification",
+      "name": "devices.link_requested: phone",
+      "valid": true,
+      "value": {
+        "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
+        "name": "Ada's iPhone",
+        "platform": "ios",
+        "code": "482915",
+        "requested_at": 1767225600000,
+        "expires_at": 1767225720000
+      }
+    },
+    {
+      "schema": "DevicesLinkRequestedNotification",
+      "name": "devices.link_requested: four digits",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
+        "name": "Ada's iPhone",
+        "platform": "ios",
+        "code": "4821",
+        "requested_at": 1767225600000,
+        "expires_at": 1767225720000
+      }
+    },
+    {
+      "schema": "DevicesLinkWithdrawnNotification",
+      "name": "devices.link_withdrawn: expired",
+      "valid": true,
+      "value": {
+        "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
+        "reason": "expired"
+      }
+    },
+    {
+      "schema": "DevicesLinkWithdrawnNotification",
+      "name": "devices.link_withdrawn: unknown reason",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
+        "reason": "denied"
+      }
+    },
+    {
+      "schema": "BrowserOpenNotification",
+      "name": "browser.open: authorize",
+      "valid": true,
+      "value": {
+        "url": "https://auth.example.com/oauth2/authorize?client_id=client_01&state=abc"
+      }
+    },
+    {
+      "schema": "BrowserOpenNotification",
+      "name": "browser.open: missing url",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {}
     },
     {
       "schema": "HealthDigestReadyNotification",

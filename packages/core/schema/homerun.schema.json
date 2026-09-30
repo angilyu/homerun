@@ -4,6 +4,200 @@
   "title": "Homerun core schemas",
   "description": "Generated from packages/core by scripts/gen.ts. Protocol v1, spec format 1. Do not edit.",
   "$defs": {
+    "AccountCancelSignInParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "AccountCancelSignInResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "AccountChangedNotification": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "AccountDeleteParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "AccountDeleteResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "AccountSignInParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "AccountSignInResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "AccountSignOutParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "AccountSignOutResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "AccountState": {
+      "type": "string",
+      "enum": [
+        "not_configured",
+        "signed_out",
+        "signing_in",
+        "signed_in",
+        "needs_sign_in"
+      ]
+    },
+    "AccountStatus": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/AccountState"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 320
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "relay": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "$ref": "#/$defs/RelayLinkState"
+            },
+            "since": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TimestampMs"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "since",
+            "error"
+          ]
+        },
+        "link_request": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "platform": {
+                  "type": "string",
+                  "enum": [
+                    "ios",
+                    "web"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "platform"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "email",
+        "error",
+        "relay",
+        "link_request"
+      ]
+    },
+    "AccountStatusParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "AccountStatusResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
     "ActSpec": {
       "type": "object",
       "properties": {
@@ -263,6 +457,19 @@
         "offset",
         "data",
         "eof"
+      ]
+    },
+    "BrowserOpenNotification": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "maxLength": 4096,
+          "format": "uri"
+        }
+      },
+      "required": [
+        "url"
       ]
     },
     "Budget": {
@@ -872,6 +1079,214 @@
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "description": "One install, one OS user (§12)"
+    },
+    "DevicesChangedNotification": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PairedDevice"
+          }
+        }
+      },
+      "required": [
+        "devices"
+      ]
+    },
+    "DevicesLinkDecideParams": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "approve": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "request_id",
+        "approve"
+      ]
+    },
+    "DevicesLinkDecideResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "DevicesLinkRequestedNotification": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "ios",
+            "web"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[0-9]{6}$"
+        },
+        "requested_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "request_id",
+        "name",
+        "platform",
+        "code",
+        "requested_at",
+        "expires_at"
+      ]
+    },
+    "DevicesLinkWithdrawnNotification": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "expired",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "reason"
+      ]
+    },
+    "DevicesListParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "DevicesListResult": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PairedDevice"
+          }
+        }
+      },
+      "required": [
+        "devices"
+      ]
+    },
+    "DevicesPairingCancelParams": {
+      "type": "object",
+      "properties": {
+        "offer_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      },
+      "required": [
+        "offer_id"
+      ]
+    },
+    "DevicesPairingCancelResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
+    "DevicesPairingCompletedNotification": {
+      "type": "object",
+      "properties": {
+        "offer_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "device": {
+          "$ref": "#/$defs/PairedDevice"
+        }
+      },
+      "required": [
+        "offer_id",
+        "device"
+      ]
+    },
+    "DevicesPairingStartParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "DevicesPairingStartResult": {
+      "type": "object",
+      "properties": {
+        "offer_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "qr_url": {
+          "type": "string",
+          "maxLength": 512,
+          "format": "uri"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "offer_id",
+        "qr_url",
+        "expires_at"
+      ]
+    },
+    "DevicesUnpairParams": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        }
+      },
+      "required": [
+        "device_id"
+      ]
+    },
+    "DevicesUnpairResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
     },
     "Downtime": {
       "type": "object",
@@ -2764,6 +3179,58 @@
       ],
       "description": "The authenticated device that sent something (§9.9), never taken from message content"
     },
+    "PairedDevice": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "ios",
+            "web"
+          ]
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "qr",
+            "code"
+          ]
+        },
+        "paired_at": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "last_seen_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimestampMs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "device_id",
+        "name",
+        "platform",
+        "method",
+        "paired_at",
+        "online",
+        "last_seen_at"
+      ]
+    },
     "PairingCode": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{16,64}$",
@@ -3076,6 +3543,15 @@
         "mode",
         "to_device_id",
         "from_device_id"
+      ]
+    },
+    "RelayLinkState": {
+      "type": "string",
+      "enum": [
+        "off",
+        "connecting",
+        "connected",
+        "offline"
       ]
     },
     "RelayPresence": {
@@ -4705,6 +5181,29 @@
       },
       "required": [
         "ok"
+      ]
+    },
+    "SecretsDeleteParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/SecretName"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "SecretsDeleteResult": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "deleted"
       ]
     },
     "SecretsPersistParams": {

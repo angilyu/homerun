@@ -110,13 +110,13 @@ describe("allowlists", () => {
   });
 
   test("shell-only methods appear only in the shell's list (§5.2)", () => {
-    expect([...SHELL_ONLY_METHODS].sort()).toEqual(["cli.approve", "cli.deny", "secrets.clear", "secrets.set", "secrets.verify"]);
+    expect([...SHELL_ONLY_METHODS].sort()).toEqual(["cli.approve", "cli.deny", "devices.link.decide", "secrets.clear", "secrets.set", "secrets.verify"]);
     for (const m of SHELL_ONLY_METHODS) expect(only(m)).toEqual(["shell"]);
     for (const m of METHOD_NAMES.filter((m) => m.startsWith("secrets."))) {
       expect(ALLOWLISTS.webview).not.toContain(m);
       expect(ALLOWLISTS.cli).not.toContain(m);
     }
-    expect(RUNTIME_TO_SHELL_METHODS).toEqual(["secrets.persist"]);
+    expect(RUNTIME_TO_SHELL_METHODS).toEqual(["secrets.persist", "secrets.delete"]);
   });
 
   test("the shell can do everything the webview can, and the webview everything iOS can but pairing", () => {
@@ -130,6 +130,19 @@ describe("allowlists", () => {
       expect(ALLOWLISTS.ios).toContain(m);
     }
     for (const m of ["messages.send", "input.answer", "runs.stop", "grants.revoke"] as const) expect(ALLOWLISTS.web).toContain(m);
+  });
+
+  test("accounts and paired devices are managed only from the local app (§9.6, §10)", () => {
+    const local = ["account.status", "account.sign_in", "account.cancel_sign_in", "account.sign_out", "account.delete", "devices.list", "devices.unpair", "devices.pairing.start", "devices.pairing.cancel"] as const;
+    for (const m of local) expect(only(m)).toEqual(["shell", "webview"]);
+    // A new device gets the app's authority, so only the native prompt links one (§10.5).
+    expect(only("devices.link.decide")).toEqual(["shell"]);
+    for (const n of ["devices.link_requested", "devices.link_withdrawn", "browser.open"] as const) {
+      expect(CALLER_ROLES.filter((r) => mayReceive(r, n))).toEqual(["shell"]);
+    }
+    for (const n of ["account.changed", "devices.changed", "devices.pairing_completed"] as const) {
+      expect(CALLER_ROLES.filter((r) => mayReceive(r, n))).toEqual(["shell", "webview"]);
+    }
   });
 
   test("CLI tokens are managed only from the local app", () => {

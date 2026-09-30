@@ -605,6 +605,115 @@
       "result": "CliSignOutResult",
       "description": "Revoke the token this connection authenticated with (`homerun logout`). The connection is closed after the reply."
     },
+    "account.status": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "AccountStatusParams",
+      "result": "AccountStatusResult",
+      "description": "Whether this desktop is signed in, and its relay link."
+    },
+    "account.sign_in": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "AccountSignInParams",
+      "result": "AccountSignInResult",
+      "description": "Start signing in (§10.4): the runtime asks the shell to open the provider's page in the system browser (`browser.open`) and waits on a loopback redirect. `account.changed` reports the outcome."
+    },
+    "account.cancel_sign_in": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "AccountCancelSignInParams",
+      "result": "AccountCancelSignInResult",
+      "description": "Stop waiting for the browser."
+    },
+    "account.sign_out": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "AccountSignOutParams",
+      "result": "AccountSignOutResult",
+      "description": "Revoke the refresh token, close the relay link and forget the token. Paired devices are kept for the same account."
+    },
+    "account.delete": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "AccountDeleteParams",
+      "result": "AccountDeleteResult",
+      "description": "Delete the account's devices, links and queued messages at the relay (§10.7), unpair everything here, and sign out."
+    },
+    "devices.list": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "DevicesListParams",
+      "result": "DevicesListResult",
+      "description": "Phones and browsers linked to this desktop, with presence."
+    },
+    "devices.unpair": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "DevicesUnpairParams",
+      "result": "DevicesUnpairResult",
+      "description": "Remove the link at the relay and forget the device's key (§9.6). Its live sessions close."
+    },
+    "devices.pairing.start": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "DevicesPairingStartParams",
+      "result": "DevicesPairingStartResult",
+      "description": "Open a QR pairing offer (§9.6). The QR code holds a one-time secret: show it only on this screen. `devices.pairing_completed` follows when a phone scans it."
+    },
+    "devices.pairing.cancel": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "DevicesPairingCancelParams",
+      "result": "DevicesPairingCancelResult",
+      "description": "Close a pairing offer before it expires."
+    },
+    "devices.link.decide": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell"
+      ],
+      "params": "DevicesLinkDecideParams",
+      "result": "DevicesLinkDecideResult",
+      "description": "The user compared the codes in the shell's native prompt and linked the device, or didn't (§10.5)."
+    },
     "cli.approve": {
       "direction": "to_runtime",
       "preauth": false,
@@ -662,6 +771,14 @@
       "params": "SecretsPersistParams",
       "result": "SecretsPersistResult",
       "description": "Store a runtime-created secret in the keychain. Pending in the runtime until acknowledged."
+    },
+    "secrets.delete": {
+      "direction": "to_shell",
+      "preauth": false,
+      "callers": [],
+      "params": "SecretsDeleteParams",
+      "result": "SecretsDeleteResult",
+      "description": "Remove a runtime-created secret from the keychain (the refresh token after sign-out)."
     }
   },
   "notifications": {
@@ -743,6 +860,57 @@
       ],
       "params": "HealthDigestReadyNotification",
       "description": "The daily digest (§8.3) was generated. Also stored; `health.digest` recomputes any period."
+    },
+    "account.changed": {
+      "direction": "runtime_to_client",
+      "recipients": [
+        "shell",
+        "webview"
+      ],
+      "params": "AccountChangedNotification",
+      "description": "Sign-in state or the relay link changed."
+    },
+    "devices.changed": {
+      "direction": "runtime_to_client",
+      "recipients": [
+        "shell",
+        "webview"
+      ],
+      "params": "DevicesChangedNotification",
+      "description": "A device was paired, linked or unpaired, or came online or went offline."
+    },
+    "devices.pairing_completed": {
+      "direction": "runtime_to_client",
+      "recipients": [
+        "shell",
+        "webview"
+      ],
+      "params": "DevicesPairingCompletedNotification",
+      "description": "A phone scanned this offer's QR code and is now paired: close the pairing screen."
+    },
+    "devices.link_requested": {
+      "direction": "runtime_to_shell",
+      "recipients": [
+        "shell"
+      ],
+      "params": "DevicesLinkRequestedNotification",
+      "description": "Show the native 'Link this device?' prompt with the code, defaulting to Don't Link. Answer with `devices.link.decide`. Never shown in the webview: a new device gets the app's authority."
+    },
+    "devices.link_withdrawn": {
+      "direction": "runtime_to_shell",
+      "recipients": [
+        "shell"
+      ],
+      "params": "DevicesLinkWithdrawnNotification",
+      "description": "Close the link prompt: it expired, or the other device gave up."
+    },
+    "browser.open": {
+      "direction": "runtime_to_shell",
+      "recipients": [
+        "shell"
+      ],
+      "params": "BrowserOpenNotification",
+      "description": "Open the identity provider's sign-in page in the system browser (§10.4, RFC 8252). The shell opens https URLs only (and http on 127.0.0.1 in development builds)."
     },
     "power.will_sleep": {
       "direction": "shell_to_runtime",

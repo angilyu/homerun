@@ -249,6 +249,65 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
     badParams: [["null", null]],
     results: [["ok", { ok: true }]],
   },
+  "account.status": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [
+      ["signed out", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }],
+      [
+        "signed in, linking",
+        { status: { state: "signed_in", email: "ada@example.com", error: null, relay: { state: "connected", since: F.T0, error: null }, link_request: { name: "Ada's iPhone", platform: "ios" } } },
+      ],
+    ],
+    badResults: [["unknown state", { status: { state: "online", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }]],
+  },
+  "account.sign_in": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["signing in", { status: { state: "signing_in", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }]],
+  },
+  "account.cancel_sign_in": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["signed out", { status: { state: "signed_out", email: null, error: "Sign-in was cancelled.", relay: { state: "off", since: null, error: null }, link_request: null } }]],
+  },
+  "account.sign_out": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["signed out", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }]],
+  },
+  "account.delete": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["signed out", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }]],
+  },
+  "devices.list": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["one phone", { devices: [F.pairedDevice()] }]],
+    badResults: [["a desktop", { devices: [{ ...F.pairedDevice(), platform: "desktop" }] }]],
+  },
+  "devices.unpair": {
+    params: [["by id", { device_id: F.PHONE }]],
+    badParams: [["missing id", {}]],
+    results: [["ok", { ok: true }]],
+  },
+  "devices.pairing.start": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["offer", { offer_id: F.OFFER, qr_url: "homerun://pair?d=eyJ2IjoxfQ", expires_at: F.T0 + 300_000 }]],
+    badResults: [["no expiry", { offer_id: F.OFFER, qr_url: "homerun://pair?d=eyJ2IjoxfQ" }]],
+  },
+  "devices.pairing.cancel": {
+    params: [["by id", { offer_id: F.OFFER }]],
+    badParams: [["missing id", {}]],
+    results: [["ok", { ok: true }]],
+  },
+  "devices.link.decide": {
+    params: [["link", { request_id: F.LINK_REQUEST, approve: true }], ["don't link", { request_id: F.LINK_REQUEST, approve: false }]],
+    badParams: [["no decision", { request_id: F.LINK_REQUEST }]],
+    results: [["ok", { ok: true }]],
+  },
   "cli.approve": {
     params: [["approve", { request_id: F.CLI_REQUEST }]],
     badParams: [["missing id", {}]],
@@ -280,6 +339,12 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
     badParams: [["api key without value", { name: "anthropic_api_key" }]],
     results: [["stored", { stored: true }]],
     badResults: [["not stored", { stored: false }]],
+  },
+  "secrets.delete": {
+    params: [["refresh token", { name: "refresh_token" }]],
+    badParams: [["unknown secret", { name: "github_token" }]],
+    results: [["deleted", { deleted: true }]],
+    badResults: [["not deleted", { deleted: false }]],
   },
 };
 
@@ -334,6 +399,30 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
     ],
   },
   "notification.withdrawn": { valid: [["key", { key: `input:${F.REQUEST}` }]], invalid: [["upper case key", { key: "Input:X" }]] },
+  "account.changed": {
+    valid: [["connecting", { status: { state: "signed_in", email: null, error: null, relay: { state: "connecting", since: F.T0, error: null }, link_request: null } }]],
+    invalid: [["missing status", {}]],
+  },
+  "devices.changed": {
+    valid: [["one phone", { devices: [F.pairedDevice()] }], ["none", { devices: [] }]],
+    invalid: [["missing devices", {}]],
+  },
+  "devices.pairing_completed": {
+    valid: [["paired", { offer_id: F.OFFER, device: F.pairedDevice() }]],
+    invalid: [["missing device", { offer_id: F.OFFER }]],
+  },
+  "devices.link_requested": {
+    valid: [["phone", { request_id: F.LINK_REQUEST, name: "Ada's iPhone", platform: "ios", code: "482915", requested_at: F.T0, expires_at: F.T0 + 120_000 }]],
+    invalid: [["four digits", { request_id: F.LINK_REQUEST, name: "Ada's iPhone", platform: "ios", code: "4821", requested_at: F.T0, expires_at: F.T0 + 120_000 }]],
+  },
+  "devices.link_withdrawn": {
+    valid: [["expired", { request_id: F.LINK_REQUEST, reason: "expired" }]],
+    invalid: [["unknown reason", { request_id: F.LINK_REQUEST, reason: "denied" }]],
+  },
+  "browser.open": {
+    valid: [["authorize", { url: "https://auth.example.com/oauth2/authorize?client_id=client_01&state=abc" }]],
+    invalid: [["missing url", {}]],
+  },
   "health.digest_ready": {
     valid: [["digest", { digest: F.healthDigest() }]],
     invalid: [["missing digest", {}]],

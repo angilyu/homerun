@@ -115,7 +115,19 @@ function methodArea(m: MethodName): string {
     case "secrets.clear":
     case "secrets.verify":
     case "secrets.persist":
+    case "secrets.delete":
       return "local";
+    case "account.status":
+    case "account.sign_in":
+    case "account.cancel_sign_in":
+    case "account.sign_out":
+    case "account.delete":
+    case "devices.list":
+    case "devices.unpair":
+    case "devices.pairing.start":
+    case "devices.pairing.cancel":
+    case "devices.link.decide":
+      return "remote";
     default:
       return assertNever(m, "method");
   }
@@ -132,6 +144,13 @@ function notificationArea(n: NotificationName): string {
       return "cli";
     case "health.digest_ready":
       return "health";
+    case "account.changed":
+    case "devices.changed":
+    case "devices.pairing_completed":
+    case "devices.link_requested":
+    case "devices.link_withdrawn":
+    case "browser.open":
+      return "remote";
     case "notification.requested":
     case "notification.withdrawn":
       return "notify";
