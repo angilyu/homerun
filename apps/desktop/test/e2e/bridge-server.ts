@@ -196,6 +196,9 @@ class Shell {
   pages = new Set<ServerWebSocket<unknown>>();
   opened: string[] = [];
   work: string | null = null;
+  /** `cli.access_requested` prompts not yet answered or withdrawn: the stand-in for the NSAlert. */
+  cliPrompts = new Map<string, Record<string, unknown>>();
+  cliRun: { proc: Bun.Subprocess<"ignore", "pipe", "pipe">; done: Promise<{ code: number; stdout: string; stderr: string }> } | null = null;
 
   emit(event: unknown): void {
     const text = JSON.stringify({ event });
@@ -235,6 +238,13 @@ class Shell {
   async connect(socketPath: string, token: string): Promise<void> {
     const client = { name: "homerun-desktop-e2e", version: "0" };
     this.shell = await RpcClient.open(socketPath, "shell", { kind: "launch_token", token }, { client });
+    this.cliPrompts.clear();
+    // src-tauri/src/cli_prompts.rs: the shell connection hears access requests and withdrawals.
+    this.shell.onNotification((method, params) => {
+      const p = params as { request_id: string };
+      if (method === "cli.access_requested") this.cliPrompts.set(p.request_id, params as Record<string, unknown>);
+      if (method === "cli.access_withdrawn") this.cliPrompts.delete(p.request_id);
+    });
     for (const [name, value] of this.keys) await this.shell.call("secrets.set", { name: name as "anthropic_api_key", value });
     this.webview = await RpcClient.open(socketPath, "webview", { kind: "launch_token", token }, { client });
     this.webview.onNotification((method, params) => this.emit({ type: "notification", method, params }));
@@ -361,6 +371,44 @@ class Shell {
     return { pid: a.hr.proc?.pid ?? null, restarts: this.restarts, usd: a.proxy.usd, requests: a.proxy.requests, refused: a.proxy.refused, by_model: a.proxy.byModel, threads };
   }
 
+  /** The prompt's Allow or Don't Allow (src-tauri/src/cli_prompts.rs `answered`). */
+  async answerCli(request_id: string, allow: boolean): Promise<void> {
+    if (!this.cliPrompts.delete(request_id)) throw new Error(`no access prompt ${request_id}`);
+    await this.shell!.call(allow ? "cli.approve" : "cli.deny", { request_id });
+  }
+
+  /**
+   * Fake scene only: the CLI from source with the release role and token flow, a file token
+   * store and no peer check (apps/cli README, "Builds and access"), as the CLI's access tests.
+   */
+  startCli(args: string[]): void {
+    const a = this.active;
+    if (a?.kind !== "fake") throw new Error("the CLI needs the fake scene");
+    if (this.cliRun) throw new Error("a CLI command is already running");
+    const main = join(import.meta.dir, "..", "..", "..", "cli", "src", "main.ts");
+    const dev = ["--socket", a.socketPath, "--dev-role", "cli", "--dev-skip-peer-check", "--dev-token-store", join(a.srt.dir, "cli-token")];
+    const proc = Bun.spawn([process.execPath, main, ...args, ...dev], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1" } });
+    const done = (async () => {
+      const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+      return { code, stdout, stderr };
+    })();
+    this.cliRun = { proc, done };
+  }
+
+  async waitCli(): Promise<{ code: number; stdout: string; stderr: string }> {
+    const run = this.cliRun;
+    if (!run) throw new Error("no CLI command is running");
+    const out = await Promise.race([run.done, Bun.sleep(20_000).then(() => null)]);
+    if (!out) {
+      run.proc.kill();
+      await run.done;
+      this.cliRun = null;
+      throw new Error("the CLI command didn't finish");
+    }
+    this.cliRun = null;
+    return out;
+  }
+
   /** After a replay scene: every cassette entry was used and nothing unexpected was asked. */
   finish(): string[] {
     const a = this.active;
@@ -423,6 +471,12 @@ class Shell {
         return "unavailable";
       case "update_status":
         return { state: "unavailable", message: "Updates are off in development builds." };
+      // shell-core/src/cli_tool.rs for a build that isn't in an app bundle.
+      case "cli_tool_status":
+        return { state: "unavailable", reason: "The command-line tool comes with the Homerun app; this is a development build." };
+      case "cli_tool_install":
+      case "cli_tool_remove":
+        throw err("shell", "The command-line tool comes with the Homerun app; this is a development build.");
       case "app_info":
         return { version: "0.0.1-e2e", build: "debug", platform: "e2e", data_dir: this.active?.kind === "fake" ? this.active.srt.dir : "", log_path: "", key_store: "memory" };
       default:
@@ -486,6 +540,25 @@ const server = Bun.serve({
       return Response.json({ errors });
     }
     if (url.pathname === "/__e2e/opened") return Response.json({ opened: shell.opened });
+    if (url.pathname.startsWith("/__e2e/cli/")) {
+      try {
+        const body = req.method === "POST" ? ((await req.json()) as Record<string, unknown>) : {};
+        switch (url.pathname) {
+          case "/__e2e/cli/prompts":
+            return Response.json({ prompts: [...shell.cliPrompts.values()] });
+          case "/__e2e/cli/answer":
+            await shell.answerCli(String(body.request_id), body.allow === true);
+            return Response.json({ ok: true });
+          case "/__e2e/cli/start":
+            shell.startCli((body.args as string[]) ?? []);
+            return Response.json({ ok: true });
+          case "/__e2e/cli/wait":
+            return Response.json(await shell.waitCli());
+        }
+      } catch (e) {
+        return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+      }
+    }
     if (url.pathname === "/__e2e/live") {
       try {
         return Response.json(await shell.liveInfo());

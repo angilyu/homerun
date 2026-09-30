@@ -46,6 +46,18 @@ export type UpdateState =
   | { state: "manual"; version: string; reason: string }
   | { state: "failed"; message: string; checked_at: number };
 
+/**
+ * The `homerun` link in ~/.local/bin (§5.2). "unavailable" in a development build or an app that
+ * must be moved to Applications first; "foreign" is something else by that name, left alone.
+ */
+export type CliToolStatus =
+  | { state: "unavailable"; reason: string }
+  | { state: "not_installed"; link: string }
+  | { state: "installed"; link: string }
+  | { state: "other_copy"; link: string; target: string }
+  | { state: "dangling"; link: string; target: string }
+  | { state: "foreign"; link: string };
+
 /** Where a notification click or a menu-bar row goes. */
 export type ShellTarget = { screen: "thread"; thread_id: string } | { screen: "health" } | { screen: "home" };
 
@@ -82,6 +94,10 @@ export interface ShellApi {
   /** Confirms like Quit when runs are active, then restarts into the update. */
   restartToUpdate(): Promise<void>;
   setAutoUpdate(on: boolean): Promise<void>;
+  cliTool(): Promise<CliToolStatus>;
+  /** No admin rights: a symlink in ~/.local/bin to the CLI inside this app. */
+  installCliTool(): Promise<CliToolStatus>;
+  removeCliTool(): Promise<CliToolStatus>;
 }
 
 /** The desktop-only shell calls, shared by the Tauri and bridge platforms. */
@@ -106,6 +122,9 @@ export function shellCommands(call: <T>(cmd: string, args?: Record<string, unkno
     checkForUpdates: () => call<void>("update_check"),
     restartToUpdate: () => call<void>("update_restart"),
     setAutoUpdate: (on) => call<void>("update_set_auto", { on }),
+    cliTool: () => call<CliToolStatus>("cli_tool_status"),
+    installCliTool: () => call<CliToolStatus>("cli_tool_install"),
+    removeCliTool: () => call<CliToolStatus>("cli_tool_remove"),
   };
 }
 

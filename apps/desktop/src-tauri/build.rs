@@ -24,6 +24,9 @@ const COMMANDS: &[&str] = &[
     "update_check",
     "update_restart",
     "update_set_auto",
+    "cli_tool_status",
+    "cli_tool_install",
+    "cli_tool_remove",
 ];
 
 fn main() {

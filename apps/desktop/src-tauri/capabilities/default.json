@@ -26,6 +26,9 @@
     "allow-update-status",
     "allow-update-check",
     "allow-update-restart",
-    "allow-update-set-auto"
+    "allow-update-set-auto",
+    "allow-cli-tool-status",
+    "allow-cli-tool-install",
+    "allow-cli-tool-remove"
   ]
 }

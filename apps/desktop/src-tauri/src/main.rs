@@ -5,6 +5,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cli_prompts;
 mod commands;
 mod keychain;
 mod lifecycle;
@@ -58,13 +59,16 @@ fn main() {
             commands::update_check,
             commands::update_restart,
             commands::update_set_auto,
+            commands::cli_tool_status,
+            commands::cli_tool_install,
+            commands::cli_tool_remove,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             // Read before anything else runs: the launch's Apple Event is current only now.
             let at_login = macos::launched_at_login();
             let test = updater::is_test_build(&handle);
-            let shell = Arc::new(shell::start(&app.package_info().version.to_string(), test));
+            let shell = Arc::new(shell::start(&app.package_info().version.to_string(), test, handle.clone()));
             app.manage(shell.clone());
 
             let (s1, s2, s3) = (shell.clone(), shell.clone(), shell.clone());
