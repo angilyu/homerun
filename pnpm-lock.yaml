@@ -224,6 +224,28 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  packages/remote:
+    dependencies:
+      '@homerun/core':
+        specifier: workspace:*
+        version: link:../core
+      '@homerun/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@homerun/relay':
+        specifier: workspace:*
+        version: link:../../apps/relay
+      '@homerun/testkit':
+        specifier: workspace:*
+        version: link:../testkit
+      '@types/bun':
+        specifier: 1.3.14
+        version: 1.3.14
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   packages/testkit:
     dependencies:
       jose:
