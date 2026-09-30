@@ -2,6 +2,7 @@ import { type AccountStatus, type PairedDevice, PROTOCOL_VERSION } from "@homeru
 import { Account, MemoryStore, RemoteClient, type RemoteLive } from "@homerun/remote";
 import { startLocalRelay, type LocalRelay } from "@homerun/relay/local";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
+import { startWorkerd } from "../../../relay/test/workerd/host";
 import type { FakeScript } from "../../src/agent/fake-engine";
 import { RpcClient } from "../../src/rpc/client";
 import type { RuntimeOptions } from "../../src/runtime";
@@ -10,24 +11,48 @@ import { LAUNCH_TOKEN, socketRuntime, until, type SocketRuntime } from "../helpe
 /**
  * Remote access end to end, all local (§16.2): a local OIDC issuer, the relay's Bun adapter
  * with a mock APNs, the runtime in process with a stand-in shell, and the reference client
- * playing the phone or browser.
+ * playing the phone or browser. `HOMERUN_REMOTE_RELAY=workerd` runs the real Worker and Durable
+ * Object in workerd instead (nightly.yml), which needs Node; what reaches into the Bun relay
+ * (counting or dropping its connections) skips there.
  */
+
+export const ON_WORKERD = process.env.HOMERUN_REMOTE_RELAY === "workerd";
+/** Starting workerd takes a few seconds; the Bun relay starts at once. */
+export const WORLD_START_MS = ON_WORKERD ? 60_000 : 5_000;
 
 export interface World {
   issuer: OidcIssuer;
   apns: ApnsMock;
-  relay: LocalRelay;
+  relay: Pick<LocalRelay, "url" | "connections" | "dropConnections" | "stop">;
   stop(): Promise<void>;
+}
+
+async function workerdRelay(issuer: OidcIssuer, apns: ApnsMock): Promise<World["relay"]> {
+  const host = await startWorkerd({
+    OIDC_ISSUER: issuer.url,
+    OIDC_CLIENT_ID: issuer.clientId,
+    APNS_KEY_P8: apns.p8,
+    APNS_KEY_ID: apns.keyId,
+    APNS_TEAM_ID: apns.teamId,
+    APNS_TOPIC: apns.topic,
+    APNS_ENDPOINT: apns.url,
+  });
+  const bunOnly = (): never => {
+    throw new Error("only the Bun relay can do this; skip the test under workerd");
+  };
+  return { url: host.url, connections: bunOnly, dropConnections: bunOnly, stop: () => host.stop() };
 }
 
 export async function startWorld(): Promise<World> {
   const issuer = await OidcIssuer.start();
   const apns = await ApnsMock.start();
-  const relay = await startLocalRelay({
-    issuer: issuer.url,
-    clientId: issuer.clientId,
-    apns: { keyP8: apns.p8, keyId: apns.keyId, teamId: apns.teamId, topic: apns.topic, endpoint: apns.url },
-  });
+  const relay = ON_WORKERD
+    ? await workerdRelay(issuer, apns)
+    : await startLocalRelay({
+        issuer: issuer.url,
+        clientId: issuer.clientId,
+        apns: { keyP8: apns.p8, keyId: apns.keyId, teamId: apns.teamId, topic: apns.topic, endpoint: apns.url },
+      });
   return {
     issuer,
     apns,

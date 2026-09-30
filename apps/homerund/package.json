@@ -11,6 +11,7 @@
     "test:unit": "bun test test/unit",
     "test:replay": "bun test test/replay",
     "test:crash": "bun test test/crash",
+    "test:remote": "bun test test/remote",
     "record": "HOMERUN_REPLAY=record bun test test/replay"
   },
   "dependencies": {

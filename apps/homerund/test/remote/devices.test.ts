@@ -7,12 +7,12 @@ import { decodePairingUrl } from "@homerun/protocol";
 import { LinkDeclinedError, LiveClosedError, RpcCallError } from "@homerun/remote";
 import { RpcCallError as LocalCallError } from "../../src/rpc/client";
 import { socketRuntime, until } from "../helpers";
-import { connected, desktop, envFor, pairByQr as pairWith, helloLive, newUser, phone, relayState, settled, shellFor, startWorld, type World } from "./harness";
+import { connected, desktop, envFor, pairByQr as pairWith, helloLive, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
 
 let w: World;
 beforeAll(async () => {
   w = await startWorld();
-});
+}, WORLD_START_MS);
 afterAll(async () => {
   await w.stop();
 });
@@ -54,10 +54,10 @@ describe("the relay link (§9.2, §9.4)", () => {
     expect(d.srt.logs.join("\n")).not.toContain(stored.x25519);
     await d.sh.c.call("account.sign_out", {});
     await relayState(d.sh, "off");
-    expect(w.relay.connections()).toBe(0);
+    if (!ON_WORKERD) expect(w.relay.connections()).toBe(0);
   });
 
-  test("a dropped link reconnects with backoff, and a wake retries at once", async () => {
+  test.skipIf(ON_WORKERD)("a dropped link reconnects with backoff, and a wake retries at once", async () => {
     newUser(w);
     const d = await signedInDesktop({ remote: { linkBackoff: { initialMs: 60_000, maxMs: 60_000 } } });
     w.relay.dropConnections();

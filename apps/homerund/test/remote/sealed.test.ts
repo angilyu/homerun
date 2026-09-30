@@ -8,12 +8,12 @@ import type { RemoteClient } from "@homerun/remote";
 import type { FakeScript } from "../../src/agent/fake-engine";
 import { getInputRequest } from "../../src/store/rows";
 import { sessionSpec, until } from "../helpers";
-import { connected, desktop, linkByCode, newUser, pairByQr, phone, startWorld, type World } from "./harness";
+import { connected, desktop, linkByCode, newUser, pairByQr, phone, startWorld, WORLD_START_MS, type World } from "./harness";
 
 let w: World;
 beforeAll(async () => {
   w = await startWorld();
-});
+}, WORLD_START_MS);
 afterAll(async () => {
   await w.stop();
 });
@@ -102,8 +102,10 @@ describe("instructions while the desktop is away (§9.4)", () => {
     const sentAt = Date.now();
     await Bun.sleep(30);
 
+    // Listen first: the receipt can arrive before the desktop reports itself connected.
+    const delivered = p.client.waitDelivered(again.msg_id, 10_000);
     const d2 = await signedInDesktop({ dir, keychain, signIn: false });
-    await p.client.waitDelivered(again.msg_id, 10_000);
+    await delivered;
     await eventually(async () => (await userMessages(d2)).length === 1, 5000, "the instruction");
     const [m] = await userMessages(d2);
     expect(m!.payload).toMatchObject({ client_msg_id: cmid, text: "What changed overnight?", origin: { device_id: p.client.deviceId, surface: "ios" } });
