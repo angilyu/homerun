@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { Subprocess } from "bun";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RPC_ERROR } from "@homerun/core";
+import { pidAlive, processCreationTime, processSnapshot, terminateProcess } from "@homerun/win32";
 import { findClaude, resolveBuildChannel } from "../../src/config";
+import { treeBelow } from "../../src/platform/windows-processes";
 import { RpcClient } from "../../src/rpc/client";
 
 /**
@@ -40,8 +43,61 @@ beforeAll(() => {
   compile(bins.plain);
   compile(bins.dev, `HOMERUND_BUILD="development"`);
 }, 120_000);
-// Windows can't remove an executable until the process running it is gone.
-afterAll(() => rmSync(work, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }));
+
+/** Every runtime these tests start: each is killed and awaited before its files are removed. */
+const live = new Set<Subprocess>();
+function track<P extends Subprocess>(p: P): P {
+  live.add(p);
+  void p.exited.then(() => live.delete(p));
+  return p;
+}
+/**
+ * Kill a runtime and wait for it, and on Windows for everything below it, which its kill-on-close
+ * job takes down (a runtime at rest starts nothing, so normally there is nothing). Anything still
+ * running after that is a leak: it is killed, and the test fails.
+ */
+async function stop(p: Subprocess): Promise<void> {
+  const tree = WINDOWS && p.exitCode === null ? treeBelow(processSnapshot(), p.pid, createdOf) : [];
+  const born = new Map(tree.map((pid) => [pid, createdOf(pid)]));
+  if (p.exitCode === null && p.signalCode === null) p.kill("SIGKILL");
+  await p.exited;
+  const alive = () => tree.filter((pid) => pidAlive(pid, born.get(pid) ?? undefined));
+  for (let i = 0; i < 100 && alive().length; i++) await Bun.sleep(50);
+  const leaked = alive();
+  for (const pid of leaked) terminateProcess(pid);
+  expect(leaked).toEqual([]);
+}
+
+function createdOf(pid: number): bigint | null {
+  try {
+    return processCreationTime(pid);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Windows can't remove an executable, or a directory holding one, while a process runs it. With
+ * every runtime already exited, a short bounded retry covers the loader releasing the image.
+ */
+async function removeTree(dir: string): Promise<void> {
+  for (let i = 0; ; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      if (i >= 40 || (e as NodeJS.ErrnoException).code !== "EPERM" && (e as NodeJS.ErrnoException).code !== "EBUSY") throw e;
+      await Bun.sleep(100);
+    }
+  }
+}
+
+afterAll(async () => {
+  const left = [...live];
+  await Promise.all(left.map(stop));
+  expect(left.map((p) => p.pid)).toEqual([]);
+  await removeTree(work);
+});
 
 function envFor(dataDir: string, extra: Record<string, string> = {}): Record<string, string> {
   // Windows can't start much of Win32 (sockets among it) without SystemRoot.
@@ -52,7 +108,7 @@ function envFor(dataDir: string, extra: Record<string, string> = {}): Record<str
 /** Run a binary with stdin closed after `stdin`; returns exit code and stderr. */
 async function runOnce(bin: string, args: string[], extra: Record<string, string> = {}, stdin = `${LAUNCH}\n`): Promise<{ code: number; stderr: string }> {
   const dataDir = mkdtempSync(join(work, "d-"));
-  const p = Bun.spawn([bin, ...args], { env: envFor(dataDir, extra), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const p = track(Bun.spawn([bin, ...args], { env: envFor(dataDir, extra), stdin: "pipe", stdout: "pipe", stderr: "pipe" }));
   p.stdin.write(stdin);
   // Keep stdin open: a runtime that wrongly started would wait here, and the timeout catches it.
   const timer = setTimeout(() => p.kill("SIGKILL"), 15_000);
@@ -109,7 +165,7 @@ describe("a compiled homerund without a build define is release", () => {
 
   test("it writes no dev token and refuses a dev-token hello; the launch token still works", async () => {
     const dataDir = mkdtempSync(join(work, "d-"));
-    const p = Bun.spawn([bins.plain, "serve"], { env: envFor(dataDir), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const p = track(Bun.spawn([bins.plain, "serve"], { env: envFor(dataDir), stdin: "pipe", stdout: "pipe", stderr: "pipe" }));
     try {
       p.stdin.write(`${LAUNCH}\n`);
       p.stdin.flush();
@@ -128,8 +184,8 @@ describe("a compiled homerund without a build define is release", () => {
       p.stdin.end();
       expect(await p.exited).toBe(0);
     } finally {
-      p.kill("SIGKILL");
-      rmSync(dataDir, { recursive: true, force: true });
+      await stop(p);
+      await removeTree(dataDir);
     }
   }, 30_000);
 });
@@ -137,12 +193,14 @@ describe("a compiled homerund without a build define is release", () => {
 describe("a compiled homerund built with HOMERUND_BUILD=development", () => {
   test("accepts the development switches and the dev-token hello", async () => {
     const dataDir = mkdtempSync(join(work, "d-"));
-    const p = Bun.spawn([bins.dev, "serve", "--no-launch-token", "--dev-auto-approve"], {
-      env: envFor(dataDir, { HOMERUN_ANTHROPIC_BASE_URL: "http://127.0.0.1:9" }),
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const p = track(
+      Bun.spawn([bins.dev, "serve", "--no-launch-token", "--dev-auto-approve"], {
+        env: envFor(dataDir, { HOMERUN_ANTHROPIC_BASE_URL: "http://127.0.0.1:9" }),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
     try {
       const tokenFile = join(dataDir, "run", "dev-token");
       await waitFor(tokenFile);
@@ -157,8 +215,8 @@ describe("a compiled homerund built with HOMERUND_BUILD=development", () => {
         expect(await p.exited).toBe(0);
       }
     } finally {
-      p.kill("SIGKILL");
-      rmSync(dataDir, { recursive: true, force: true });
+      await stop(p);
+      await removeTree(dataDir);
     }
   }, 30_000);
 });
