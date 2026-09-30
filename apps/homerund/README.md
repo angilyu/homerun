@@ -24,9 +24,11 @@ They are not redefined here.
 | `src/power/` | Keeping the computer awake while a run is in progress (§8.1): `caffeinate` on macOS, `SetThreadExecutionState` on Windows |
 | `src/platform/` | What differs on Windows (milestone 8b): `processes.ts` picks the process-tree code (process groups and `ps`, or job objects in `windows-processes.ts`), and `secure.ts` makes the data and run dirs private (0700, or a protected ACL) and locks the pipe's ACL. The Win32 calls are in [`@homerun/win32`](../../packages/win32) |
 | `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers. The client, the data dir and socket paths and the build channel rule live in [`@homerun/client`](../../packages/client) |
+| `src/remote/` | Remote access (§9, §10, milestone 9; [below](#remote-access-9-10-milestone-9)): `account` (OIDC sign-in), `loopback` (the redirect listener), `keys` (the device identity), `link` (the relay WebSocket), `pairing` (QR), `linking` (matching codes), `devices` (pinned keys and presence), `sessions` (Noise live sessions as RPC connections), `sealed` (queued instructions, lock-screen answers, pushes), `service` (the `account.*` and `devices.*` methods), `config` |
 | `test/unit/` | Fast tests against the fake engine |
 | `test/replay/` | Record/replay harness (§16.2) and the committed cassettes |
 | `test/crash/` | Crash-at-every-boundary harness (§16.2) with a simulated `claude` |
+| `test/remote/` | Remote access end to end: this runtime, the relay, the reference client, a local OIDC issuer and a mock APNs |
 | `test/fixtures/mcp-fixture.ts` | A minimal stdio MCP server used by tests |
 
 ## Data dir
@@ -82,6 +84,14 @@ Params, results and callers are defined in `@homerun/core` (`src/protocol/method
 - `input.list_pending`; `input.answer` for approvals, questions and "Did this happen?"
   (below). `grants.list`, `grants.create`, `grants.revoke` (§5.6).
 - `blobs.get`: a stored tool input or output over 4 KB, in pages (`offset`, `length`).
+- Remote access (§9, §10; [below](#remote-access-9-10-milestone-9)): `account.status`,
+  `account.sign_in`, `account.cancel_sign_in`, `account.sign_out`, `account.delete`,
+  `devices.list`, `devices.unpair`, `devices.pairing.start` and `devices.pairing.cancel` are for
+  the app (local UI) only. `devices.link.decide` is shell-only, answered from the native prompt.
+  Notifications: `account.changed`, `devices.changed` and `devices.pairing_completed` to local
+  clients; `devices.link_requested`, `devices.link_withdrawn` and `browser.open` to the shell.
+  The runtime asks the shell to `secrets.persist` and `secrets.delete` the refresh token and
+  the device key.
 - Command-line access (§5.2, milestone 8a; `src/rpc/cli-access.ts`, `src/store/cli-tokens.ts`):
   - `cli.request_access` comes before `hello` (preauth), once per connection, with at most
     three waiting (`UNAVAILABLE` with `{reason: "too_many_requests"}` past that). Each expires after 2 minutes. While one
@@ -302,6 +312,49 @@ the Mac was asleep), the runtime stores a digest and sends `health.digest_ready`
 fires due, runs, changes, failures, misses by cause, fires caught up, cost; and when the Mac
 was asleep or Homerun was not running. `health.digest` computes one for any period up to 31 days.
 
+## Remote access (§9, §10, milestone 9)
+
+Off until you sign in (§10.10). Everything here is in `src/remote/`; the wire protocol is
+[`@homerun/protocol`](../../packages/protocol), the relay [`apps/relay`](../relay/README.md).
+
+- **Sign-in** (§10.4): `account.sign_in` runs OpenID Connect Authorization Code with PKCE,
+  `state` and `nonce`. The redirect comes back to an http listener on `127.0.0.1` and an
+  ephemeral port (RFC 8252), open for that attempt only (5 minutes, one callback). The runtime
+  asks the shell to open the page (`browser.open`). The access token stays in memory; the refresh
+  token is kept in memory and persisted by the shell (`secrets.persist`) as a pending value until
+  the shell acknowledges it (§5.2), and refreshed a minute before the access token expires. A
+  refresh the provider refuses leaves the account `needs_sign_in`, shown in Settings.
+- **Identity** (§9.6, §12): at first sign-in the runtime makes an X25519 key for Noise and an
+  Ed25519 key for the relay, stored by the shell as `device_static_key`. At start it waits for
+  the shell to hand the keys back before it makes new ones. Signing out keeps them and every
+  pairing; signing in as someone else, deleting the account or the relay removing this desktop
+  starts a new identity with no pairings.
+- **The relay link** (§9.2): one outbound WebSocket while signed in, reconnecting after 1, 2, 4 …
+  60 s with jitter, at once after a wake. `account.status` reports it as `connecting`,
+  `connected`, `offline` (with `since` and `error`) or `off`.
+- **Pairing and linking** (§9.6, §10.5): `devices.pairing.start` returns a `homerun://pair` URL
+  for the QR code, good for 5 minutes and one phone. A signed-in phone or browser can instead
+  ask to link: the shell shows its name and six-digit code in a native prompt and answers with
+  `devices.link.decide`. Paired devices are in `remote_devices` (migration 7), public keys
+  only; `devices.unpair` removes one here and at the relay.
+- **Live sessions** (§9.3): a paired device opens Noise KK against the pinned keys and then
+  speaks this same JSON-RPC, as role `ios` or `web` (from its pinned platform, never from
+  `hello`). Those roles call only what their allowlists name (§5.2), never the local-UI methods
+  above, and can't widen a task's policy, as for the CLI.
+- **Sealed messages** (§9.4, §9.7): an instruction a phone sent while this computer was away is
+  applied once when it arrives, as a message from that device ("Sent 3 h ago from Ada's iPhone"
+  when it waited a minute or more). An answer from a phone's lock screen applies once and never
+  answers a destructive approval or "Did this happen?". Each message's id stays in
+  `sealed_seen` until it would have expired. Every local notification but the daily digest is
+  also pushed, sealed, to each paired iPhone.
+
+Configuration: the relay URL, the OIDC issuer and the client id. A release build has them only
+from build defines (`HOMERUND_RELAY_URL`, `HOMERUND_OIDC_ISSUER`, `HOMERUND_OIDC_CLIENT_ID`; the
+desktop's `scripts/stage-sidecars.ts --release` passes them from its environment). Without them,
+remote access shows as not configured. A development build also reads `HOMERUN_RELAY_URL`,
+`HOMERUN_OIDC_ISSUER` and `HOMERUN_OIDC_CLIENT_ID`, and accepts plain http on `127.0.0.1` for a
+local relay (`pnpm --filter @homerun/relay dev`) and issuer.
+
 ## Running
 
 ```sh
@@ -345,6 +398,9 @@ pnpm --filter @homerun/homerund dev [--no-key] [-- <serve switches>]
   `[y/N]` on this terminal (`--cli-access ask`, the default), or is answered without asking
   (`--cli-access allow|deny`). Try it with `pnpm homerun login --dev-role cli
   --dev-token-store /tmp/t --dev-skip-peer-check`.
+- For remote access it prints the sign-in page instead of opening a browser, keeps what the
+  runtime persists in memory for that session only (sign in again next time), and asks about a
+  device that wants to link, with its code, as it does for CLI access.
 - Ctrl-C closes homerund's stdin, and the runtime shuts down gracefully.
 - Drive it with the development CLI ([`apps/cli`](../cli)), e.g. `pnpm homerun status`.
 
@@ -392,20 +448,22 @@ pnpm --filter @homerun/homerund typecheck
 pnpm --filter @homerun/homerund test:unit     # fake engine, no network
 pnpm --filter @homerun/homerund test:replay   # real claude against recorded API exchanges, no key
 pnpm --filter @homerun/homerund test:crash    # kill at every event boundary, simulated claude (several minutes; `HOMERUN_CRASH_SWEEP=sample` about one)
+pnpm --filter @homerun/homerund test:remote   # remote access end to end, all local (`HOMERUN_REMOTE_RELAY=workerd` for the real Worker; needs Node)
 scripts/check-no-secrets.sh                   # from the repo root
 ```
 
 CI runs all of these on Linux (`ubuntu-latest`; `.github/workflows/ci.yml`): job `homerund`
 runs the secret scan, typecheck, unit and replay tests, and job `homerund-crash` runs the crash
-tests on a sample of boundaries in parallel. `.github/workflows/nightly.yml` runs the full
-crash sweep on main every day at 09:00 UTC, and on demand. Liveness checks ignore zombies,
+tests on a sample of boundaries in parallel, and job `remote-e2e` the remote suite.
+`.github/workflows/nightly.yml` runs the full crash sweep on main every day at 09:00 UTC, and on
+demand, and the remote suite against the relay in workerd. Liveness checks ignore zombies,
 which `kill(pid, 0)` still reports as alive.
 
 Job `windows-runtime` runs the unit tests on `windows-latest` (milestone 8b). There they cover
 the pipe (`pipe-windows.test.ts`: private, published, one server per data dir) and job objects
 (`processes-windows.test.ts`), and with `HOMERUN_WIN_CROSS_USER=1` a throwaway local user is
 denied the pipe, the endpoint and the dev token. Tests that need POSIX signals, `ps` or
-`/bin/bash` skip there. Nightly, job `windows-full` runs the sampled crash sweep on Windows, where
+`/bin/bash` skip there. Nightly, job `windows-full` runs the remote suite and the sampled crash sweep on Windows, where
 a life kills itself with `TerminateProcess` (`test/crash/die.ts`); replay runs on Linux and macOS
 only (§18 row 69).
 

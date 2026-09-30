@@ -7,6 +7,8 @@
 #      NOTARY_PROFILE (optional; runs notarize.sh — needs the user's Apple account),
 #      OUT (output dir, default dist/macos/$VERSION; e.g. dist/macos/devid-$VERSION),
 #      NO_DMG=1 (skip the DMG).
+#   Remote access (§9, §10), all three or none; without them it shows as not configured:
+#      HOMERUND_RELAY_URL, HOMERUND_OIDC_ISSUER, HOMERUND_OIDC_CLIENT_ID (apps/relay/README.md).
 #   Updater (§11), all optional:
 #      UPDATER_KEY      minisign secret key, outside the repo. Its public half ($UPDATER_KEY.pub,
 #                       or UPDATER_PUBKEY) is compiled in, and updater-artifacts.sh writes the

@@ -18,6 +18,7 @@ Milestone 8 keeps it running in the background (§5.1, §11):
 - the signed updater.
 
 Command-line access approval is §16 row 8a. Windows is §16 row 8b ([below](#windows-milestone-8b)).
+Signing in and pairing a phone is §16 row 9 ([below](#remote-access-milestone-9)).
 
 ```
 Homerun.app
@@ -236,6 +237,45 @@ runs `apps/cli`'s macOS tests against it:
   byte is sent;
 - the keychain calls, against a throwaway keychain.
 
+## Remote access (milestone 9)
+
+Settings → *Remote access* (§10.4, §10.10; `src/screens/Remote.tsx`, state in
+`@homerun/app-state`'s `Remote`):
+
+- **Sign in** asks the runtime to start sign-in. The runtime sends `browser.open` to the shell,
+  which opens the page in the default browser (`shell.rs`), and Settings shows *Continue in your
+  browser* with **Cancel**. The shell opens only an `https` URL, or `http` on `127.0.0.1`,
+  `localhost` or `[::1]` in a development build, with no user info and at most 4 KB
+  (`shell-core/src/browser.rs`), and logs only its host.
+- Signed in: the account's email, the relay's status (*Connected*, *Connecting…*, *Offline since
+  …* with the reason), **Pair a phone**, the paired devices, **Sign out** and **Delete account**,
+  each with a confirmation. A refused refresh shows *Sign in again* here; there is no
+  notification for it.
+- **Pair a phone** shows a QR code, drawn as SVG from its modules with `uqr` (no markup is
+  injected), with a 5-minute countdown. When the phone has paired it says *Paired with …*; when
+  the code expires, **New code**. Closing the panel before then cancels the offer.
+- **Paired devices** lists each phone or browser with its platform, when it paired and *Online*
+  or *Last seen …*. **Unpair** removes it here and at the relay.
+- **Linking by code** (§10.5): a signed-in phone or browser can ask to link without the QR code.
+  `cli_prompts.rs` shows it in the same native prompt queue as command-line access: *Link
+  "Ada's iPhone" to this computer?*, with the six digits the phone shows (`042 917`); **Don't
+  Link** is the default (Return), and **Link** needs a click (`shell-core/src/link_prompt.rs`).
+  The answer goes back on the shell connection as `devices.link.decide`, which the webview
+  can't call; Settings shows only a passive banner while the prompt is up.
+- The runtime's refresh token and device keys are two more items the shell stores for it,
+  `refresh_token` and `device_static_key`, in the same Keychain or Credential Manager service as
+  the API key (`secrets.persist`). `secrets.delete` removes them on sign-out or when the identity
+  is replaced; it refuses the API key.
+
+A message a phone sent while this computer was away says *Sent 3 h ago from Ada's iPhone* in the
+thread once it arrives (a minute or more late).
+
+A release build has the relay and identity provider compiled into `homerund`; see
+[`apps/relay`](../relay/README.md#4-the-desktop). A development build reads them from
+`HOMERUN_RELAY_URL`, `HOMERUN_OIDC_ISSUER` and `HOMERUN_OIDC_CLIENT_ID`.
+
+`uqr` 0.1.3 is the only new npm package (a zero-dependency QR encoder); there are no new crates.
+
 ## Windows (milestone 8b)
 
 The same app on Windows (§16 row 8b): the shell, the runtime and the UI are shared, and
@@ -316,6 +356,8 @@ keep the key in memory and don't offer Open at login.
    `com.angilyu.homerun.cli/default`. A wrong hash refuses before anything is sent.
    Ctrl+C in `homerun watch THREAD` exits 130, and in `homerun send` leaves the run going
    (CI can't send a Windows process Ctrl+C, §17 item 8).
+10. Remote access: steps 28–32 of the macOS checks, with Credential Manager instead of Keychain
+    Access (`com.angilyu.homerun/refresh_token`) and a task dialog instead of the alert.
 
 ## Releasing an update
 
@@ -430,7 +472,9 @@ cd src-tauri && cargo test -p homerun-shell-core
   - the task editor, monitors and grants;
   - runtime banners;
   - command-line access: tokens with hostname and last use, Revoke, and each state of the
-    command-line tool (`cli-access.test.tsx`).
+    command-line tool (`cli-access.test.tsx`);
+  - remote access: each account state, pairing with its countdown and expiry, the link banner,
+    the devices list and Unpair, and the *Sent … from* label (`remote.test.tsx`).
 - **End to end** (`test/e2e/`). Playwright drives the production views in Chrome through
   `bridge-server.ts`, a Bun stand-in for the Rust shell. It does the shell and webview hellos
   with the launch token, forwards only the `webview` allowlist, and verifies and hands over the
@@ -441,6 +485,10 @@ cd src-tauri && cargo test -p homerun-shell-core
     `homerun login` from source (a file token store and no peer check). The bridge plays the
     access prompt: Don't Allow, then Allow. The token shows in Settings, Revoke signs it
     out, and the CLI is then refused.
+  - `remote.spec.ts` starts homerund's remote test world with the fake scene: a local OIDC
+    issuer, the relay's Bun adapter and a mock APNs. The bridge stores what the runtime persists
+    and signs in when asked to open the browser; a reference-client iPhone scans the QR offer
+    the page was given. The spec signs in, pairs, sees the phone online, unpairs it and signs out.
   - Replay runs homerund's cassettes with the real bundled `claude`: no key, no network and no
     spend.
   - `HOMERUN_E2E_CHANNEL=chrome` uses an installed Chrome instead of Playwright's Chromium, which
@@ -576,3 +624,19 @@ unlocked, since a locked screen locks the keychain)
     ad-hoc build) is running. It refuses to send the token and exits 77.
 27. With the screen locked (over ssh), `homerun status` fails with a message about the locked
     keychain rather than asking for access again.
+
+**Remote access (milestone 9)** (a build with the relay and identity provider configured:
+[`apps/relay`](../relay/README.md#deploying), or a development build against a local relay and
+issuer)
+28. Settings → *Remote access* → **Sign in**: the default browser opens the provider's page.
+    Sign in, and the page says you can close it; Settings shows your email and *Connected*.
+    **Cancel** instead, or closing the browser for 5 minutes, leaves you signed out.
+29. Keychain Access lists `refresh_token` and `device_static_key` under `com.angilyu.homerun`.
+    Quit and reopen Homerun: it reconnects without asking you to sign in again.
+30. **Pair a phone** shows a QR code that a phone camera reads as a `homerun://pair` link (the
+    iOS app itself is milestone 10). Let it expire: **New code** appears.
+31. Link the reference client by code (`packages/remote`): the native alert names it and shows
+    the same six digits. Return declines; run it again and click **Link**: it appears under
+    *Paired devices*. Quit Homerun while an alert is up: the alert closes and nothing links.
+32. **Sign out**: the relay status goes, and the keychain has no `refresh_token`; sign in again
+    as the same person and the paired device is still there.

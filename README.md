@@ -26,7 +26,7 @@ and your data stays on your machine. Users bring their own Anthropic API key.
 | 6 | Approvals and questions | Done |
 | 7 | The desktop app ([`apps/desktop`](apps/desktop/README.md)) | Done |
 | 8 | Packaging: menu bar, login item, signed updater; CLI access (8a); Windows (8b) | Done |
-| 9 | Accounts, relay and push ([`apps/relay`](apps/relay/README.md)) | **In progress**: 9a (protocol, relay, reference client) done; 9b (desktop sign-in and pairing) next. The Cloudflare, WorkOS and Apple accounts are [manual steps](apps/relay/README.md#deploying) |
+| 9 | Accounts, relay and push ([`apps/relay`](apps/relay/README.md)) | Done: protocol, relay and reference client (9a); desktop sign-in, pairing and linking, live sessions, sealed messages and push (9b). The Cloudflare, WorkOS and Apple accounts and the deploy are [manual steps](apps/relay/README.md#deploying); a real phone is milestone 10 |
 
 Later milestones (iOS and web, distribution) are listed in
 [design §16](docs/design.md#16-build-plan).
@@ -37,7 +37,7 @@ Later milestones (iOS and web, distribution) are listed in
 |---|---|
 | [`apps/homerund`](apps/homerund/README.md) | The runtime: agent runs, storage (SQLite), crash resume, the local socket |
 | [`apps/cli`](apps/cli/README.md) | `homerun`, the command-line client |
-| [`apps/desktop`](apps/desktop/README.md) | The macOS app: a Tauri shell that supervises `homerund`, and the React UI |
+| [`apps/desktop`](apps/desktop/README.md) | The macOS and Windows app: a Tauri shell that supervises `homerund`, and the React UI |
 | [`packages/app-state`](packages/app-state/README.md) | The platform-neutral client state layer the app's views render (and, later, the web and iOS clients) |
 | [`packages/core`](packages/core/README.md) | Task spec, events and the IPC protocol as Zod schemas, plus JSON Schema and test vectors |
 | [`packages/client`](packages/client/README.md) | How a local process finds and talks to `homerund`: the runtime, the CLI and the test harnesses share it |
