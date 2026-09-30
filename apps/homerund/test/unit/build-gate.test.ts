@@ -26,7 +26,9 @@ describe("resolveBuildChannel", () => {
 const MAIN = join(import.meta.dir, "..", "..", "src", "main.ts");
 const LAUNCH = "c".repeat(64);
 const work = mkdtempSync(join(tmpdir(), "hr-build-"));
-const bins = { plain: join(work, "homerund-plain"), dev: join(work, "homerund-dev") };
+const WINDOWS = process.platform === "win32";
+const EXE = WINDOWS ? ".exe" : "";
+const bins = { plain: join(work, `homerund-plain${EXE}`), dev: join(work, `homerund-dev${EXE}`) };
 const claudePath = findClaude(process.env);
 
 function compile(out: string, define?: string): void {
@@ -41,7 +43,9 @@ beforeAll(() => {
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
 function envFor(dataDir: string, extra: Record<string, string> = {}): Record<string, string> {
-  return { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dataDir, HOMERUN_DATA_DIR: dataDir, HOMERUN_CLAUDE_PATH: claudePath, ...extra };
+  // Windows can't start much of Win32 (sockets among it) without SystemRoot.
+  const system: Record<string, string> = WINDOWS && process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {};
+  return { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dataDir, HOMERUN_DATA_DIR: dataDir, HOMERUN_CLAUDE_PATH: claudePath, ...system, ...extra };
 }
 
 /** Run a binary with stdin closed after `stdin`; returns exit code and stderr. */
@@ -55,6 +59,16 @@ async function runOnce(bin: string, args: string[], extra: Record<string, string
   clearTimeout(timer);
   p.stdin.end();
   return { code, stderr: await new Response(p.stderr).text() };
+}
+
+/** Where the runtime in `dataDir` listens, once it does: its socket, or on Windows its published pipe. */
+async function endpoint(dataDir: string): Promise<string> {
+  if (!WINDOWS) {
+    await waitFor(join(dataDir, "run", "homerund.sock"));
+    return join(dataDir, "run", "homerund.sock");
+  }
+  await waitFor(join(dataDir, "run", "endpoint"));
+  return (await Bun.file(join(dataDir, "run", "endpoint")).text()).trim();
 }
 
 async function waitFor(path: string, ms = 15_000): Promise<void> {
@@ -98,8 +112,7 @@ describe("a compiled homerund without a build define is release", () => {
     try {
       p.stdin.write(`${LAUNCH}\n`);
       p.stdin.flush();
-      const sock = join(dataDir, "run", "homerund.sock");
-      await waitFor(sock);
+      const sock = await endpoint(dataDir);
       expect(existsSync(join(dataDir, "run", "dev-token"))).toBe(false);
 
       const dev = await RpcClient.connect(sock);
@@ -132,13 +145,16 @@ describe("a compiled homerund built with HOMERUND_BUILD=development", () => {
     try {
       const tokenFile = join(dataDir, "run", "dev-token");
       await waitFor(tokenFile);
-      await waitFor(join(dataDir, "run", "homerund.sock"));
+      const sock = await endpoint(dataDir);
       const token = (await Bun.file(tokenFile).text()).trim();
-      const dev = await RpcClient.open(join(dataDir, "run", "homerund.sock"), "cli_dev", { kind: "dev_token", token });
+      const dev = await RpcClient.open(sock, "cli_dev", { kind: "dev_token", token });
       expect(await dev.call("ping", {})).toMatchObject({ pong: true });
       dev.close();
-      p.kill("SIGTERM");
-      expect(await p.exited).toBe(0);
+      // Windows has no SIGTERM to deliver (kill terminates); the stdin case above covers a clean exit.
+      if (!WINDOWS) {
+        p.kill("SIGTERM");
+        expect(await p.exited).toBe(0);
+      }
     } finally {
       p.kill("SIGKILL");
       rmSync(dataDir, { recursive: true, force: true });

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { BLOB_INLINE_MAX_BYTES, type ThreadEvent } from "@homerun/core";
 import { Bus } from "../../src/bus";
 import { contentValue, toContent } from "../../src/store/content";
@@ -52,11 +52,14 @@ describe("migrations (§6.3)", () => {
     const r = migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: v2, now });
     expect(r).toMatchObject({ status: "migrated", from: N, to: N + 1 });
     const b = (r as { backup: string }).backup;
-    expect(currentVersion(new Database(b, { readonly: true })).version).toBe(N);
+    const copy = new Database(b, { readonly: true });
+    expect(currentVersion(copy).version).toBe(N);
+    // Closed, or Windows can't delete it when it is rotated out.
+    copy.close();
     migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: [...v2, extra(N + 2), extra(N + 3)], now });
     expect(currentVersion(db).version).toBe(N + 3);
     migrate(db, { backupDir: backups, runtimeVersion: "t", migrations: [...v2, extra(N + 2), extra(N + 3), extra(N + 4)], now });
-    expect(listBackups(backups).map((p) => p.split("/").at(-1)!.split("-")[1])).toEqual([`v${N + 1}`, `v${N + 3}`]);
+    expect(listBackups(backups).map((p) => basename(p).split("-")[1])).toEqual([`v${N + 1}`, `v${N + 3}`]);
   });
 
   test("a failed migration rolls every step back and leaves the version unchanged", () => {
