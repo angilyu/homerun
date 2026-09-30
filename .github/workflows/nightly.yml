@@ -32,9 +32,10 @@ jobs:
   desktop-macos:
     name: apps/desktop Tauri build (macOS)
     # The full shell (WebKit, AppKit, keychain) and an unsigned .app, which is too slow for every
-    # pull request (plan §9). Signing and notarization are milestone 11 (§11).
+    # pull request (plan §9), then the signed updater end to end, ad hoc (§11, §16 row 8).
+    # Developer ID signing and notarization are milestone 11 (§11).
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -46,7 +47,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri -> target
-      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/desktop..."
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/desktop..." --filter "@homerun/cli..."
       # tauri-build checks that every externalBin exists (§5.1): homerund compiled from source and
       # the SDK's darwin-arm64 claude.
       - name: Stage the sidecars
@@ -57,3 +58,13 @@ jobs:
         run: cargo test --workspace --locked
       - name: Unsigned .app
         run: pnpm --filter @homerun/desktop tauri build --bundles app --no-sign
+      # Two ad-hoc builds with an ephemeral key, a mid-run Restart now, install on quit, and the
+      # power assertion (§8.1); about 4 minutes locally. No API key or network.
+      - name: Update test (ad hoc)
+        run: scripts/macos/update-test.sh adhoc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: update-test
+          path: dist/update-test/
+          if-no-files-found: ignore
