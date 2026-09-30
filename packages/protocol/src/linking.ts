@@ -119,17 +119,17 @@ export class LinkInitiator {
   }
 
   /** XX 1: carries nothing. */
-  start(): Uint8Array {
+  start(): Promise<Uint8Array> {
     return this.hs.writeMessage(EMPTY);
   }
 
   /** Reads XX 2 and returns XX 3 with our details and commitment. */
-  answer(message2: Uint8Array): Uint8Array {
-    const desktop = parse(LinkDesktopInfo, this.hs.readMessage(message2));
+  async answer(message2: Uint8Array): Promise<Uint8Array> {
+    const desktop = parse(LinkDesktopInfo, await this.hs.readMessage(message2));
     if (desktop.device_id !== this.o.desktopId) throw new NoiseError("reply from a different desktop");
     this.desktop = desktop;
     this.desktopStatic = this.hs.remoteStatic!;
-    const m3 = this.hs.writeMessage(json(LinkDeviceInfo.parse({ ...this.o.info, commit: toB64url(sasCommit(this.nP)) })));
+    const m3 = await this.hs.writeMessage(json(LinkDeviceInfo.parse({ ...this.o.info, commit: toB64url(sasCommit(this.nP)) })));
     const t = this.hs.split();
     this.send = t.send;
     this.recv = t.recv;
@@ -189,14 +189,14 @@ export class LinkResponder {
   }
 
   /** Reads XX 1; returns XX 2 with our details. */
-  accept(message1: Uint8Array): Uint8Array {
-    if (this.hs.readMessage(message1).length !== 0) throw new NoiseError("handshake message 1 carries no data");
+  async accept(message1: Uint8Array): Promise<Uint8Array> {
+    if ((await this.hs.readMessage(message1)).length !== 0) throw new NoiseError("handshake message 1 carries no data");
     return this.hs.writeMessage(json(LinkDesktopInfo.parse(this.o.info)));
   }
 
   /** Reads XX 3 (the phone's details and commitment); returns our nonce. */
-  commit(message3: Uint8Array): Uint8Array {
-    const device = parse(LinkDeviceInfo, this.hs.readMessage(message3));
+  async commit(message3: Uint8Array): Promise<Uint8Array> {
+    const device = parse(LinkDeviceInfo, await this.hs.readMessage(message3));
     if (device.device_id !== this.o.deviceId) throw new NoiseError("details from a different device");
     this.device = device;
     this.deviceStatic = this.hs.remoteStatic!;

@@ -43,6 +43,8 @@ interface Session {
 
 export class LiveSessions {
   private sessions = new Map<string, Session>();
+  /** Handshakes under way (the key may take a task to answer). Gone if closed meanwhile. */
+  private opening = new Set<string>();
 
   constructor(private d: LiveSessionsDeps) {}
 
@@ -54,19 +56,32 @@ export class LiveSessions {
     const key = `${f.from}/${f.session}`;
     const s = this.sessions.get(key);
     if (s) return this.receive(s, f.data);
+    // A repeated first message while we answer the first: the initiator waits for our reply.
+    if (this.opening.has(key)) return;
     const peer = this.d.device(f.from);
     if (!peer) {
       this.d.send({ type: "live_close", to: f.from, session: f.session });
       return;
     }
+    this.opening.add(key);
+    void this.respond(f, key, peer).finally(() => this.opening.delete(key));
+  }
+
+  private async respond(f: Live, key: string, peer: DeviceRow): Promise<void> {
     let r;
     try {
-      r = liveRespond(
+      r = await liveRespond(
         { initiatorId: f.from, responderId: this.d.me().deviceId, sessionId: f.session, me: this.d.me().noise, peer: fromB64url(peer.static_public_key) },
         fromB64url(f.data),
       );
     } catch (e) {
       log.info("refused a live session", { device_id: f.from, error: (e as Error).message });
+      this.d.send({ type: "live_close", to: f.from, session: f.session });
+      return;
+    }
+    // Closed, or the device unpaired or re-keyed, while we answered.
+    const still = this.d.device(f.from);
+    if (!this.opening.has(key) || !still || still.static_public_key !== peer.static_public_key) {
       this.d.send({ type: "live_close", to: f.from, session: f.session });
       return;
     }
@@ -80,12 +95,14 @@ export class LiveSessions {
 
   /** The other side closed the session. */
   onClose(from: string, session: string): void {
+    this.opening.delete(`${from}/${session}`);
     const s = this.sessions.get(`${from}/${session}`);
     if (s) this.end(s, false);
   }
 
   /** Every session with this device (it was unpaired). */
   closeDevice(id: string): void {
+    for (const k of [...this.opening]) if (k.startsWith(`${id}/`)) this.opening.delete(k);
     for (const s of [...this.sessions.values()]) if (s.to === id) this.end(s, true);
   }
 

@@ -25,12 +25,14 @@ export class CryptoError extends Error {
 // ---------------------------------------------------------------- X25519
 
 /**
- * A static or ephemeral X25519 key held by the caller. `dh` is a callback so a client can keep
- * the private half somewhere we can't read (a keychain, a non-extractable WebCrypto key).
+ * A static or ephemeral X25519 key held by the caller. `dh` is an async callback so a client can
+ * keep the private half somewhere we can't read (a non-extractable WebCrypto key, the iOS
+ * Keychain behind a native module). An implementation must reject low-order peer keys the way
+ * `x25519Dh` does.
  */
 export interface DhKey {
   readonly publicKey: Uint8Array;
-  dh(theirPublic: Uint8Array): Uint8Array;
+  dh(theirPublic: Uint8Array): Promise<Uint8Array>;
 }
 
 export function x25519Public(secretKey: Uint8Array): Uint8Array {
@@ -54,7 +56,7 @@ export function x25519Dh(secretKey: Uint8Array, theirPublic: Uint8Array): Uint8A
 export function x25519Key(secretKey: Uint8Array): DhKey & { readonly secretKey: Uint8Array } {
   if (secretKey.length !== DH_LEN) throw new CryptoError("bad secret key length");
   const publicKey = x25519Public(secretKey);
-  return { secretKey, publicKey, dh: (pub) => x25519Dh(secretKey, pub) };
+  return { secretKey, publicKey, dh: async (pub) => x25519Dh(secretKey, pub) };
 }
 
 export function generateX25519(random: Random = systemRandom) {
@@ -114,15 +116,16 @@ function concat2(a: Uint8Array, b: Uint8Array): Uint8Array {
 
 // ---------------------------------------------------------------- Ed25519
 
+/** An Ed25519 key held by the caller; async for the same reason as `DhKey`. */
 export interface SigningKey {
   readonly publicKey: Uint8Array;
-  sign(message: Uint8Array): Uint8Array;
+  sign(message: Uint8Array): Promise<Uint8Array>;
 }
 
 export function ed25519Key(secretKey: Uint8Array): SigningKey & { readonly secretKey: Uint8Array } {
   if (secretKey.length !== 32) throw new CryptoError("bad signing key length");
   const publicKey = ed25519.getPublicKey(secretKey);
-  return { secretKey, publicKey, sign: (m) => ed25519.sign(m, secretKey) };
+  return { secretKey, publicKey, sign: async (m) => ed25519.sign(m, secretKey) };
 }
 
 export function generateEd25519(random: Random = systemRandom) {

@@ -71,7 +71,7 @@ export interface SealOptions {
   maxChunk?: number;
 }
 
-export function seal(o: SealOptions): SealedEnvelope {
+export async function seal(o: SealOptions): Promise<SealedEnvelope> {
   const inner = SealedInner.parse(o.inner);
   const header: SealedHeader = {
     v: RELAY_ENVELOPE_VERSION,
@@ -89,7 +89,7 @@ export function seal(o: SealOptions): SealedEnvelope {
  * Seals arbitrary bytes under an arbitrary header, without checking that they agree. For test
  * vectors (a sender that lies about itself) and for `seal`; applications use `seal`.
  */
-export function sealRaw(o: {
+export async function sealRaw(o: {
   header: SealedHeader;
   plaintext: Uint8Array;
   sender: DhKey;
@@ -97,7 +97,7 @@ export function sealRaw(o: {
   random?: Random;
   e?: DhKey;
   maxChunk?: number;
-}): SealedEnvelope {
+}): Promise<SealedEnvelope> {
   const hs = new HandshakeState({
     pattern: "K",
     initiator: true,
@@ -108,7 +108,7 @@ export function sealRaw(o: {
     e: o.e,
   });
   // The handshake message carries an empty payload; the body goes in transport messages.
-  const first = hs.writeMessage();
+  const first = await hs.writeMessage();
   const t = hs.split();
   const rest = encryptFragments(t.send!, o.plaintext, o.maxChunk);
   const parts: Uint8Array[] = [];
@@ -153,7 +153,7 @@ export interface OpenOptions {
  * still pending (the caller knows that). Recording `msg_id` in the seen-set is the caller's job,
  * in the same transaction as the message's effect, so a crash can never apply it twice.
  */
-export function openSealed(raw: unknown, o: OpenOptions): OpenResult {
+export async function openSealed(raw: unknown, o: OpenOptions): Promise<OpenResult> {
   if (typeof raw === "object" && raw !== null && (raw as { header?: { v?: unknown } }).header?.v !== undefined) {
     if ((raw as { header: { v: unknown } }).header.v !== RELAY_ENVELOPE_VERSION) return { ok: false, reason: "unsupported_version" };
   }
@@ -189,7 +189,7 @@ export function openSealed(raw: unknown, o: OpenOptions): OpenResult {
   let plaintext: Uint8Array | null = null;
   try {
     const hs = new HandshakeState({ pattern: "K", initiator: false, prologue: sealedPrologue(header), s: o.me.noise, rs });
-    if (hs.readMessage(messages[0]!).length !== 0) return { ok: false, reason: "malformed" };
+    if ((await hs.readMessage(messages[0]!)).length !== 0) return { ok: false, reason: "malformed" };
     const t = hs.split();
     const r = new Reassembler(t.recv!, SEALED_MAX_BYTES);
     for (const [i, m] of messages.slice(1).entries()) {

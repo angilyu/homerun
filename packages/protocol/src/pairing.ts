@@ -108,13 +108,13 @@ export class PairInitiator {
     });
   }
 
-  start(): Uint8Array {
+  start(): Promise<Uint8Array> {
     return this.hs.writeMessage(json(PairHello.parse(this.o.hello)));
   }
 
   /** Reads the desktop's reply. The caller must check the statement names this phone. */
-  finish(message2: Uint8Array): PairWelcome {
-    const welcome = parse(PairWelcome, this.hs.readMessage(message2));
+  async finish(message2: Uint8Array): Promise<PairWelcome> {
+    const welcome = parse(PairWelcome, await this.hs.readMessage(message2));
     if (welcome.device_id !== this.o.qr.device_id) throw new NoiseError("welcome from a different desktop");
     return welcome;
   }
@@ -141,13 +141,13 @@ export class PairResponder {
    * Reads message 1. The psk is mixed in before its payload (psk1), so a hello that decrypts
    * proves the sender scanned the code; its static key is authenticated by `ss`.
    */
-  read(message1: Uint8Array): { hello: PairHello; remoteStatic: Uint8Array } {
-    const hello = parse(PairHello, this.hs.readMessage(message1));
+  async read(message1: Uint8Array): Promise<{ hello: PairHello; remoteStatic: Uint8Array }> {
+    const hello = parse(PairHello, await this.hs.readMessage(message1));
     this.hello = hello;
     return { hello, remoteStatic: this.hs.remoteStatic! };
   }
 
-  reply(welcome: PairWelcome): Uint8Array {
+  reply(welcome: PairWelcome): Promise<Uint8Array> {
     return this.hs.writeMessage(json(PairWelcome.parse(welcome)));
   }
 }

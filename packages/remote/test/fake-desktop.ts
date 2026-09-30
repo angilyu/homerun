@@ -63,7 +63,12 @@ export class FakeDesktop {
   ) {
     this.id = identityFromStored(crypto.randomUUID() as DeviceId, "desktop", generateDeviceKeys());
     this.conn = new RelayConnection({ url: relayUrl, identity: this.id, token, freshToken: token, reconnect: { initialMs: 50, maxMs: 500 } });
-    this.conn.onFrame((f) => void this.onFrame(f).catch((e) => console.error("fake desktop:", e)));
+    // Handshake steps are async; frames of one conversation are handled strictly in order.
+    this.conn.onFrame((f) => {
+      const key = "from" in f && "session" in f ? `${f.type}/${f.from}/${f.session}` : f.type;
+      const next = (this.lanes.get(key) ?? Promise.resolve()).then(() => this.onFrame(f)).catch((e) => console.error("fake desktop:", e));
+      this.lanes.set(key, next);
+    });
   }
 
   get deviceId(): DeviceId {
@@ -96,7 +101,7 @@ export class FakeDesktop {
   /** Sends a sealed push to a phone, as the runtime does when it needs an answer. */
   async push(to: string, body: Extract<SealedBody, { type: "push" }>, ttlMs = 24 * 3600_000): Promise<ServerFrame> {
     const now = Date.now();
-    const env = seal({
+    const env = await seal({
       inner: { v: 1, msg_id: newMsgId(), sender_device_id: this.deviceId, created_at: now, expires_at: now + ttlMs, body } as SealedInner,
       to,
       sender: this.id.noise,
@@ -128,6 +133,8 @@ export class FakeDesktop {
     }
   }
 
+  private lanes = new Map<string, Promise<void>>();
+
   private async onFrame(f: ServerFrame): Promise<void> {
     if (f.type === "rendezvous" && f.kind === "pair") return this.onPair(f);
     if (f.type === "rendezvous" && f.kind === "link") return this.onLink(f);
@@ -140,21 +147,21 @@ export class FakeDesktop {
 
   private pairing = new Map<string, PairResponder>();
 
-  private onPair(f: Extract<ServerFrame, { type: "rendezvous" }>): void {
+  private async onPair(f: Extract<ServerFrame, { type: "rendezvous" }>): Promise<void> {
     // The relay only forwards a first pairing message for an open offer; the desktop tries each
     // of its open codes (normally one).
     for (const [offer, code] of this.offers) {
       const r = new PairResponder({ desktopId: this.deviceId, deviceId: f.from, sessionId: f.session, code, me: this.id.noise });
       let read;
       try {
-        read = r.read(fromB64url(f.data));
+        read = await r.read(fromB64url(f.data));
       } catch {
         continue;
       }
       this.offers.delete(offer);
-      const statement = this.statement(f.from, read.remoteStatic, read.hello.signing_public_key, read.hello.platform, "qr");
+      const statement = await this.statement(f.from, read.remoteStatic, read.hello.signing_public_key, read.hello.platform, "qr");
       this.peers.set(f.from, { static: read.remoteStatic, platform: read.hello.platform });
-      const reply = r.reply({ device_id: this.deviceId, name: this.name, signing_public_key: publicOf(this.id).signing_public_key, statement });
+      const reply = await r.reply({ device_id: this.deviceId, name: this.name, signing_public_key: publicOf(this.id).signing_public_key, statement });
       this.conn.send({ type: "rendezvous", kind: "pair", to: f.from, session: f.session, data: toB64url(reply) });
       this.conn.send({ type: "link_add", statement, offer });
       this.conn.send({ type: "pair_close", offer });
@@ -187,11 +194,11 @@ export class FakeDesktop {
     const data = fromB64url(f.data);
     if (st.step === 0) {
       st.step = 1;
-      return void send(st.r.accept(data));
+      return void send(await st.r.accept(data));
     }
     if (st.step === 1) {
       st.step = 2;
-      return void send(st.r.commit(data));
+      return void send(await st.r.commit(data));
     }
     if (st.step === 2) {
       st.step = 3;
@@ -200,14 +207,14 @@ export class FakeDesktop {
       const ok = await this.confirmCode(code, { name: device.name, platform: device.platform });
       this.linking.delete(key);
       if (!ok) return void send(st.r.declined());
-      const statement = this.statement(f.from, st.r.deviceStatic!, device.signing_public_key, device.platform, "code");
+      const statement = await this.statement(f.from, st.r.deviceStatic!, device.signing_public_key, device.platform, "code");
       this.peers.set(f.from, { static: st.r.deviceStatic!, platform: device.platform });
       this.conn.send({ type: "link_add", statement });
       send(st.r.linked(statement));
     }
   }
 
-  private statement(deviceId: string, deviceStatic: Uint8Array, signing: string, platform: RemotePlatform, method: "qr" | "code"): LinkStatement {
+  private statement(deviceId: string, deviceStatic: Uint8Array, signing: string, platform: RemotePlatform, method: "qr" | "code"): Promise<LinkStatement> {
     return signLinkStatement(
       {
         v: 1,
@@ -227,13 +234,13 @@ export class FakeDesktop {
 
   // ---------------------------------------------------------------- live
 
-  private onLive(f: Extract<ServerFrame, { type: "live" }>): void {
+  private async onLive(f: Extract<ServerFrame, { type: "live" }>): Promise<void> {
     const key = `${f.from}/${f.session}`;
     const s = this.live.get(key);
     if (!s) {
       const peer = this.peers.get(f.from);
       if (!peer) return void this.conn.send({ type: "live_close", to: f.from, session: f.session });
-      const r = liveRespond({ initiatorId: f.from, responderId: this.deviceId, sessionId: f.session, me: this.id.noise, peer: peer.static }, fromB64url(f.data));
+      const r = await liveRespond({ initiatorId: f.from, responderId: this.deviceId, sessionId: f.session, me: this.id.noise, peer: peer.static }, fromB64url(f.data));
       this.live.set(key, r.session);
       this.conn.send({ type: "live", to: f.from, session: f.session, data: toB64url(r.reply) });
       return;
@@ -252,9 +259,9 @@ export class FakeDesktop {
 
   // ---------------------------------------------------------------- sealed
 
-  private onSealed(id: string, env: Parameters<typeof openSealed>[0]): void {
+  private async onSealed(id: string, env: Parameters<typeof openSealed>[0]): Promise<void> {
     const now = Date.now();
-    const r = openSealed(env, {
+    const r = await openSealed(env, {
       me: { deviceId: this.deviceId, noise: this.id.noise },
       senderStatic: (from) => this.peers.get(from)?.static ?? null,
       now,

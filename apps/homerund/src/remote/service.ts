@@ -229,8 +229,8 @@ export class RemoteService {
     this.pairing.cancel(offerId);
   }
 
-  decideLink(requestId: string, approve: boolean): void {
-    if (!this.linking.decide(requestId, approve)) throw new RemoteError("not_found", "That link request has ended.");
+  async decideLink(requestId: string, approve: boolean): Promise<void> {
+    if (!(await this.linking.decide(requestId, approve))) throw new RemoteError("not_found", "That link request has ended.");
   }
 
   // ---------------------------------------------------------------- runtime events
@@ -342,7 +342,7 @@ export class RemoteService {
       case "rendezvous_close":
         return this.linking.onClose(f.from, f.session);
       case "sealed":
-        return this.sealed.receive(f.id, f.envelope);
+        return void this.sealed.receive(f.id, f.envelope);
       case "error":
         log.info("relay error", { code: f.code, message: f.message });
         return;

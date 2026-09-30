@@ -55,42 +55,50 @@ export class RemoteLive {
       peer: fromB64url(this.desktop.static_public_key),
     });
     const ours = (f: { from?: string; session?: string }) => f.from === this.desktop.device_id && f.session === this.sessionId;
+    // One handler for the whole session. Finishing the handshake can take a task or two (the key
+    // may live in WebCrypto or the Keychain), so frames the desktop sends right after its reply
+    // are buffered until the transport keys exist, in order.
+    let settle = null as ((e: Error | null, data?: Uint8Array) => void) | null;
+    const early: string[] = [];
     const reply = new Promise<Uint8Array>((resolve, reject) => {
-      const t = setTimeout(() => done(new LiveClosedError("the desktop didn't answer")), timeoutMs);
-      const done = (e: Error | null, data?: Uint8Array) => {
+      const t = setTimeout(() => settle?.(new LiveClosedError("the desktop didn't answer")), timeoutMs);
+      settle = (e, data) => {
+        settle = null;
         clearTimeout(t);
-        off();
         if (e) reject(e);
         else resolve(data!);
       };
-      const off = this.conn.onFrame((f) => {
-        if (f.type === "live" && ours(f)) done(null, fromB64url(f.data));
-        else if (f.type === "live_close" && ours(f)) done(new LiveClosedError("the desktop is offline or refused the session"));
-        else if (f.type === "error" && f.ref === this.sessionId) done(new LiveClosedError(`${f.code}: ${f.message}`));
-      });
     });
-    if (!this.conn.send({ type: "live", to: this.desktop.device_id, session: this.sessionId, data: toB64url(init.start()) })) {
-      throw new LiveClosedError("not connected to the relay");
-    }
-    let m2: Uint8Array;
-    try {
-      m2 = await reply;
-    } catch (e) {
-      this.finish(e instanceof Error ? e.message : String(e));
-      throw e;
-    }
-    this.session = init.finish(m2);
+    reply.catch(() => {});
+    const fail = (reason: string) => (settle ? settle(new LiveClosedError(reason)) : this.finish(reason));
     this.offs.push(
       this.conn.onFrame((f) => {
-        if (f.type === "live" && ours(f)) this.receive(f.data);
-        else if (f.type === "live_close" && ours(f)) this.finish("closed by the desktop");
-        else if (f.type === "error" && f.ref === this.sessionId) this.finish(`${f.code}: ${f.message}`);
+        if (f.type === "live" && ours(f)) {
+          if (settle) settle(null, fromB64url(f.data));
+          else if (!this.session) early.push(f.data);
+          else this.receive(f.data);
+        } else if (f.type === "live_close" && ours(f)) fail(settle ? "the desktop is offline or refused the session" : "closed by the desktop");
+        else if (f.type === "error" && f.ref === this.sessionId) fail(`${f.code}: ${f.message}`);
       }),
       // Noise state doesn't survive a reconnect: a new connection needs a new session.
       this.conn.onState((s) => {
-        if (s !== "ready") this.finish(`relay connection ${s}`);
+        if (s !== "ready") fail(`relay connection ${s}`);
       }),
     );
+    try {
+      const m1 = await init.start();
+      if (!this.conn.send({ type: "live", to: this.desktop.device_id, session: this.sessionId, data: toB64url(m1) })) {
+        throw new LiveClosedError("not connected to the relay");
+      }
+      const session = await init.finish(await reply);
+      if (this.closeReason !== null) throw new LiveClosedError(this.closeReason);
+      this.session = session;
+    } catch (e) {
+      settle?.(e as Error);
+      this.finish(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+    for (const data of early.splice(0)) this.receive(data);
   }
 
   get isOpen(): boolean {
@@ -134,6 +142,7 @@ export class RemoteLive {
   }
 
   private receive(data: string): void {
+    if (this.closeReason !== null) return;
     let m: RpcMessage | null;
     try {
       m = this.session!.decrypt(fromB64url(data));

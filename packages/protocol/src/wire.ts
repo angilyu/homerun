@@ -51,8 +51,8 @@ export function challengeBytes(nonce: string, deviceId: string): Uint8Array {
   return framed(RELAY_AUTH_LABEL, nonce, deviceId);
 }
 
-export function signChallenge(key: SigningKey, nonce: string, deviceId: string): string {
-  return toB64url(key.sign(challengeBytes(nonce, deviceId)));
+export async function signChallenge(key: SigningKey, nonce: string, deviceId: string): Promise<string> {
+  return toB64url(await key.sign(challengeBytes(nonce, deviceId)));
 }
 
 export function requestBytes(deviceId: string, ts: number, method: string, path: string, body: Uint8Array): Uint8Array {
@@ -60,8 +60,15 @@ export function requestBytes(deviceId: string, ts: number, method: string, path:
 }
 
 /** HTTPS: `homerun-device: <device_id>.<ts>.<signature>` over the method, path and body hash. */
-export function signRequest(key: SigningKey, deviceId: string, ts: number, method: string, path: string, body: Uint8Array): string {
-  return `${deviceId}.${ts}.${toB64url(key.sign(requestBytes(deviceId, ts, method, path, body)))}`;
+export async function signRequest(
+  key: SigningKey,
+  deviceId: string,
+  ts: number,
+  method: string,
+  path: string,
+  body: Uint8Array,
+): Promise<string> {
+  return `${deviceId}.${ts}.${toB64url(await key.sign(requestBytes(deviceId, ts, method, path, body)))}`;
 }
 
 export function parseDeviceProof(header: string | null): { deviceId: string; ts: number; signature: string } | null {

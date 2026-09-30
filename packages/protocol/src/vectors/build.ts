@@ -29,7 +29,7 @@ const COMMENT = (file: string) =>
 
 // ---------------------------------------------------------------- sealed
 
-export function buildSealed() {
+export async function buildSealed() {
   const phone = id("phone");
   const desktop = id("desktop");
   const other = id("other");
@@ -76,9 +76,9 @@ export function buildSealed() {
     text: "A longer instruction that is split into several fragments. ".repeat(4),
   } as SealedInner["body"], T0, 12 * HOUR);
 
-  const add = (name: string, o: { inner: SealedInner; from: typeof phone; to: typeof desktop; toStatic?: Uint8Array; maxChunk?: number }) => {
+  const add = async (name: string, o: { inner: SealedInner; from: typeof phone; to: typeof desktop; toStatic?: Uint8Array; maxChunk?: number }) => {
     const e = eph(`sealed/${name}`);
-    const env = seal({ inner: o.inner, to: o.to.deviceId, sender: o.from.noise, recipientStatic: o.toStatic ?? o.to.noise.publicKey, e, maxChunk: o.maxChunk });
+    const env = await seal({ inner: o.inner, to: o.to.deviceId, sender: o.from.noise, recipientStatic: o.toStatic ?? o.to.noise.publicKey, e, maxChunk: o.maxChunk });
     seals.push({
       name,
       sender: o.from === phone ? "phone" : "desktop",
@@ -91,13 +91,13 @@ export function buildSealed() {
     });
     return env;
   };
-  const addRaw = (name: string, header: SealedHeader, plaintext: string) => {
+  const addRaw = async (name: string, header: SealedHeader, plaintext: string) => {
     const e = eph(`sealed/${name}`);
-    const env = sealRaw({ header, plaintext: utf8(plaintext), sender: phone.noise, recipientStatic: desktop.noise.publicKey, e });
+    const env = await sealRaw({ header, plaintext: utf8(plaintext), sender: phone.noise, recipientStatic: desktop.noise.publicKey, e });
     seals.push({ name, sender: "phone", recipient_static: toB64url(desktop.noise.publicKey), ephemeral_secret: toHex(e.secretKey), header, plaintext, envelope: env });
     return env;
   };
-  const open = (
+  const open = async (
     name: string,
     envelope: unknown,
     expect: { ok: true } | { ok: false; reason: string },
@@ -106,7 +106,7 @@ export function buildSealed() {
     const recipient = o.recipient ?? "desktop";
     const pinned = o.pinned ?? { [phone.deviceId]: "phone" };
     const now = o.now ?? T0 + 60_000;
-    const r = openSealed(envelope, {
+    const r = await openSealed(envelope, {
       me: id(recipient),
       senderStatic: (d) => (pinned[d] ? id(pinned[d]!).noise.publicKey : null),
       now,
@@ -125,15 +125,15 @@ export function buildSealed() {
     });
   };
 
-  const envInstruction = add("instruction", { inner: instruction, from: phone, to: desktop });
-  const envPush = add("push", { inner: push, from: desktop, to: phone });
-  const envAnswer = add("answer", { inner: answer, from: phone, to: desktop });
-  const envLong = add("fragmented", { inner: long, from: phone, to: desktop, maxChunk: 64 });
-  const envWrongKey = add("sealed to another key", { inner: answer, from: phone, to: desktop, toStatic: other.noise.publicKey });
+  const envInstruction = await add("instruction", { inner: instruction, from: phone, to: desktop });
+  const envPush = await add("push", { inner: push, from: desktop, to: phone });
+  const envAnswer = await add("answer", { inner: answer, from: phone, to: desktop });
+  const envLong = await add("fragmented", { inner: long, from: phone, to: desktop, maxChunk: 64 });
+  const envWrongKey = await add("sealed to another key", { inner: answer, from: phone, to: desktop, toStatic: other.noise.publicKey });
   const future = inner("future", answer.body, T0 + CLOCK_SKEW_MS + 60_000);
-  const envFuture = add("from the future", { inner: future, from: phone, to: desktop });
+  const envFuture = await add("from the future", { inner: future, from: phone, to: desktop });
   const tooLong = inner("too long", answer.body, T0, 2 * HOUR);
-  const envTooLong = add("lifetime too long", { inner: tooLong, from: phone, to: desktop });
+  const envTooLong = await add("lifetime too long", { inner: tooLong, from: phone, to: desktop });
 
   const lyingHeader = (label: string): SealedHeader => ({
     v: 1,
@@ -144,38 +144,38 @@ export function buildSealed() {
     from_device_id: phone.deviceId,
     expires_at: T0 + HOUR,
   });
-  const envSender = addRaw("inner sender differs", lyingHeader("sender"), JSON.stringify({ ...answer, msg_id: msgId("sender"), sender_device_id: other.deviceId }));
-  const envMsgId = addRaw("inner msg_id differs", lyingHeader("msgid"), JSON.stringify({ ...answer, msg_id: msgId("different") }));
-  const envNotJson = addRaw("not JSON inside", lyingHeader("notjson"), "not json");
+  const envSender = await addRaw("inner sender differs", lyingHeader("sender"), JSON.stringify({ ...answer, msg_id: msgId("sender"), sender_device_id: other.deviceId }));
+  const envMsgId = await addRaw("inner msg_id differs", lyingHeader("msgid"), JSON.stringify({ ...answer, msg_id: msgId("different") }));
+  const envNotJson = await addRaw("not JSON inside", lyingHeader("notjson"), "not json");
 
-  open("instruction opens", envInstruction, { ok: true });
-  open("push opens on the phone", envPush, { ok: true }, { recipient: "phone", pinned: { [desktop.deviceId]: "desktop" } });
-  open("answer opens", envAnswer, { ok: true });
-  open("fragmented instruction opens", envLong, { ok: true });
-  open("at the edge of the skew allowance", envAnswer, { ok: true }, { now: answer.expires_at + CLOCK_SKEW_MS });
+  await open("instruction opens", envInstruction, { ok: true });
+  await open("push opens on the phone", envPush, { ok: true }, { recipient: "phone", pinned: { [desktop.deviceId]: "desktop" } });
+  await open("answer opens", envAnswer, { ok: true });
+  await open("fragmented instruction opens", envLong, { ok: true });
+  await open("at the edge of the skew allowance", envAnswer, { ok: true }, { now: answer.expires_at + CLOCK_SKEW_MS });
 
   const flip = (env: SealedEnvelope, at: number): SealedEnvelope => {
     const b = fromB64url(env.ciphertext);
     b[at]! ^= 0x01;
     return { header: env.header, ciphertext: toB64url(b) };
   };
-  open("tampered ciphertext", flip(envInstruction, 60), { ok: false, reason: "decrypt_failed" });
-  open("tampered ephemeral key", flip(envInstruction, 3), { ok: false, reason: "decrypt_failed" });
-  open("tampered header: later expiry", { ...envAnswer, header: { ...envAnswer.header, expires_at: envAnswer.header.expires_at + HOUR } }, { ok: false, reason: "decrypt_failed" });
-  open("tampered header: kind", { ...envInstruction, header: { ...envInstruction.header, kind: "answer" } }, { ok: false, reason: "decrypt_failed" });
-  open("tampered header: msg_id", { ...envAnswer, header: { ...envAnswer.header, msg_id: msgId("swapped") } }, { ok: false, reason: "decrypt_failed" });
-  open("re-addressed to another device", { ...envAnswer, header: { ...envAnswer.header, to_device_id: other.deviceId } }, { ok: false, reason: "decrypt_failed" }, { recipient: "other" });
-  open("addressed to someone else", envAnswer, { ok: false, reason: "wrong_recipient" }, { recipient: "other" });
-  open("sealed to another key", envWrongKey, { ok: false, reason: "decrypt_failed" });
-  open("sender not paired", envAnswer, { ok: false, reason: "unknown_sender" }, { pinned: {} });
-  open("sender pinned with a different key", envAnswer, { ok: false, reason: "decrypt_failed" }, { pinned: { [phone.deviceId]: "other" } });
-  open("expired", envAnswer, { ok: false, reason: "expired" }, { now: answer.expires_at + CLOCK_SKEW_MS + 1 });
-  open("created in the future", envFuture, { ok: false, reason: "from_future" }, { now: T0 });
-  open("lifetime longer than the kind allows", envTooLong, { ok: false, reason: "lifetime_too_long" });
-  open("replayed", envAnswer, { ok: false, reason: "replayed" }, { seen: [answer.msg_id] });
-  open("inner sender differs from the header", envSender, { ok: false, reason: "sender_mismatch" });
-  open("inner msg_id differs from the header", envMsgId, { ok: false, reason: "header_mismatch" });
-  open("not JSON inside", envNotJson, { ok: false, reason: "malformed" });
+  await open("tampered ciphertext", flip(envInstruction, 60), { ok: false, reason: "decrypt_failed" });
+  await open("tampered ephemeral key", flip(envInstruction, 3), { ok: false, reason: "decrypt_failed" });
+  await open("tampered header: later expiry", { ...envAnswer, header: { ...envAnswer.header, expires_at: envAnswer.header.expires_at + HOUR } }, { ok: false, reason: "decrypt_failed" });
+  await open("tampered header: kind", { ...envInstruction, header: { ...envInstruction.header, kind: "answer" } }, { ok: false, reason: "decrypt_failed" });
+  await open("tampered header: msg_id", { ...envAnswer, header: { ...envAnswer.header, msg_id: msgId("swapped") } }, { ok: false, reason: "decrypt_failed" });
+  await open("re-addressed to another device", { ...envAnswer, header: { ...envAnswer.header, to_device_id: other.deviceId } }, { ok: false, reason: "decrypt_failed" }, { recipient: "other" });
+  await open("addressed to someone else", envAnswer, { ok: false, reason: "wrong_recipient" }, { recipient: "other" });
+  await open("sealed to another key", envWrongKey, { ok: false, reason: "decrypt_failed" });
+  await open("sender not paired", envAnswer, { ok: false, reason: "unknown_sender" }, { pinned: {} });
+  await open("sender pinned with a different key", envAnswer, { ok: false, reason: "decrypt_failed" }, { pinned: { [phone.deviceId]: "other" } });
+  await open("expired", envAnswer, { ok: false, reason: "expired" }, { now: answer.expires_at + CLOCK_SKEW_MS + 1 });
+  await open("created in the future", envFuture, { ok: false, reason: "from_future" }, { now: T0 });
+  await open("lifetime longer than the kind allows", envTooLong, { ok: false, reason: "lifetime_too_long" });
+  await open("replayed", envAnswer, { ok: false, reason: "replayed" }, { seen: [answer.msg_id] });
+  await open("inner sender differs from the header", envSender, { ok: false, reason: "sender_mismatch" });
+  await open("inner msg_id differs from the header", envMsgId, { ok: false, reason: "header_mismatch" });
+  await open("not JSON inside", envNotJson, { ok: false, reason: "malformed" });
   const truncated = (() => {
     const b = fromB64url(envLong.ciphertext);
     let off = 0;
@@ -186,9 +186,9 @@ export function buildSealed() {
     }
     return { header: envLong.header, ciphertext: toB64url(b.subarray(0, starts[starts.length - 1])) };
   })();
-  open("last fragment dropped", truncated, { ok: false, reason: "malformed" });
-  open("unsupported version", { ...envAnswer, header: { ...envAnswer.header, v: 2 } }, { ok: false, reason: "unsupported_version" });
-  open("missing ciphertext", { header: envAnswer.header }, { ok: false, reason: "malformed" });
+  await open("last fragment dropped", truncated, { ok: false, reason: "malformed" });
+  await open("unsupported version", { ...envAnswer, header: { ...envAnswer.header, v: 2 } }, { ok: false, reason: "unsupported_version" });
+  await open("missing ciphertext", { header: envAnswer.header }, { ok: false, reason: "malformed" });
 
   return {
     $comment: COMMENT("Sealed messages (§9.4): `seal` cases must be reproduced byte for byte from their inputs; `open` cases must give `expect`."),
@@ -201,7 +201,7 @@ export function buildSealed() {
 
 // ---------------------------------------------------------------- live
 
-export function buildLive() {
+export async function buildLive() {
   const phone = id("phone");
   const desktop = id("desktop");
   const sessionId = session("live");
@@ -209,9 +209,9 @@ export function buildLive() {
   const re = eph("live/responder");
   const common = { initiatorId: phone.deviceId, responderId: desktop.deviceId, sessionId, maxChunk: 48 };
   const init = new LiveInitiator({ ...common, me: phone.noise, peer: desktop.noise.publicKey, e: ie });
-  const m1 = init.start();
-  const { reply: m2, session: dSession } = liveRespond({ ...common, me: desktop.noise, peer: phone.noise.publicKey, e: re }, m1);
-  const pSession = init.finish(m2);
+  const m1 = await init.start();
+  const { reply: m2, session: dSession } = await liveRespond({ ...common, me: desktop.noise, peer: phone.noise.publicKey, e: re }, m1);
+  const pSession = await init.finish(m2);
   const messages: Record<string, unknown>[] = [
     { from: "initiator", kind: "handshake", data: toB64url(m1) },
     { from: "responder", kind: "handshake", data: toB64url(m2) },
@@ -239,13 +239,13 @@ export function buildLive() {
     handshake_hash: toHex(pSession.handshakeHash),
     messages,
     reject: [
-      { name: "first message for another session", data: toB64url(otherInit.start()) },
-      { name: "first message with a payload", data: toB64url(firstWithPayload(phone, desktop, sessionId)) },
+      { name: "first message for another session", data: toB64url(await otherInit.start()) },
+      { name: "first message with a payload", data: toB64url(await firstWithPayload(phone, desktop, sessionId)) },
     ],
   };
 }
 
-function firstWithPayload(phone: ReturnType<typeof id>, desktop: ReturnType<typeof id>, sessionId: string): Uint8Array {
+function firstWithPayload(phone: ReturnType<typeof id>, desktop: ReturnType<typeof id>, sessionId: string): Promise<Uint8Array> {
   // Built directly on the handshake so the payload rule, not the prologue, is what fails.
   const hs = new HandshakeState({
     pattern: "KK",
@@ -275,12 +275,12 @@ function statementBody(o: { platform: "ios" | "web"; method: "qr" | "code"; devi
   };
 }
 
-export function buildStatements() {
+export async function buildStatements() {
   const desktop = id("desktop");
   const body = statementBody({ platform: "ios", method: "qr", device: "phone" });
-  const signed = signLinkStatement(body, desktop.signing);
-  const webSigned = signLinkStatement(statementBody({ platform: "web", method: "code", device: "web" }), desktop.signing);
-  const otherSigner = signLinkStatement(body, id("other").signing);
+  const signed = await signLinkStatement(body, desktop.signing);
+  const webSigned = await signLinkStatement(statementBody({ platform: "web", method: "code", device: "web" }), desktop.signing);
+  const otherSigner = await signLinkStatement(body, id("other").signing);
   return {
     $comment: COMMENT("Link statements (§10.5, §10.7): Ed25519 over `bytes`; `verify` cases give whether the statement verifies against `signer`."),
     devices: { desktop: keys("desktop"), phone: keys("phone"), web: keys("web"), other: keys("other") },
@@ -301,7 +301,7 @@ export function buildStatements() {
 
 // ---------------------------------------------------------------- pairing
 
-export function buildPairing() {
+export async function buildPairing() {
   const phone = id("phone");
   const desktop = id("desktop");
   const code = toB64url(seededRandom("pairing/code")(16));
@@ -312,17 +312,17 @@ export function buildPairing() {
   const re = eph("pair/responder");
   const hello = { device_id: phone.deviceId, platform: "ios" as const, name: "Wenjing's iPhone", signing_public_key: keys("phone").ed25519_public };
   const init = new PairInitiator({ qr: decodePairingUrl(url)!, me: phone.noise, hello, sessionId, e: ie });
-  const m1 = init.start();
+  const m1 = await init.start();
   const resp = new PairResponder({ desktopId: desktop.deviceId, deviceId: phone.deviceId, sessionId, code, me: desktop.noise, e: re });
-  resp.read(m1);
+  await resp.read(m1);
   const welcome = {
     device_id: desktop.deviceId,
     name: "Wenjing's MacBook Pro",
     signing_public_key: keys("desktop").ed25519_public,
-    statement: signLinkStatement(statementBody({ platform: "ios", method: "qr", device: "phone" }), desktop.signing),
+    statement: await signLinkStatement(statementBody({ platform: "ios", method: "qr", device: "phone" }), desktop.signing),
   };
-  const m2 = resp.reply(welcome);
-  init.finish(m2);
+  const m2 = await resp.reply(welcome);
+  await init.finish(m2);
   const wrong = new PairInitiator({
     qr: { ...decodePairingUrl(url)!, pairing_code: toB64url(seededRandom("pairing/wrong")(16)) },
     me: phone.noise,
@@ -344,7 +344,7 @@ export function buildPairing() {
     welcome,
     message1: toB64url(m1),
     message2: toB64url(m2),
-    reject_message1: [{ name: "made with a different code", data: toB64url(wrong.start()) }],
+    reject_message1: [{ name: "made with a different code", data: toB64url(await wrong.start()) }],
     urls: [
       { url, valid: true },
       { url: url.replace("homerun://pair", "homerun://evil"), valid: false },
@@ -356,7 +356,7 @@ export function buildPairing() {
 
 // ---------------------------------------------------------------- linking
 
-export function buildLinking() {
+export async function buildLinking() {
   const phone = id("phone");
   const desktop = id("desktop");
   const sessionId = session("link");
@@ -368,14 +368,14 @@ export function buildLinking() {
   const dinfo = { device_id: desktop.deviceId, name: "Wenjing's MacBook Pro", signing_public_key: keys("desktop").ed25519_public };
   const p = new LinkInitiator({ deviceId: phone.deviceId, desktopId: desktop.deviceId, sessionId, me: phone.noise, info, e: ie, nonce: nP });
   const d = new LinkResponder({ deviceId: phone.deviceId, desktopId: desktop.deviceId, sessionId, me: desktop.noise, info: dinfo, e: re, nonce: nD });
-  const m1 = p.start();
-  const m2 = d.accept(m1);
-  const m3 = p.answer(m2);
-  const m4 = d.commit(m3);
+  const m1 = await p.start();
+  const m2 = await d.accept(m1);
+  const m3 = await p.answer(m2);
+  const m4 = await d.commit(m3);
   const m5 = p.reveal(m4);
   const code = d.verify(m5);
   if (code !== p.code) throw new Error("codes differ");
-  const statement = signLinkStatement(statementBody({ platform: "ios", method: "code", device: "phone" }), desktop.signing);
+  const statement = await signLinkStatement(statementBody({ platform: "ios", method: "code", device: "phone" }), desktop.signing);
   const m6 = d.linked(statement);
   p.result(m6);
   return {
@@ -401,7 +401,7 @@ export function buildLinking() {
 
 // ---------------------------------------------------------------- APNs
 
-export function buildApns() {
+export async function buildApns() {
   const desktop = id("desktop");
   const phone = id("phone");
   const base = {
@@ -418,8 +418,8 @@ export function buildApns() {
       recipientStatic: phone.noise.publicKey,
       e: eph(`apns/${label}`),
     });
-  const small = pushOf("small", "Run finished", "Weekly report: done in 3 min.");
-  const big = pushOf("big", "Run finished", "🙂".repeat(1000));
+  const small = await pushOf("small", "Run finished", "Weekly report: done in 3 min.");
+  const big = await pushOf("big", "Run finished", "🙂".repeat(1000));
   const cases = [
     { name: "fits", envelope: small },
     { name: "too big for 4 KB: generic text only", envelope: big },
@@ -433,7 +433,7 @@ export function buildApns() {
 
 // ---------------------------------------------------------------- relay wire and encoding
 
-export function buildWire() {
+export async function buildWire() {
   const phone = id("phone");
   const nonce = toB64url(seededRandom("wire/nonce")(32));
   const body = JSON.stringify({ token: "ab".repeat(32), environment: "sandbox" });
@@ -441,7 +441,7 @@ export function buildWire() {
   return {
     $comment: COMMENT("Relay wire (§9.2–§9.5): device proofs and frame validity."),
     devices: { phone: keys("phone") },
-    challenge: { nonce, device_id: phone.deviceId, bytes: toHex(challengeBytes(nonce, phone.deviceId)), signature: signChallenge(phone.signing, nonce, phone.deviceId) },
+    challenge: { nonce, device_id: phone.deviceId, bytes: toHex(challengeBytes(nonce, phone.deviceId)), signature: await signChallenge(phone.signing, nonce, phone.deviceId) },
     request: {
       device_id: phone.deviceId,
       ts,
@@ -449,7 +449,7 @@ export function buildWire() {
       path: "/v1/push-token",
       body,
       bytes: toHex(requestBytes(phone.deviceId, ts, "POST", "/v1/push-token", utf8(body))),
-      header: signRequest(phone.signing, phone.deviceId, ts, "POST", "/v1/push-token", utf8(body)),
+      header: await signRequest(phone.signing, phone.deviceId, ts, "POST", "/v1/push-token", utf8(body)),
     },
     client_frames: [
       { frame: { type: "ping" }, valid: true },
@@ -486,15 +486,15 @@ export function buildEncoding() {
   };
 }
 
-export function buildAll(): Record<string, unknown> {
+export async function buildAll(): Promise<Record<string, unknown>> {
   return {
-    "sealed.json": buildSealed(),
-    "live.json": buildLive(),
-    "pairing.json": buildPairing(),
-    "linking.json": buildLinking(),
-    "link-statement.json": buildStatements(),
-    "apns-payload.json": buildApns(),
-    "relay-wire.json": buildWire(),
+    "sealed.json": await buildSealed(),
+    "live.json": await buildLive(),
+    "pairing.json": await buildPairing(),
+    "linking.json": await buildLinking(),
+    "link-statement.json": await buildStatements(),
+    "apns-payload.json": await buildApns(),
+    "relay-wire.json": await buildWire(),
     "encoding.json": buildEncoding(),
   };
 }

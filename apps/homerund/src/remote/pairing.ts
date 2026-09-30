@@ -47,6 +47,8 @@ interface Offer {
 
 export class Pairing {
   private offers = new Map<string, Offer>();
+  /** First messages are handled one at a time: the handshake awaits the key, and an offer is single-use. */
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(private d: PairingDeps) {}
 
@@ -84,16 +86,27 @@ export class Pairing {
 
   /** A first pairing message: try it against each open offer (normally one). */
   onRendezvous(f: Rendezvous): void {
+    this.queue = this.queue
+      .then(() => this.handle(f))
+      .catch((e) => {
+        log.warn("pairing failed", { error: (e as Error).message });
+        this.d.send({ type: "rendezvous_close", to: f.from, session: f.session });
+      });
+  }
+
+  private async handle(f: Rendezvous): Promise<void> {
     const me = this.d.me();
-    const account = this.d.account();
-    for (const o of this.offers.values()) {
+    for (const o of [...this.offers.values()]) {
       const r = new PairResponder({ desktopId: me.deviceId, deviceId: f.from, sessionId: f.session, code: o.code, me: me.noise });
       let read;
       try {
-        read = r.read(fromB64url(f.data));
+        read = await r.read(fromB64url(f.data));
       } catch {
         continue;
       }
+      // The offer may have closed (cancelled, expired) while the handshake ran.
+      if (this.offers.get(o.offerId) !== o) break;
+      const account = this.d.account();
       // The relay registered the sender; a phone can't claim to be a browser or the reverse.
       if (!account || (f.device && f.device.kind !== read.hello.platform)) break;
       const now = this.d.now();
@@ -107,8 +120,9 @@ export class Pairing {
         paired_at: now,
         last_seen_at: now,
       };
-      const statement = linkStatement(me, account, row, now);
-      const reply = r.reply({ device_id: me.deviceId, name: this.d.name, signing_public_key: publicOf(me).signing_public_key, statement });
+      const statement = await linkStatement(me, account, row, now);
+      if (this.offers.get(o.offerId) !== o) break;
+      const reply = await r.reply({ device_id: me.deviceId, name: this.d.name, signing_public_key: publicOf(me).signing_public_key, statement });
       this.d.send({ type: "rendezvous", kind: "pair", to: f.from, session: f.session, data: toB64url(reply) });
       this.d.send({ type: "link_add", statement, offer: o.tag });
       this.close(o.offerId);
@@ -134,7 +148,7 @@ export class Pairing {
 }
 
 /** The desktop's signed statement that it linked this device, in this account (§9.6). */
-export function linkStatement(me: DeviceIdentity, account: string, row: DeviceRow, now: number): LinkStatement {
+export function linkStatement(me: DeviceIdentity, account: string, row: DeviceRow, now: number): Promise<LinkStatement> {
   return signLinkStatement(
     {
       v: 1,

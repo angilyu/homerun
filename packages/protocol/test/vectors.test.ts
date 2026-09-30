@@ -13,7 +13,7 @@ describe("every vector file has a verifier", () => {
   });
 });
 
-const results = verifyAllVectors(files);
+const results = await verifyAllVectors(files);
 for (const file of new Set(results.map((r) => r.file))) {
   describe(file, () => {
     for (const r of results.filter((x) => x.file === file)) {
@@ -25,8 +25,8 @@ for (const file of new Set(results.map((r) => r.file))) {
   });
 }
 
-test("the generator reproduces the committed files", () => {
-  for (const [name, value] of Object.entries(buildAll())) expect(value).toEqual(files[name]);
+test("the generator reproduces the committed files", async () => {
+  for (const [name, value] of Object.entries(await buildAll())) expect(value).toEqual(files[name]);
 });
 
 test("the sealed vectors cover every reject reason but replay-free success", async () => {

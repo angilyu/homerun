@@ -16,7 +16,7 @@ const sid = () => toB64url(crypto.getRandomValues(new Uint8Array(16)));
 const NOW = 1_780_272_000_000;
 
 describe("identity", () => {
-  test("stored keys round-trip and the public view carries both keys", () => {
+  test("stored keys round-trip and the public view carries both keys", async () => {
     const stored = generateDeviceKeys();
     const a = identityFromStored("0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10" as DeviceId, "desktop", stored);
     const b = identityFromStored(a.deviceId, "desktop", JSON.parse(JSON.stringify(stored)));
@@ -26,18 +26,18 @@ describe("identity", () => {
 });
 
 describe("live session (Noise KK)", () => {
-  const pair = (maxChunk?: number) => {
+  const pair = async (maxChunk?: number) => {
     const phone = dev("ios");
     const desktop = dev("desktop");
     const s = sid();
     const common = { initiatorId: phone.deviceId, responderId: desktop.deviceId, sessionId: s, maxChunk };
     const init = new LiveInitiator({ ...common, me: phone.noise, peer: desktop.noise.publicKey });
-    const { reply, session: d } = liveRespond({ ...common, me: desktop.noise, peer: phone.noise.publicKey }, init.start());
-    return { phone, desktop, p: init.finish(reply), d, common };
+    const { reply, session: d } = await liveRespond({ ...common, me: desktop.noise, peer: phone.noise.publicKey }, await init.start());
+    return { phone, desktop, p: await init.finish(reply), d, common };
   };
 
-  test("both directions, many messages", () => {
-    const { p, d } = pair();
+  test("both directions, many messages", async () => {
+    const { p, d } = await pair();
     for (let i = 0; i < 50; i++) {
       const [f] = p.encrypt({ jsonrpc: "2.0", id: i, method: "ping" });
       expect(d.decrypt(f!)).toEqual({ jsonrpc: "2.0", id: i, method: "ping" });
@@ -46,8 +46,8 @@ describe("live session (Noise KK)", () => {
     }
   });
 
-  test("a large message is fragmented and reassembled", () => {
-    const { p, d } = pair();
+  test("a large message is fragmented and reassembled", async () => {
+    const { p, d } = await pair();
     const big = { jsonrpc: "2.0" as const, method: "event", params: { text: "x".repeat(200_000) } };
     const frames = p.encrypt(big);
     expect(frames.length).toBeGreaterThan(3);
@@ -56,12 +56,12 @@ describe("live session (Noise KK)", () => {
     expect(out.at(-1)).toEqual(big);
   });
 
-  test("replayed, reordered or tampered frames are rejected", () => {
-    const { p, d } = pair();
+  test("replayed, reordered or tampered frames are rejected", async () => {
+    const { p, d } = await pair();
     const [a] = p.encrypt({ jsonrpc: "2.0", method: "a" });
     const [b] = p.encrypt({ jsonrpc: "2.0", method: "b" });
     expect(() => d.decrypt(b!)).toThrow();
-    const { p: p2, d: d2 } = pair();
+    const { p: p2, d: d2 } = await pair();
     const [x] = p2.encrypt({ jsonrpc: "2.0", method: "x" });
     const t = x!.slice();
     t[t.length - 1]! ^= 1;
@@ -71,18 +71,18 @@ describe("live session (Noise KK)", () => {
     void a;
   });
 
-  test("a device that isn't the pinned peer can't open a session", () => {
-    const { desktop, common } = pair();
+  test("a device that isn't the pinned peer can't open a session", async () => {
+    const { desktop, common } = await pair();
     const mallory = dev("ios");
     const init = new LiveInitiator({ ...common, me: mallory.noise, peer: desktop.noise.publicKey });
     const phonePinned = dev("ios").noise.publicKey;
-    expect(() => liveRespond({ ...common, me: desktop.noise, peer: phonePinned }, init.start())).toThrow();
+    await expect(liveRespond({ ...common, me: desktop.noise, peer: phonePinned }, await init.start())).rejects.toThrow();
   });
 
-  test("the session id is bound: a replayed message 1 fails under another session", () => {
-    const { phone, desktop, common } = pair();
-    const m1 = new LiveInitiator({ ...common, me: phone.noise, peer: desktop.noise.publicKey }).start();
-    expect(() => liveRespond({ ...common, sessionId: sid(), me: desktop.noise, peer: phone.noise.publicKey }, m1)).toThrow();
+  test("the session id is bound: a replayed message 1 fails under another session", async () => {
+    const { phone, desktop, common } = await pair();
+    const m1 = await new LiveInitiator({ ...common, me: phone.noise, peer: desktop.noise.publicKey }).start();
+    await expect(liveRespond({ ...common, sessionId: sid(), me: desktop.noise, peer: phone.noise.publicKey }, m1)).rejects.toThrow();
   });
 });
 
@@ -102,33 +102,33 @@ describe("sealed messages (Noise K)", () => {
   const open = (env: unknown, extra: Partial<Parameters<typeof openSealed>[1]> = {}) =>
     openSealed(env, { me: desktop, senderStatic: (d) => (d === phone.deviceId ? phone.noise.publicKey : null), now: NOW, ...extra });
 
-  test("opens once; the seen-set rejects the replay", () => {
+  test("opens once; the seen-set rejects the replay", async () => {
     const m = inner();
-    const env = seal({ inner: m, to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
-    const r = open(env);
+    const env = await seal({ inner: m, to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
+    const r = await open(env);
     expect(r.ok && r.inner).toEqual(m);
     const seen = new Set([m.msg_id]);
-    expect(open(env, { seen: (id) => seen.has(id) })).toEqual({ ok: false, reason: "replayed" });
+    expect(await open(env, { seen: (id) => seen.has(id) })).toEqual({ ok: false, reason: "replayed" });
   });
 
-  test("a sealed message is not linkable to its plaintext and differs each time", () => {
+  test("a sealed message is not linkable to its plaintext and differs each time", async () => {
     const m = inner();
-    const a = seal({ inner: m, to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
-    const b = seal({ inner: m, to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
+    const a = await seal({ inner: m, to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
+    const b = await seal({ inner: m, to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
     expect(a.ciphertext).not.toBe(b.ciphertext);
     expect(a.ciphertext).not.toContain("run the tests");
   });
 
-  test("the header is authenticated", () => {
-    const env = seal({ inner: inner(), to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
-    const r = open({ ...env, header: { ...env.header, expires_at: env.header.expires_at + 1000 } });
+  test("the header is authenticated", async () => {
+    const env = await seal({ inner: inner(), to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
+    const r = await open({ ...env, header: { ...env.header, expires_at: env.header.expires_at + 1000 } });
     expect(r.ok).toBe(false);
   });
 
-  test("a maximum-size instruction seals into several fragments and opens", () => {
+  test("a maximum-size instruction seals into several fragments and opens", async () => {
     const m = inner({ body: { type: "instruction", thread_id: null, client_msg_id: crypto.randomUUID(), text: "y".repeat(100_000) } } as Partial<SealedInner>);
-    const env = seal({ inner: m, to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
-    expect(open(env).ok).toBe(true);
+    const env = await seal({ inner: m, to: desktop.deviceId, sender: phone.noise, recipientStatic: desktop.noise.publicKey });
+    expect((await open(env)).ok).toBe(true);
     expect(JSON.stringify(env).length).toBeLessThan(SEALED_MAX_BYTES);
   });
 });
@@ -152,24 +152,24 @@ describe("QR pairing (Noise IKpsk1)", () => {
     created_at: NOW,
   });
 
-  test("round trip through the URL; the desktop learns the phone's key and the phone gets a valid statement", () => {
+  test("round trip through the URL; the desktop learns the phone's key and the phone gets a valid statement", async () => {
     const s = sid();
     const init = new PairInitiator({ qr: decodePairingUrl(encodePairingUrl(qr))!, me: phone.noise, hello, sessionId: s });
     const resp = new PairResponder({ desktopId: desktop.deviceId, deviceId: phone.deviceId, sessionId: s, code, me: desktop.noise });
-    const got = resp.read(init.start());
+    const got = await resp.read(await init.start());
     expect(got.hello).toEqual(hello);
     expect(got.remoteStatic).toEqual(phone.noise.publicKey);
-    const statement = signLinkStatement(body(), desktop.signing);
-    const welcome = init.finish(resp.reply({ device_id: desktop.deviceId, name: "Mac", signing_public_key: publicOf(desktop).signing_public_key, statement }));
+    const statement = await signLinkStatement(body(), desktop.signing);
+    const welcome = await init.finish(await resp.reply({ device_id: desktop.deviceId, name: "Mac", signing_public_key: publicOf(desktop).signing_public_key, statement }));
     expect(verifyLinkStatement(welcome.statement, welcome.signing_public_key)).toEqual(statement);
     expect(verifyLinkStatement(welcome.statement, publicOf(phone).signing_public_key)).toBeNull();
   });
 
-  test("someone who didn't scan the code can't start a pairing, even knowing the desktop key", () => {
+  test("someone who didn't scan the code can't start a pairing, even knowing the desktop key", async () => {
     const s = sid();
     const init = new PairInitiator({ qr: { ...qr, pairing_code: newPairingCode() }, me: phone.noise, hello, sessionId: s });
     const resp = new PairResponder({ desktopId: desktop.deviceId, deviceId: phone.deviceId, sessionId: s, code, me: desktop.noise });
-    expect(() => resp.read(init.start())).toThrow();
+    await expect(resp.read(await init.start())).rejects.toThrow();
   });
 });
 
@@ -183,18 +183,18 @@ describe("code linking (Noise XX + commit/reveal)", () => {
     };
   };
 
-  test("both sides show the same six-digit code and learn each other's keys", () => {
+  test("both sides show the same six-digit code and learn each other's keys", async () => {
     const phone = dev("ios");
     const desktop = dev("desktop");
     const { p, d } = run(phone, desktop, sid());
-    const code = d.verify(p.reveal(d.commit(p.answer(d.accept(p.start())))));
+    const code = d.verify(p.reveal(await d.commit(await p.answer(await d.accept(await p.start())))));
     expect(code).toMatch(/^\d{6}$/);
     expect(p.code).toBe(code);
     expect(p.desktopStatic).toEqual(desktop.noise.publicKey);
     expect(p.result(d.declined())).toEqual({ declined: true });
   });
 
-  test("a relay in the middle ends up with different codes on each side", () => {
+  test("a relay in the middle ends up with different codes on each side", async () => {
     const phone = dev("ios");
     const desktop = dev("desktop");
     const mitm = dev("desktop");
@@ -204,18 +204,18 @@ describe("code linking (Noise XX + commit/reveal)", () => {
     const left = run(phone, { ...mitm, deviceId: desktop.deviceId }, s);
     // mitm (posing as the phone) <-> desktop
     const right = run(mitmAsPhone, desktop, s);
-    const leftCode = left.d.verify(left.p.reveal(left.d.commit(left.p.answer(left.d.accept(left.p.start())))));
-    const rightCode = right.d.verify(right.p.reveal(right.d.commit(right.p.answer(right.d.accept(right.p.start())))));
+    const leftCode = left.d.verify(left.p.reveal(await left.d.commit(await left.p.answer(await left.d.accept(await left.p.start())))));
+    const rightCode = right.d.verify(right.p.reveal(await right.d.commit(await right.p.answer(await right.d.accept(await right.p.start())))));
     expect(left.p.code).toBe(leftCode);
     expect(leftCode).not.toBe(rightCode);
   });
 
-  test("the phone must commit before it learns the desktop nonce", () => {
+  test("the phone must commit before it learns the desktop nonce", async () => {
     const phone = dev("ios");
     const desktop = dev("desktop");
     const { p, d } = run(phone, desktop, sid());
-    const m2 = d.accept(p.start());
-    const m3 = p.answer(m2);
+    const m2 = await d.accept(await p.start());
+    const m3 = await p.answer(m2);
     expect(() => d.verify(m3)).toThrow();
   });
 });
@@ -223,7 +223,7 @@ describe("code linking (Noise XX + commit/reveal)", () => {
 describe("apns payload", () => {
   const phone = dev("ios");
   const desktop = dev("desktop");
-  test("fits, and falls back to the generic alert when the envelope doesn't", () => {
+  test("fits, and falls back to the generic alert when the envelope doesn't", async () => {
     const m = (text: string) =>
       seal({
         inner: { v: 1, msg_id: newMsgId(), sender_device_id: desktop.deviceId, created_at: NOW, expires_at: NOW + 3_600_000, body: { type: "push", category: "input_request", title: "t", body: text } } as SealedInner,
@@ -231,11 +231,11 @@ describe("apns payload", () => {
         sender: desktop.noise,
         recipientStatic: phone.noise.publicKey,
       });
-    const small = buildApnsPayload(m("hi"));
+    const small = buildApnsPayload(await m("hi"));
     expect(small.sealed).toBe(true);
     expect(utf8(small.body).length).toBeLessThanOrEqual(4096);
     expect(JSON.parse(small.body).aps.alert).toEqual(APNS_GENERIC_ALERT);
-    const big = buildApnsPayload(m("z".repeat(1000)), 1024);
+    const big = buildApnsPayload(await m("z".repeat(1000)), 1024);
     expect(big.sealed).toBe(false);
     expect(JSON.parse(big.body).hr).toBeUndefined();
   });
@@ -244,16 +244,16 @@ describe("apns payload", () => {
 describe("device proofs", () => {
   const phone = dev("ios");
   const pub = publicOf(phone).signing_public_key;
-  test("challenge signatures verify only for the right nonce and key", () => {
-    const sig = signChallenge(phone.signing, "nonce-1", phone.deviceId);
+  test("challenge signatures verify only for the right nonce and key", async () => {
+    const sig = await signChallenge(phone.signing, "nonce-1", phone.deviceId);
     expect(verifySignature(sig, challengeBytes("nonce-1", phone.deviceId), pub)).toBe(true);
     expect(verifySignature(sig, challengeBytes("nonce-2", phone.deviceId), pub)).toBe(false);
     expect(verifySignature(sig, challengeBytes("nonce-1", phone.deviceId), publicOf(dev("ios")).signing_public_key)).toBe(false);
     expect(verifySignature("garbage", challengeBytes("nonce-1", phone.deviceId), pub)).toBe(false);
   });
-  test("request proofs cover method, path and body", () => {
+  test("request proofs cover method, path and body", async () => {
     const body = utf8('{"a":1}');
-    const header = signRequest(phone.signing, phone.deviceId, NOW, "POST", "/v1/sealed", body);
+    const header = await signRequest(phone.signing, phone.deviceId, NOW, "POST", "/v1/sealed", body);
     const p = parseDeviceProof(header)!;
     expect(p.deviceId).toBe(phone.deviceId);
     expect(verifySignature(p.signature, requestBytes(p.deviceId, p.ts, "POST", "/v1/sealed", body), pub)).toBe(true);

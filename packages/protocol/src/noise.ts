@@ -207,6 +207,8 @@ export class HandshakeState {
   private readonly random: Random;
   private index = 0;
   private failed = false;
+  /** A message is being written or read (awaiting a DH); a second call would interleave. */
+  private busy = false;
 
   constructor(o: HandshakeOptions) {
     this.pattern = PATTERNS[o.pattern];
@@ -258,12 +260,14 @@ export class HandshakeState {
     return this.rs;
   }
 
-  private dh(ours: DhKey | undefined, theirs: Uint8Array | undefined): Uint8Array {
+  private async dh(ours: DhKey | undefined, theirs: Uint8Array | undefined): Promise<Uint8Array> {
     if (!ours || !theirs) throw new NoiseError("missing key for DH");
-    return ours.dh(theirs);
+    const out = await ours.dh(theirs);
+    if (out.length !== DH_LEN || out.every((b) => b === 0)) throw new CryptoError("invalid public key");
+    return out;
   }
 
-  private tokenDh(token: "ee" | "es" | "se" | "ss"): Uint8Array {
+  private tokenDh(token: "ee" | "es" | "se" | "ss"): Promise<Uint8Array> {
     switch (token) {
       case "ee":
         return this.dh(this.e, this.re);
@@ -279,11 +283,13 @@ export class HandshakeState {
   private guard(): void {
     if (this.failed) throw new NoiseError("handshake already failed");
     if (this.finished) throw new NoiseError("handshake already finished");
+    if (this.busy) throw new NoiseError("handshake message already in progress");
   }
 
-  writeMessage(payload: Uint8Array = new Uint8Array(0)): Uint8Array {
+  async writeMessage(payload: Uint8Array = new Uint8Array(0)): Promise<Uint8Array> {
     this.guard();
     if (!this.myTurn) throw new NoiseError("not our turn");
+    this.busy = true;
     try {
       const out: Uint8Array[] = [];
       for (const t of this.pattern.messages[this.index]!) {
@@ -297,7 +303,7 @@ export class HandshakeState {
         } else if (t === "psk") {
           this.ss.mixKeyAndHash(this.psk!);
         } else {
-          this.ss.mixKey(this.tokenDh(t));
+          this.ss.mixKey(await this.tokenDh(t));
         }
       }
       out.push(this.ss.encryptAndHash(payload));
@@ -308,13 +314,16 @@ export class HandshakeState {
     } catch (e) {
       this.failed = true;
       throw e;
+    } finally {
+      this.busy = false;
     }
   }
 
-  readMessage(message: Uint8Array): Uint8Array {
+  async readMessage(message: Uint8Array): Promise<Uint8Array> {
     this.guard();
     if (this.myTurn) throw new NoiseError("not their turn");
     if (message.length > NOISE_MAX_MESSAGE) throw new NoiseError("message too long");
+    this.busy = true;
     try {
       let off = 0;
       const take = (n: number) => {
@@ -334,7 +343,7 @@ export class HandshakeState {
         } else if (t === "psk") {
           this.ss.mixKeyAndHash(this.psk!);
         } else {
-          this.ss.mixKey(this.tokenDh(t));
+          this.ss.mixKey(await this.tokenDh(t));
         }
       }
       const rest = message.subarray(off);
@@ -346,6 +355,8 @@ export class HandshakeState {
       this.failed = true;
       if (e instanceof CryptoError) throw new NoiseError(`handshake failed: ${e.message}`);
       throw e;
+    } finally {
+      this.busy = false;
     }
   }
 

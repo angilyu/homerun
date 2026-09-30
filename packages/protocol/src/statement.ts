@@ -51,9 +51,9 @@ export function linkStatementBytes(b: LinkStatementBody): Uint8Array {
   );
 }
 
-export function signLinkStatement(body: LinkStatementBody, desktop: SigningKey): LinkStatement {
+export async function signLinkStatement(body: LinkStatementBody, desktop: SigningKey): Promise<LinkStatement> {
   const b = LinkStatementBody.parse(body);
-  return { ...b, signature: toB64url(desktop.sign(linkStatementBytes(b))) };
+  return { ...b, signature: toB64url(await desktop.sign(linkStatementBytes(b))) };
 }
 
 export function verifyLinkStatement(raw: unknown, desktopSigningPublicKey: string): LinkStatement | null {

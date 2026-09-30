@@ -105,6 +105,7 @@ export class RemoteClient {
   private receiptListeners = new Set<(r: Extract<ServerFrame, { type: "receipt" }>) => void>();
   /** Recently delivered msg_ids, so a receipt that beat `waitDelivered` still counts. */
   private delivered = new Set<string>();
+  private opening: Promise<unknown> = Promise.resolve();
   private linksListeners = new Set<() => void>();
 
   private constructor(
@@ -206,8 +207,8 @@ export class RemoteClient {
     const ch = new RendezvousChannel(this.conn, "pair", qr.device_id, session, offerTag(qr.pairing_code));
     const linked = this.waitLinked(qr.device_id, timeoutMs);
     try {
-      ch.send(init.start());
-      const welcome = init.finish(await ch.next(timeoutMs));
+      ch.send(await init.start());
+      const welcome = await init.finish(await ch.next(timeoutMs));
       const statement = this.checkStatement(welcome.statement, welcome.signing_public_key, qr.device_id, qr.static_public_key, "qr");
       const desktop: PairedDesktop = {
         device_id: qr.device_id,
@@ -243,8 +244,8 @@ export class RemoteClient {
     const linked = this.waitLinked(desktopId, timeoutMs);
     let finished = false;
     try {
-      ch.send(init.start());
-      ch.send(init.answer(await ch.next()));
+      ch.send(await init.start());
+      ch.send(await init.answer(await ch.next()));
       ch.send(init.reveal(await ch.next()));
       onCode(init.code!);
       const r = init.result(await ch.next(timeoutMs));
@@ -316,7 +317,7 @@ export class RemoteClient {
       client_msg_id: i.client_msg_id ?? (crypto.randomUUID() as ClientMsgId),
       text: i.text,
     };
-    const env = this.sealTo(desktopId, body, expiresInMs);
+    const env = await this.sealTo(desktopId, body, expiresInMs);
     if (this.conn.state === "ready") return this.sendOverSocket(env);
     return this.postSealed(env);
   }
@@ -355,7 +356,7 @@ export class RemoteClient {
     if (this.o.kind !== "ios") throw new Error("only a phone answers from the lock screen");
     const b = push.body;
     if (!b.request_id || !b.actions?.some((a) => a.id === actionId)) throw new Error("this notification can't be answered from the lock screen");
-    const env = this.sealTo(push.sender_device_id, { type: "answer", request_id: b.request_id, response, via: "notification" }, SEALED_EXPIRY_DEFAULT_MS.answer);
+    const env = await this.sealTo(push.sender_device_id, { type: "answer", request_id: b.request_id, response, via: "notification" }, SEALED_EXPIRY_DEFAULT_MS.answer);
     return this.postSealed(env);
   }
 
@@ -401,7 +402,7 @@ export class RemoteClient {
     return s;
   }
 
-  private sealTo(desktopId: string, body: SealedBody, expiresInMs: number): SealedEnvelope {
+  private sealTo(desktopId: string, body: SealedBody, expiresInMs: number): Promise<SealedEnvelope> {
     const d = this.state.desktops[desktopId];
     if (!d) throw new Error("not paired with that desktop");
     const now = this.now();
@@ -434,10 +435,17 @@ export class RemoteClient {
     return this.conn.call("POST", RELAY_PATHS.sealed, { envelope: env });
   }
 
-  private async open(raw: unknown) {
+  /** Opens one at a time, so the seen-set check and its update can't interleave. */
+  private open(raw: unknown) {
+    const r = this.opening.then(() => this.openNow(raw));
+    this.opening = r.catch(() => {});
+    return r;
+  }
+
+  private async openNow(raw: unknown) {
     const now = this.now();
     this.pruneSeen(now);
-    const r = openSealed(raw, {
+    const r = await openSealed(raw, {
       me: { deviceId: this.deviceId, noise: this.identity.noise },
       senderStatic: (id) => {
         const d = this.state.desktops[id];

@@ -172,7 +172,7 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     "devices.unpair": (_c, p) => remote((r) => (r.unpair(p.device_id), { ok: true as const })),
     "devices.pairing.start": () => remote((r) => r.startPairing()),
     "devices.pairing.cancel": (_c, p) => remote((r) => (r.cancelPairing(p.offer_id), { ok: true as const })),
-    "devices.link.decide": (_c, p) => remote((r) => (r.decideLink(p.request_id, p.approve), { ok: true as const })),
+    "devices.link.decide": (_c, p) => remote(async (r) => (await r.decideLink(p.request_id, p.approve), { ok: true as const })),
     "cli.tokens.revoke": (_c, p) => {
       if (!d.cliAccess.revoke(p.token_id)) throw notFound("CLI token");
       return { ok: true as const };

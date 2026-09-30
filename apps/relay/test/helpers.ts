@@ -50,7 +50,7 @@ export class TestDevice {
     const bytes = body === undefined ? new Uint8Array() : utf8(JSON.stringify(body));
     const headers: Record<string, string> = { authorization: `Bearer ${token}` };
     if (body !== undefined) headers["content-type"] = "application/json";
-    if (o.sign !== false) headers["homerun-device"] = signRequest(this.id.signing, this.deviceId, o.ts ?? t.now(), method, path, bytes);
+    if (o.sign !== false) headers["homerun-device"] = await signRequest(this.id.signing, this.deviceId, o.ts ?? t.now(), method, path, bytes);
     return fetch(t.url + path, { method, headers, ...(body !== undefined ? { body: bytes as Uint8Array<ArrayBuffer> } : {}) });
   }
 
@@ -62,12 +62,12 @@ export class TestDevice {
     const c = await Conn.open(t.wsUrl, token, o.browser ?? false);
     if (o.auth === false) return c;
     const ch = await c.next("challenge");
-    c.send({ type: "auth", device_id: this.deviceId, signature: signChallenge(this.id.signing, ch.nonce, this.deviceId) });
+    c.send({ type: "auth", device_id: this.deviceId, signature: await signChallenge(this.id.signing, ch.nonce, this.deviceId) });
     await c.next("ready");
     return c;
   }
 
-  seal(to: TestDevice, body: Record<string, unknown>, o: { now: number; ttl: number; msgId?: string }): SealedEnvelope {
+  seal(to: TestDevice, body: Record<string, unknown>, o: { now: number; ttl: number; msgId?: string }): Promise<SealedEnvelope> {
     return seal({
       inner: { v: 1, msg_id: o.msgId ?? newMsgId(), sender_device_id: this.deviceId, created_at: o.now, expires_at: o.now + o.ttl, body } as never,
       to: to.deviceId,

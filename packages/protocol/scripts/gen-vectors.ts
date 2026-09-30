@@ -11,7 +11,7 @@ import { buildAll } from "../src/vectors/build";
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "vectors");
 const check = process.argv.includes("--check");
 const stale: string[] = [];
-for (const [name, value] of Object.entries(buildAll())) {
+for (const [name, value] of Object.entries(await buildAll())) {
   const path = join(DIR, name);
   const content = `${JSON.stringify(value, null, 2)}\n`;
   const current = existsSync(path) ? readFileSync(path, "utf8") : null;

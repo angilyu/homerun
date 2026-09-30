@@ -42,6 +42,8 @@ interface Attempt {
   /** The relay's registration of the sender. */
   kind: string | null;
   request: { id: string; name: string; platform: "ios" | "web"; timer: ReturnType<typeof setTimeout> } | null;
+  /** The user answered; the statement is being signed. */
+  deciding: boolean;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -50,6 +52,8 @@ const HANDSHAKE_MS = 60_000;
 
 export class Linking {
   private attempt: Attempt | null = null;
+  /** Handshake steps await the key; they run one at a time, in the order the relay delivered them. */
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(private d: LinkingDeps) {}
 
@@ -60,17 +64,23 @@ export class Linking {
   }
 
   onRendezvous(f: Rendezvous): void {
+    this.queue = this.queue.then(() => this.handle(f)).catch(() => {});
+  }
+
+  private async handle(f: Rendezvous): Promise<void> {
     const a = this.attempt;
     if (a && (a.from !== f.from || a.session !== f.session)) {
       this.d.send({ type: "rendezvous_close", to: f.from, session: f.session });
       return;
     }
     try {
-      if (!a) return this.begin(f);
+      if (!a) return await this.begin(f);
       const data = fromB64url(f.data);
       if (a.step === 1) {
         a.step = 2;
-        return this.reply(a, a.r.commit(data));
+        const m = await a.r.commit(data);
+        if (this.attempt === a) this.reply(a, m);
+        return;
       }
       if (a.step === 2 && !a.request) {
         a.step = 3;
@@ -82,7 +92,7 @@ export class Linking {
       throw new Error("unexpected linking message");
     } catch (e) {
       log.info("code linking failed", { error: (e as Error).message });
-      this.end(a ?? null, true);
+      this.end(a ?? this.attempt, true);
     }
   }
 
@@ -93,9 +103,10 @@ export class Linking {
   }
 
   /** The user's answer in the shell's prompt. Returns whether the request was still open. */
-  decide(requestId: string, approve: boolean): boolean {
+  async decide(requestId: string, approve: boolean): Promise<boolean> {
     const a = this.attempt;
-    if (!a?.request || a.request.id !== requestId) return false;
+    if (!a?.request || a.request.id !== requestId || a.deciding) return false;
+    a.deciding = true;
     const account = this.d.account();
     if (!approve || !account) {
       this.reply(a, a.r.declined());
@@ -115,7 +126,9 @@ export class Linking {
       paired_at: now,
       last_seen_at: now,
     };
-    const statement = linkStatement(me, account, row, now);
+    const statement = await linkStatement(me, account, row, now);
+    // Withdrawn (the phone gave up, the relay link dropped) while signing.
+    if (this.attempt !== a) return false;
     this.d.send({ type: "link_add", statement });
     this.reply(a, a.r.linked(statement));
     this.end(a, false);
@@ -129,7 +142,7 @@ export class Linking {
     if (this.attempt) this.end(this.attempt, false, "cancelled");
   }
 
-  private begin(f: Rendezvous): void {
+  private async begin(f: Rendezvous): Promise<void> {
     const me = this.d.me();
     const r = new LinkResponder({
       deviceId: f.from,
@@ -145,10 +158,12 @@ export class Linking {
       step: 1,
       kind: f.device?.kind ?? null,
       request: null,
+      deciding: false,
       timer: setTimeout(() => this.end(a, true), HANDSHAKE_MS),
     };
     this.attempt = a;
-    this.reply(a, r.accept(fromB64url(f.data)));
+    const m = await r.accept(fromB64url(f.data));
+    if (this.attempt === a) this.reply(a, m);
   }
 
   private prompt(a: Attempt, code: string, name: string, platform: "ios" | "web"): void {
@@ -161,7 +176,7 @@ export class Linking {
       name,
       platform,
       timer: setTimeout(() => {
-        if (this.attempt !== a) return;
+        if (this.attempt !== a || a.deciding) return;
         this.reply(a, a.r.declined());
         this.end(a, false, "expired");
       }, ttl),

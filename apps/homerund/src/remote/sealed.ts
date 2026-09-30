@@ -72,24 +72,27 @@ const PUSH_CATEGORY: Partial<Record<LocalNotification["kind"], PushCategory>> = 
 };
 
 export class SealedMessages {
+  private queue: Promise<void> = Promise.resolve();
+
   constructor(private d: SealedDeps) {}
 
   // ---------------------------------------------------------------- in
 
   /** A `sealed` frame from the relay. */
-  receive(id: string, envelope: unknown): void {
-    try {
-      this.open(envelope);
-    } finally {
-      this.d.ack(id);
-    }
+  receive(id: string, envelope: unknown): Promise<void> {
+    // One at a time, in queue order: the seen-set check and its insert must not interleave.
+    this.queue = this.queue
+      .then(() => this.open(envelope))
+      .catch((e: Error) => log.info("sealed message dropped", { error: e.message }))
+      .finally(() => this.d.ack(id));
+    return this.queue;
   }
 
-  private open(envelope: unknown): void {
+  private async open(envelope: unknown): Promise<void> {
     const now = this.d.now();
     const store = this.d.store;
     this.prune(now);
-    const r = openSealed(envelope, {
+    const r = await openSealed(envelope, {
       me: this.d.me(),
       senderStatic: (id) => this.d.devices.staticKey(id),
       now,
@@ -100,7 +103,8 @@ export class SealedMessages {
       return;
     }
     const inner = r.inner;
-    const from = this.d.devices.get(inner.sender_device_id)!;
+    const from = this.d.devices.get(inner.sender_device_id);
+    if (!from) return void log.info("sealed message dropped", { reason: "unpaired" });
     const record = () => store.db.query("INSERT OR IGNORE INTO sealed_seen (msg_id, until) VALUES (?, ?)").run(inner.msg_id, seenUntil(inner));
     try {
       store.tx(() => {
@@ -195,9 +199,10 @@ export class SealedMessages {
         expires_at: now + SEALED_EXPIRY_DEFAULT_MS.push,
         body,
       } as SealedInner;
-      const env = seal({ inner, to: phone.device_id, sender: me.noise, recipientStatic: fromB64url(phone.static_public_key) });
       // Best effort: a phone with no push token, or an unreachable relay, just misses it.
-      this.d.post(env).catch((e: Error) => log.info("push not sent", { device_id: phone.device_id, error: e.message }));
+      seal({ inner, to: phone.device_id, sender: me.noise, recipientStatic: fromB64url(phone.static_public_key) })
+        .then((env) => this.d.post(env))
+        .catch((e: Error) => log.info("push not sent", { device_id: phone.device_id, error: e.message }));
     }
   }
 }

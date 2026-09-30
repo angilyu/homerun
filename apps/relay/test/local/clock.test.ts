@@ -48,7 +48,7 @@ describe("expiry", () => {
     const p = await linkedPair(c);
     p.dc.close();
     await p.pc.next("presence", (f) => !f.online);
-    const env = p.phone.seal(p.desktop, instruction(), { now: clock, ttl: 12 * HOUR });
+    const env = await p.phone.seal(p.desktop, instruction(), { now: clock, ttl: 12 * HOUR });
     p.pc.send({ type: "sealed", envelope: env });
     await p.pc.next("receipt", (f) => f.status === "queued");
     // Keep the phone's connection alive across the jump.
@@ -106,8 +106,8 @@ describe("expiry", () => {
   test("expiry is checked against the relay's clock with the skew allowance", async () => {
     const c = await start();
     const p = await linkedPair(c);
-    const post = (ttl: number, now = clock) =>
-      p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: p.phone.seal(p.desktop, instruction(), { now, ttl }) }).then((r) => r.status);
+    const post = async (ttl: number, now = clock) =>
+      p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: await p.phone.seal(p.desktop, instruction(), { now, ttl }) }).then((r) => r.status);
     expect(await post(72 * HOUR)).toBe(202);
     expect(await post(72 * HOUR + SKEW + 1000)).toBe(400);
     expect(await post(HOUR, clock - HOUR - SKEW + 5000)).toBe(202);
@@ -121,8 +121,8 @@ describe("limits", () => {
     const p = await linkedPair(c);
     p.dc.close();
     await p.pc.next("presence", (f) => !f.online);
-    const send = (text = "x") =>
-      p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: p.phone.seal(p.desktop, instruction(text), { now: clock, ttl: HOUR }) });
+    const send = async (text = "x") =>
+      p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: await p.phone.seal(p.desktop, instruction(text), { now: clock, ttl: HOUR }) });
     for (let i = 0; i < 3; i++) expect((await send()).status).toBe(202);
     const full = await send();
     expect(full.status).toBe(429);
@@ -131,8 +131,8 @@ describe("limits", () => {
     const q = await linkedPair(c);
     q.dc.close();
     await q.pc.next("presence", (f) => !f.online);
-    const big = (n: number) =>
-      q.phone.req(c.t, q.tok, "POST", RELAY_PATHS.sealed, { envelope: q.phone.seal(q.desktop, instruction("y".repeat(n)), { now: clock, ttl: HOUR }) });
+    const big = async (n: number) =>
+      q.phone.req(c.t, q.tok, "POST", RELAY_PATHS.sealed, { envelope: await q.phone.seal(q.desktop, instruction("y".repeat(n)), { now: clock, ttl: HOUR }) });
     expect((await big(40_000)).status).toBe(202);
     expect((await big(40_000)).status).toBe(429);
     expect((await big(5_000)).status).toBe(202);
@@ -141,7 +141,7 @@ describe("limits", () => {
   test("sealed messages per minute, per account", async () => {
     const c = await start({ sealedPerMinute: 2 });
     const p = await linkedPair(c);
-    const send = () => p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: p.phone.seal(p.desktop, instruction(), { now: clock, ttl: HOUR }) });
+    const send = async () => p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: await p.phone.seal(p.desktop, instruction(), { now: clock, ttl: HOUR }) });
     expect((await send()).status).toBe(202);
     expect((await send()).status).toBe(202);
     expect((await send()).status).toBe(429);
@@ -236,7 +236,7 @@ describe("restarts", () => {
       const p = await linkedPair(c);
       p.dc.close();
       await p.pc.next("presence", (f) => !f.online);
-      const env = p.phone.seal(p.desktop, instruction(), { now: clock, ttl: HOUR });
+      const env = await p.phone.seal(p.desktop, instruction(), { now: clock, ttl: HOUR });
       p.pc.send({ type: "sealed", envelope: env });
       await p.pc.next("receipt");
       await relay!.stop();
@@ -290,7 +290,7 @@ describe("statement", () => {
     await desktop.register(c.t, tok);
     await web.register(c.t, tok);
     const dc = await desktop.connect(c.t, tok);
-    const s = statement(desktop, web, sub, clock);
+    const s = await statement(desktop, web, sub, clock);
     dc.send({ type: "link_add", statement: { ...s, platform: "ios" } });
     expect((await dc.next("error")).code).toBe("invalid");
   });

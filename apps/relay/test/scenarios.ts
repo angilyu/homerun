@@ -31,7 +31,7 @@ export async function linkedPair(c: Ctx, phoneKind: "ios" | "web" = "ios") {
   expect((await phone.register(c.t, tok)).status).toBe(200);
   const dc = await desktop.connect(c.t, tok);
   const pc = await phone.connect(c.t, tok);
-  dc.send({ type: "link_add", statement: statement(desktop, phone, sub, c.t.now()) });
+  dc.send({ type: "link_add", statement: await statement(desktop, phone, sub, c.t.now()) });
   await dc.next("links", (f) => f.links.length === 1);
   await pc.next("links", (f) => f.links.length === 1);
   return { sub, tok, desktop, phone, dc, pc };
@@ -212,17 +212,17 @@ export function sharedScenarios(get: () => Ctx) {
       const pc = await phone.connect(c.t, tok);
       const sc = await stranger.connect(c.t, tok);
 
-      pc.send({ type: "link_add", statement: statement(desktop, phone, sub, c.t.now()) });
+      pc.send({ type: "link_add", statement: await statement(desktop, phone, sub, c.t.now()) });
       expect((await pc.next("error")).code).toBe("forbidden");
-      dc.send({ type: "link_add", statement: statement(desktop, phone, "user_other", c.t.now()) });
+      dc.send({ type: "link_add", statement: await statement(desktop, phone, "user_other", c.t.now()) });
       expect((await dc.next("error")).code).toBe("invalid");
-      sc.send({ type: "link_add", statement: statement(desktop, phone, sub, c.t.now()) });
+      sc.send({ type: "link_add", statement: await statement(desktop, phone, sub, c.t.now()) });
       expect((await sc.next("error")).code).toBe("invalid");
       const unregistered = new TestDevice("ios");
-      dc.send({ type: "link_add", statement: statement(desktop, unregistered, sub, c.t.now()) });
+      dc.send({ type: "link_add", statement: await statement(desktop, unregistered, sub, c.t.now()) });
       expect((await dc.next("error")).code).toBe("device_unknown");
 
-      dc.send({ type: "link_add", statement: statement(desktop, phone, sub, c.t.now()) });
+      dc.send({ type: "link_add", statement: await statement(desktop, phone, sub, c.t.now()) });
       const links = await pc.next("links");
       expect(links.links.map((l) => l.device_id)).toEqual([desktop.deviceId]);
       for (const x of [dc, pc, sc]) x.close();
@@ -295,7 +295,7 @@ export function sharedScenarios(get: () => Ctx) {
       ic.send({ type: "rendezvous", kind: "pair", to: desktop.deviceId, session: s, data: "CCCC" });
       expect((await ic.next("error")).code).toBe("forbidden");
 
-      dc.send({ type: "link_add", statement: statement(desktop, phone, sub, c.t.now()), offer });
+      dc.send({ type: "link_add", statement: await statement(desktop, phone, sub, c.t.now()), offer });
       await pc.next("links", (f) => f.links.length === 1);
       pc.send({ type: "rendezvous", kind: "pair", to: desktop.deviceId, session: sessionId(), offer, data: "AAAA" });
       expect((await pc.next("error")).code).toBe("offer_unknown");
@@ -340,7 +340,7 @@ export function sharedScenarios(get: () => Ctx) {
       const p = await linkedPair(c);
       p.dc.close();
       await p.pc.next("presence", (f) => !f.online);
-      const env = p.phone.seal(p.desktop, instruction(), { now: c.t.now(), ttl: 12 * HOUR });
+      const env = await p.phone.seal(p.desktop, instruction(), { now: c.t.now(), ttl: 12 * HOUR });
       const r = await p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: env });
       expect(r.status).toBe(202);
       expect(await r.json()).toEqual({ msg_id: env.header.msg_id, status: "queued" });
@@ -363,7 +363,7 @@ export function sharedScenarios(get: () => Ctx) {
     test("over the WebSocket, an online desktop gets it at once", async () => {
       const c = get();
       const p = await linkedPair(c);
-      const env = p.phone.seal(p.desktop, instruction(), { now: c.t.now(), ttl: 12 * HOUR });
+      const env = await p.phone.seal(p.desktop, instruction(), { now: c.t.now(), ttl: 12 * HOUR });
       p.pc.send({ type: "sealed", envelope: env });
       expect((await p.pc.next("receipt")).status).toBe("queued");
       expect((await p.dc.next("sealed")).envelope.header.msg_id).toBe(env.header.msg_id);
@@ -379,14 +379,14 @@ export function sharedScenarios(get: () => Ctx) {
       };
       const other = new TestDevice("ios");
       await other.register(c.t, p.tok);
-      expect(await post(other, other.seal(p.desktop, instruction(), { now, ttl: HOUR }))).toBe("not_linked");
-      const lying = p.phone.seal(p.desktop, instruction(), { now, ttl: HOUR });
+      expect(await post(other, await other.seal(p.desktop, instruction(), { now, ttl: HOUR }))).toBe("not_linked");
+      const lying = await p.phone.seal(p.desktop, instruction(), { now, ttl: HOUR });
       expect(await post(other, lying)).toBe("forbidden");
-      expect(await post(p.desktop, p.desktop.seal(p.phone, instruction(), { now, ttl: HOUR }))).toBe("forbidden");
-      expect(await post(p.phone, p.phone.seal(p.desktop, instruction(), { now, ttl: 80 * HOUR }))).toBe("invalid");
-      expect(await post(p.phone, p.phone.seal(p.desktop, instruction(), { now: now - 2 * HOUR, ttl: HOUR }))).toBe("invalid");
+      expect(await post(p.desktop, await p.desktop.seal(p.phone, instruction(), { now, ttl: HOUR }))).toBe("forbidden");
+      expect(await post(p.phone, await p.phone.seal(p.desktop, instruction(), { now, ttl: 80 * HOUR }))).toBe("invalid");
+      expect(await post(p.phone, await p.phone.seal(p.desktop, instruction(), { now: now - 2 * HOUR, ttl: HOUR }))).toBe("invalid");
       expect(
-        await post(p.phone, p.phone.seal(p.desktop, { type: "answer", request_id: crypto.randomUUID(), response: { type: "approval", decision: "allow" }, via: "notification" }, { now, ttl: 2 * HOUR })),
+        await post(p.phone, await p.phone.seal(p.desktop, { type: "answer", request_id: crypto.randomUUID(), response: { type: "approval", decision: "allow" }, via: "notification" }, { now, ttl: 2 * HOUR })),
       ).toBe("invalid");
     });
 
@@ -394,9 +394,9 @@ export function sharedScenarios(get: () => Ctx) {
       const c = get();
       const p = await linkedPair(c, "web");
       const now = c.t.now();
-      const ok = await p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: p.phone.seal(p.desktop, instruction(), { now, ttl: HOUR }) });
+      const ok = await p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: await p.phone.seal(p.desktop, instruction(), { now, ttl: HOUR }) });
       expect(ok.status).toBe(202);
-      const answer = p.phone.seal(p.desktop, { type: "answer", request_id: crypto.randomUUID(), response: { type: "approval", decision: "allow" }, via: "notification" }, { now, ttl: HOUR });
+      const answer = await p.phone.seal(p.desktop, { type: "answer", request_id: crypto.randomUUID(), response: { type: "approval", decision: "allow" }, via: "notification" }, { now, ttl: HOUR });
       const r = await p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: answer });
       expect(r.status).toBe(403);
     });
@@ -408,7 +408,7 @@ export function sharedScenarios(get: () => Ctx) {
       const p = await linkedPair(c);
       const token = fakeDeviceToken();
       expect((await p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.pushToken, { token, environment: "sandbox" })).status).toBe(204);
-      const env = p.desktop.seal(p.phone, pushBody(), { now: c.t.now(), ttl: 24 * HOUR });
+      const env = await p.desktop.seal(p.phone, pushBody(), { now: c.t.now(), ttl: 24 * HOUR });
       p.dc.send({ type: "sealed", envelope: env });
       expect((await p.dc.next("receipt")).status).toBe("pushed");
       const d = await c.apns.waitFor((x) => x.token === token);
@@ -427,9 +427,9 @@ export function sharedScenarios(get: () => Ctx) {
       const token = fakeDeviceToken();
       await p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.pushToken, { token, environment: "production" });
       c.apns.unregister(token);
-      p.dc.send({ type: "sealed", envelope: p.desktop.seal(p.phone, pushBody(), { now: c.t.now(), ttl: HOUR }) });
+      p.dc.send({ type: "sealed", envelope: await p.desktop.seal(p.phone, pushBody(), { now: c.t.now(), ttl: HOUR }) });
       expect((await p.dc.next("error")).code).toBe("not_found");
-      p.dc.send({ type: "sealed", envelope: p.desktop.seal(p.phone, pushBody(), { now: c.t.now(), ttl: HOUR }) });
+      p.dc.send({ type: "sealed", envelope: await p.desktop.seal(p.phone, pushBody(), { now: c.t.now(), ttl: HOUR }) });
       const e = await p.dc.next("error");
       expect(e.message).toContain("no push token");
     });
@@ -441,7 +441,7 @@ export function sharedScenarios(get: () => Ctx) {
       await p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.pushToken, { token, environment: "sandbox" });
       const now = c.t.now();
       // The relay can't see inside; a desktop could seal anything under a push header.
-      const env = sealRaw({
+      const env = await sealRaw({
         header: { v: 1, mode: "sealed", kind: "push", msg_id: newMsgId(), to_device_id: p.phone.deviceId, from_device_id: p.desktop.deviceId, expires_at: now + HOUR },
         plaintext: new Uint8Array(5000),
         sender: p.desktop.id.noise,
@@ -467,7 +467,7 @@ export function sharedScenarios(get: () => Ctx) {
     test("unpairing removes the phone, its queue and its credential", async () => {
       const c = get();
       const p = await linkedPair(c);
-      p.pc.send({ type: "sealed", envelope: p.phone.seal(p.desktop, instruction(), { now: c.t.now(), ttl: HOUR }) });
+      p.pc.send({ type: "sealed", envelope: await p.phone.seal(p.desktop, instruction(), { now: c.t.now(), ttl: HOUR }) });
       await p.dc.next("sealed");
       p.dc.send({ type: "link_remove", device_id: p.phone.deviceId });
       expect((await p.pc.closed).code).toBe(4410);
