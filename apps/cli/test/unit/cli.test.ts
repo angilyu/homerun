@@ -1,10 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, helpText, COMMANDS } from "../../src/args";
-import { devSwitchesUsed, refuseDevSwitches } from "../../src/connect";
-import { auditTokenPid, peerRefusal, verifyPeer, type PeerInspector, type PeerVerdict } from "../../src/peer";
+import { devSwitchesUsed, refuseDevSwitches, resolveTarget } from "../../src/connect";
+import {
+  auditTokenPid,
+  parseWindowsRequirement,
+  peerRefusal,
+  verifyPeer,
+  verifyWindowsPeer,
+  type PeerInspector,
+  type PeerVerdict,
+  type WindowsPeerInspector,
+} from "../../src/peer";
 import { FileTokenStore, KeychainTokenStore, keychainAccount, keychainFailure, type TokenStore } from "../../src/token-store";
 import { Waiting, mmss } from "../../src/waiting";
 import { CliError } from "../../src/exit";
@@ -16,6 +26,21 @@ import { EventRenderer, resendCommand } from "../../src/render";
 import type { Io } from "../../src/context";
 import { alwaysGrant, inlineAnswer, questionResponse } from "../../src/commands/input";
 import type { ApprovalPrompt, QuestionPrompt } from "@homerun/core";
+import { EndpointError, newPipeName } from "@homerun/client";
+import {
+  closeHandle,
+  currentUserSid,
+  openPipe,
+  pipeSddl,
+  privateDirSddl,
+  READ_CONTROL,
+  setPathProtectedDacl,
+  setProtectedDacl,
+  WRITE_DAC,
+} from "@homerun/win32";
+import { windowsInspector } from "../../src/windows";
+
+const WIN = process.platform === "win32";
 
 const code = (f: () => unknown) => {
   try {
@@ -270,14 +295,21 @@ describe("a release build (in process)", () => {
     };
   }
 
-  /** A socket that counts connections and bytes, and a token store that counts reads. */
+  /**
+   * A socket that counts connections and bytes, and a token store that counts reads. On Windows,
+   * a pipe published in `run\endpoint` as homerund publishes it, in a directory only we can use.
+   */
   function listener(dir: string) {
-    mkdirSync(join(dir, "run"), { mode: 0o700 });
+    const run = join(dir, "run");
+    mkdirSync(run, { mode: 0o700 });
+    if (WIN) setPathProtectedDacl(run, privateDirSddl(currentUserSid()));
     const seen = { connections: 0, bytes: 0 };
+    const path = WIN ? newPipeName() : join(run, "homerund.sock");
     const l = Bun.listen({
-      unix: join(dir, "run", "homerund.sock"),
+      unix: path,
       socket: { open: () => void seen.connections++, data: (_s, d) => void (seen.bytes += d.length) },
     });
+    if (WIN) writeFileSync(join(run, "endpoint"), path);
     return { seen, stop: () => l.stop(true) };
   }
 
@@ -288,7 +320,7 @@ describe("a release build (in process)", () => {
     try {
       for (const argv of [["status"], ["threads", "list"], ["send", "--new", "hi"], ["answer", "abcd1234", "--choice", "Blue"], ["login"], ["logout"]]) {
         const x = io(argv, { HOMERUN_DATA_DIR: dir });
-        expect(await main(x, { store, inspector: () => fakeInspector(), platform: "darwin" })).toBe(77);
+        expect(await main(x, { store, inspector: () => fakeInspector(), windowsInspector: () => fakeWindows(), platform: WIN ? "win32" : "darwin" })).toBe(77);
         expect(x.err()).toContain("homerund's identity could not be verified, so the token was not used: this build has no code requirement");
       }
       await Bun.sleep(20);
@@ -422,6 +454,148 @@ describe("the peer check (§5.2)", () => {
     const loading = await verifyPeer(7, REQ, "darwin", () => Promise.reject(new Error("dlopen failed")));
     expect(loading).toEqual({ ok: false, why: "the check failed: dlopen failed" });
     expect(peerRefusal("x").code).toBe(77);
+  });
+});
+
+const ME = "S-1-5-21-1-2-3-1001";
+const OTHER = "S-1-5-21-1-2-3-1002";
+const HASH = "ab".repeat(32);
+
+/** A pipe that is homerund's: private to ME, served by ME's process 4242 running homerund.exe. */
+function fakeWindows(o: Partial<WindowsPeerInspector> = {}, log: string[] = []): WindowsPeerInspector {
+  return {
+    ownSid: () => ME,
+    open: async (p) => (log.push(`open ${p}`), 99n),
+    close: (h) => void log.push(`close ${h}`),
+    pipeSecurity: () => ({
+      owner: ME,
+      dacl: {
+        protected: true,
+        aces: [
+          { type: 1, flags: 0, mask: 0x10000000, sid: "S-1-5-2" },
+          { type: 0, flags: 0, mask: 0x10000000, sid: ME },
+          { type: 0, flags: 0, mask: 0x10000000, sid: "S-1-5-18" },
+        ],
+      },
+    }),
+    serverPid: () => 4242,
+    processSid: () => ME,
+    imagePath: () => "C:\\Program Files\\Homerun\\homerund.exe",
+    sha256: () => HASH,
+    authenticode: () => ({ status: 0, subject: "Wenjing Yu" }),
+    ...o,
+  };
+}
+
+describe("the peer check on Windows (§5.2)", () => {
+  const PIPE = "\\\\.\\pipe\\homerun-" + "0".repeat(32);
+  const check = (o: Partial<WindowsPeerInspector>, req: string | undefined = `sha256:${HASH}`) => verifyWindowsPeer(PIPE, req, () => fakeWindows(o));
+
+  test("requirements: sha256 of the image, or an Authenticode signer", () => {
+    expect(parseWindowsRequirement(`sha256:${HASH.toUpperCase()}`)).toEqual({ kind: "sha256", hex: HASH });
+    expect(parseWindowsRequirement("authenticode:Wenjing Yu")).toEqual({ kind: "authenticode", subject: "Wenjing Yu" });
+    for (const bad of ["", "sha256:abc", `sha256:${HASH}0`, "authenticode:", "authenticode: x", 'identifier "com.angilyu.homerun.homerund"'])
+      expect(parseWindowsRequirement(bad)).toBeNull();
+  });
+
+  test("passes, on its own handle, when the pipe, the server's user and its image all agree", async () => {
+    const log: string[] = [];
+    expect(await verifyWindowsPeer(PIPE, `sha256:${HASH}`, () => fakeWindows({}, log))).toEqual({ ok: true, pid: 4242 });
+    expect(log).toEqual([`open ${PIPE}`, "close 99"]);
+    expect(await check({}, "authenticode:Wenjing Yu")).toEqual({ ok: true, pid: 4242 });
+  });
+
+  test("fails closed", async () => {
+    const sd = fakeWindows().pipeSecurity(0n);
+    const aces = sd.dacl!.aces;
+    const cases: [string, Promise<PeerVerdict>][] = [
+      ["no code requirement", verifyWindowsPeer(PIPE, undefined, () => fakeWindows())],
+      ["no code requirement", check({}, "")],
+      ["not a Windows one", check({}, 'identifier "com.angilyu.homerun.homerund"')],
+      ["not a Windows one", check({}, "sha256:abc")],
+      ["not private to this user", check({ pipeSecurity: () => ({ ...sd, dacl: { protected: false, aces } }) })],
+      ["not private to this user", check({ pipeSecurity: () => ({ ...sd, dacl: { protected: true, aces: aces.slice(1) } }) })],
+      ["not private to this user", check({ pipeSecurity: () => ({ ...sd, dacl: { protected: true, aces: [...aces, { type: 0, flags: 0, mask: 0x80000000, sid: "S-1-1-0" }] } }) })],
+      ["not private to this user", check({ pipeSecurity: () => ({ ...sd, dacl: null }) })],
+      ["not private to this user", check({ pipeSecurity: () => ({ ...sd, owner: OTHER }) })],
+      ["no server process", check({ serverPid: () => 0 })],
+      [`another user (${OTHER})`, check({ processSid: () => OTHER })],
+      ["is not Homerun's homerund", check({ sha256: () => "cd".repeat(32) })],
+      ["is not signed", check({ authenticode: () => ({ status: 0x800b0100, subject: null }) }, "authenticode:Wenjing Yu")],
+      ["failed the Authenticode check (0x80096010)", check({ authenticode: () => ({ status: 0x80096010 | 0, subject: null }) }, "authenticode:Wenjing Yu")],
+      ["signed by Someone Else, not Homerun", check({ authenticode: () => ({ status: 0, subject: "Someone Else" }) }, "authenticode:Wenjing Yu")],
+      ["the check failed: CreateFileW failed (Win32 error 2)", check({ open: () => Promise.reject(new Error("CreateFileW failed (Win32 error 2)")) })],
+      ["the check failed: OpenProcess failed (Win32 error 5)", check({ imagePath: () => { throw new Error("OpenProcess failed (Win32 error 5)"); } })],
+    ];
+    for (const [why, p] of cases) {
+      const v = await p;
+      expect([why, v.ok]).toEqual([why, false]);
+      expect(v.ok ? "" : v.why).toContain(why);
+    }
+    expect(await verifyWindowsPeer(PIPE, `sha256:${HASH}`, () => Promise.reject(new Error("LoadLibrary failed")))).toEqual({
+      ok: false,
+      why: "the check failed: LoadLibrary failed",
+    });
+    const log: string[] = [];
+    await verifyWindowsPeer(PIPE, `sha256:${HASH}`, () => fakeWindows({ processSid: () => OTHER }, log));
+    expect(log).toContain("close 99");
+    expect(peerRefusal("x", "win32").hint).toContain("Start menu");
+  });
+
+  test("the pipe name comes from the endpoint the runtime published, when first needed", () => {
+    let reads = 0;
+    const at = (e: () => string) => resolveTarget({}, { HOMERUN_DATA_DIR: "C:\\hr" }, "win32", (data) => (reads++, expect(data).toBe("C:\\hr"), e()));
+    const t = at(() => PIPE);
+    expect(t.tokenPath).toBe("C:\\hr\\run\\dev-token");
+    expect(reads).toBe(0);
+    expect([t.socketPath, t.socketPath, reads]).toEqual([PIPE, PIPE, 1]);
+    const fails = (reason: "missing" | "insecure" | "malformed") => code(() => at(() => { throw new EndpointError("x", reason); }).socketPath);
+    expect([fails("missing"), fails("insecure"), fails("malformed")]).toEqual([69, 77, 77]);
+    const explicit = resolveTarget({ socket: "\\\\.\\pipe\\x", "dev-token-file": "C:\\t" }, {}, "win32", () => { throw new Error("not read"); });
+    expect([explicit.socketPath, explicit.tokenPath]).toEqual(["\\\\.\\pipe\\x", "C:\\t"]);
+  });
+});
+
+(WIN ? describe : describe.skip)("the peer check against a real pipe (Windows)", () => {
+  async function pipe(lock: boolean) {
+    const name = newPipeName();
+    const l = Bun.listen({ unix: name, socket: { data() {} } });
+    if (lock) {
+      const h = await openPipe(name, READ_CONTROL | WRITE_DAC);
+      try {
+        setProtectedDacl(h, pipeSddl(currentUserSid()));
+      } finally {
+        closeHandle(h);
+      }
+    }
+    return { name, stop: () => l.stop(true) };
+  }
+  const self = () => `sha256:${createHash("sha256").update(readFileSync(process.execPath)).digest("hex")}`;
+
+  test("a private pipe served by this process passes a requirement on its image; anything else is refused", async () => {
+    const p = await pipe(true);
+    try {
+      expect(await verifyWindowsPeer(p.name, self(), windowsInspector)).toEqual({ ok: true, pid: process.pid });
+      const wrong = await verifyWindowsPeer(p.name, `sha256:${"0".repeat(64)}`, windowsInspector);
+      expect(wrong.ok ? "" : wrong.why).toContain("is not Homerun's homerund");
+      // Bun is not signed as Homerun, whether or not it is signed at all.
+      const signed = await verifyWindowsPeer(p.name, "authenticode:Homerun Test Signer", windowsInspector);
+      expect(signed.ok).toBe(false);
+    } finally {
+      p.stop();
+    }
+  });
+
+  test("a pipe with the default DACL is refused, and so is a name nobody serves", async () => {
+    const p = await pipe(false);
+    try {
+      const v = await verifyWindowsPeer(p.name, self(), windowsInspector);
+      expect(v.ok ? "" : v.why).toContain("not private to this user");
+    } finally {
+      p.stop();
+    }
+    const none = await verifyWindowsPeer(newPipeName(), self(), windowsInspector);
+    expect(none.ok ? "" : none.why).toContain("the check failed");
   });
 });
 

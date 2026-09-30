@@ -1,7 +1,9 @@
-import { dirname } from "node:path";
+import { dirname, win32 } from "node:path";
 import {
   ConnectionClosedError,
   DevTokenError,
+  EndpointError,
+  localEndpoint,
   RpcCallError,
   RpcClient,
   RpcProtocolError,
@@ -56,11 +58,44 @@ export interface Target {
   tokenPath: string;
 }
 
-/** The socket from the shared data-dir rules (§5.2), and the dev token beside it. */
-export function resolveTarget(values: Values, env: Env): Target {
-  const socketPath = (values.socket as string | undefined) ?? (env.HOMERUN_SOCKET || chooseRunDir(dataDir(env)).socketPath);
-  const tokenPath = (values["dev-token-file"] as string | undefined) ?? devTokenPath(dirname(socketPath));
-  return { socketPath, tokenPath };
+/**
+ * The socket from the shared data-dir rules (§5.2), and the dev token beside it. On Windows the
+ * pipe name is the one the running runtime published, read when first needed, so a command that
+ * can do without it (`logout`) still runs when homerund doesn't.
+ */
+export function resolveTarget(
+  values: Values,
+  env: Env,
+  platform: string = process.platform,
+  published: (dataDir: string) => string = (d) => localEndpoint(d, "win32").socketPath,
+): Target {
+  const explicit = (values.socket as string | undefined) ?? (env.HOMERUN_SOCKET || undefined);
+  const devToken = values["dev-token-file"] as string | undefined;
+  if (platform !== "win32") {
+    const socketPath = explicit ?? chooseRunDir(dataDir(env)).socketPath;
+    return { socketPath, tokenPath: devToken ?? devTokenPath(dirname(socketPath)) };
+  }
+  const data = dataDir(env, undefined, "win32");
+  const tokenPath = devToken ?? devTokenPath(win32.join(data, "run"), "win32");
+  if (explicit) return { socketPath: explicit, tokenPath };
+  let pipe: string | undefined;
+  return {
+    tokenPath,
+    get socketPath() {
+      pipe ??= publishedPipe(() => published(data));
+      return pipe;
+    },
+  };
+}
+
+function publishedPipe(read: () => string): string {
+  try {
+    return read();
+  } catch (e) {
+    if (!(e instanceof EndpointError)) throw e;
+    if (e.reason === "missing") throw new CliError("Homerun is not running", EXIT.UNAVAILABLE, START_HINT);
+    throw new CliError(`the runtime's endpoint can't be trusted: ${e.message}`, EXIT.NOPERM, "quit Homerun, delete the file, and open Homerun again");
+  }
 }
 
 /**

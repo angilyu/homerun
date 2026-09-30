@@ -5,12 +5,13 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assignToJob,
+  authenticode,
   closeHandle,
   createJob,
   credDelete,
@@ -39,6 +40,7 @@ import {
   setThreadExecutionState,
   SID,
   terminateJob,
+  TRUST_E_NOSIGNATURE,
   Win32Error,
   WRITE_DAC,
 } from "../src";
@@ -193,6 +195,22 @@ win("power", () => {
   test("SetThreadExecutionState keeps the system awake, then lets it go", () => {
     expect(setThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)).not.toBe(0);
     expect(setThreadExecutionState(ES_CONTINUOUS)).not.toBe(0);
+  });
+});
+
+win("Authenticode", () => {
+  test("an unsigned file has no signature; PowerShell 7 verifies and names Microsoft", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-wt-"));
+    try {
+      const f = join(dir, "unsigned.exe");
+      writeFileSync(f, "MZ not really a program");
+      expect(authenticode(f)).toEqual({ status: TRUST_E_NOSIGNATURE, subject: null });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const pwsh = join(process.env.ProgramFiles ?? "C:\\Program Files", "PowerShell", "7", "pwsh.exe");
+    if (!existsSync(pwsh)) return;
+    expect(authenticode(pwsh)).toEqual({ status: 0, subject: "Microsoft Corporation" });
   });
 });
 

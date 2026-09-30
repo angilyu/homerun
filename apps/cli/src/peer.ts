@@ -10,9 +10,25 @@
  *   binary (`HOMERUN_CLI_PEER_REQUIREMENT`): homerund's identifier and team for Developer ID
  *   builds, its cdhash for ad hoc ones.
  *
- * It fails closed: no requirement, not macOS, or any FFI error refuses, before any I/O on the
- * socket. The decision is pure, with the system calls injected, so it is tested on Linux.
+ * It fails closed: no requirement, not macOS or Windows, or any FFI error refuses, before any I/O
+ * on the socket. The decision is pure, with the system calls injected, so it is tested on Linux.
+ *
+ * Windows (`verifyWindowsPeer`) has no peer credentials on the connection itself, and Bun
+ * doesn't expose the pipe handle under it, so the CLI opens a second, probe handle on the same
+ * pipe name and checks through that (§18):
+ *
+ * - the pipe's DACL admits only this user and SYSTEM, protected, with network logons denied,
+ *   which is what homerund sets; so only this user's processes (or SYSTEM) can serve instances;
+ * - `GetNamedPipeServerProcessId` gives the server, which must run as this user;
+ * - its image must satisfy the compiled-in requirement: `sha256:<hex>` of homerund.exe
+ *   (unsigned builds), or `authenticode:<subject CN>` (a verified signature by that signer).
+ *
+ * A same-user process could add an instance of its own and be the one the RPC connection
+ * reached; Windows has no per-app isolation to stop it, and Credential Manager, where the token
+ * is kept, is open to it anyway. The check is against everything else: other users, a pipe
+ * someone else created, and a homerund that isn't Homerun's.
  */
+import { privacyProblems, type SecurityInfo } from "@homerun/win32";
 import { CliError, EXIT } from "./exit";
 
 /** The system calls the check needs. */
@@ -63,11 +79,78 @@ export async function verifyPeer(
   }
 }
 
-export function peerRefusal(why: string): CliError {
+/** The system calls the Windows check needs, on a probe handle it opens on the pipe. */
+export interface WindowsPeerInspector {
+  ownSid(): string;
+  open(pipe: string): Promise<bigint>;
+  close(h: bigint): void;
+  pipeSecurity(h: bigint): SecurityInfo;
+  serverPid(h: bigint): number;
+  processSid(pid: number): string;
+  imagePath(pid: number): string;
+  sha256(path: string): string;
+  /** WinVerifyTrust's status (0 = verified) and, when verified, the signer's common name. */
+  authenticode(path: string): { status: number; subject: string | null };
+}
+
+export type WindowsRequirement = { kind: "sha256"; hex: string } | { kind: "authenticode"; subject: string };
+
+/** `sha256:<64 hex>` or `authenticode:<subject CN>`; anything else is null. */
+export function parseWindowsRequirement(r: string): WindowsRequirement | null {
+  const sha = /^sha256:([0-9a-fA-F]{64})$/.exec(r);
+  if (sha) return { kind: "sha256", hex: sha[1]!.toLowerCase() };
+  const ac = /^authenticode:(.+)$/.exec(r);
+  if (ac && ac[1]!.trim() === ac[1] && ac[1]!.length <= 256) return { kind: "authenticode", subject: ac[1]! };
+  return null;
+}
+
+/** TRUST_E_NOSIGNATURE. */
+const TRUST_E_NOSIGNATURE = 0x800b0100;
+
+export async function verifyWindowsPeer(
+  pipe: string,
+  requirement: string | undefined,
+  inspector: () => WindowsPeerInspector | Promise<WindowsPeerInspector>,
+): Promise<PeerVerdict> {
+  if (!requirement) return { ok: false, why: "this build has no code requirement for homerund" };
+  const req = parseWindowsRequirement(requirement);
+  if (!req) return { ok: false, why: "this build's code requirement for homerund is not a Windows one" };
+  try {
+    const i = await inspector();
+    const me = i.ownSid();
+    const h = await i.open(pipe);
+    try {
+      const problems = privacyProblems(i.pipeSecurity(h), me, { networkDeny: true, protected: true });
+      if (problems.length) return { ok: false, why: `the pipe is not private to this user (${problems.join("; ")})` };
+      const pid = i.serverPid(h);
+      if (pid <= 0) return { ok: false, why: "the pipe has no server process" };
+      const sid = i.processSid(pid);
+      if (sid !== me) return { ok: false, why: `it belongs to another user (${sid})` };
+      const image = i.imagePath(pid);
+      if (req.kind === "sha256") {
+        if (i.sha256(image).toLowerCase() !== req.hex) return { ok: false, why: `process ${pid} (${image}) is not Homerun's homerund` };
+        return { ok: true, pid };
+      }
+      const a = i.authenticode(image);
+      if (a.status === TRUST_E_NOSIGNATURE) return { ok: false, why: `process ${pid} (${image}) is not signed` };
+      if (a.status !== 0) return { ok: false, why: `process ${pid} (${image}) failed the Authenticode check (0x${(a.status >>> 0).toString(16)})` };
+      if (a.subject !== req.subject) return { ok: false, why: `process ${pid} (${image}) is signed by ${a.subject ?? "an unnamed signer"}, not Homerun` };
+      return { ok: true, pid };
+    } finally {
+      i.close(h);
+    }
+  } catch (e) {
+    return { ok: false, why: `the check failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+export function peerRefusal(why: string, platform: string = process.platform): CliError {
   return new CliError(
     `homerund's identity could not be verified, so the token was not used: ${why}`,
     EXIT.NOPERM,
-    "open Homerun from /Applications (it starts homerund); if it is running, reinstall it",
+    platform === "win32"
+      ? "open Homerun from the Start menu (it starts homerund); if it is running, reinstall it"
+      : "open Homerun from /Applications (it starts homerund); if it is running, reinstall it",
   );
 }
 

@@ -6,3 +6,4 @@ export * from "./pipe";
 export * from "./power";
 export * from "./cred";
 export * from "./logon";
+export * from "./wintrust";

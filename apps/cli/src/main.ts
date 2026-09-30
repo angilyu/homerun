@@ -25,7 +25,7 @@ import { connectDev, fullAuthorityOnly, refuseDevSwitches, releaseQuestionsOnly,
 import type { Ctx, Io } from "./context";
 import { CliError, EXIT, usageError } from "./exit";
 import { Output, colorWanted } from "./output";
-import { macosInspector, type PeerInspector } from "./peer";
+import { macosInspector, type PeerInspector, type WindowsPeerInspector } from "./peer";
 import { FileTokenStore, KeychainTokenStore, keychainAccount, type TokenStore } from "./token-store";
 
 type Handler = (x: Ctx, socketPath: string) => Promise<number>;
@@ -84,6 +84,7 @@ export function roleFor(channel: BuildChannel, values: Values = {}): CallerRole 
 /** Seams for tests: the system calls behind the peer check, and where the token lives. */
 export interface MainDeps {
   inspector?: () => PeerInspector | Promise<PeerInspector>;
+  windowsInspector?: () => WindowsPeerInspector | Promise<WindowsPeerInspector>;
   store?: TokenStore;
   platform?: string;
   /** How long past the runtime's expiry to wait for its word (default 10 s). */
@@ -107,6 +108,7 @@ export function cliAccess(io: Io, o: Output, values: Values, target: Target, dep
     requirement: dev ? ((values["dev-peer-requirement"] as string | undefined) ?? PEER_REQUIREMENT) : PEER_REQUIREMENT,
     skipPeerCheck: dev && (values["dev-skip-peer-check"] === true || io.env.HOMERUN_DEV_SKIP_PEER_CHECK === "1"),
     inspector: deps.inspector ?? macosInspector,
+    windowsInspector: deps.windowsInspector ?? (async () => (await import("./windows")).windowsInspector()),
     platform: deps.platform ?? process.platform,
     graceMs: deps.graceMs,
   });
@@ -141,7 +143,7 @@ export async function main(io: Io, deps: MainDeps = {}): Promise<number> {
     }
     if (command.name === "chat" && values.title !== undefined && positionals.length) throw new CliError("--title applies to a new chat", EXIT.USAGE);
     const role = roleFor(io.channel, values);
-    const target = resolveTarget(values, io.env);
+    const target = resolveTarget(values, io.env, deps.platform);
     if (command.name === "login" || command.name === "logout") {
       if (role !== "cli") throw usageError(`${command.name} is for the release CLI; a development build uses the development token`, "add --dev-role cli to try the release flow");
       const a = cliAccess(io, o, values, target, deps);
