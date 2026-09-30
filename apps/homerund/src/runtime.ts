@@ -16,8 +16,8 @@ import { RpcServer } from "./rpc/server";
 import type { RunContext } from "./runs/context";
 import { InputTimeouts } from "./runs/input-timeouts";
 import { RunManager } from "./runs/manager";
-import { pidAlive } from "./agent/claude/spawn";
-import { bootTime, killEscapedTools, killStaleGroup, sweepTemp } from "./runs/process-groups";
+import { processes } from "./platform/processes";
+import { sweepTemp } from "./runs/process-groups";
 import { recoverRun, type RecoveryOutcome } from "./runs/recovery";
 import { Scheduler } from "./runs/scheduler";
 import { SecretStore } from "./secrets";
@@ -110,7 +110,9 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     if (migration.status === "migrated") log.info("migrated", { ...migration });
     const store = new Store(db, new Bus());
     const device = ensureDevice(store);
-    const boot = bootTime();
+    // Before anything is spawned: on Windows, what the runtime starts dies with it.
+    processes.adoptTree();
+    const boot = processes.bootTime();
 
     // 1. Stale groups first: a claude still running from the last runtime could finish a call
     //    after we decide it is ambiguous (§5.4 step 1).
@@ -125,11 +127,11 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       .all();
     for (const r of withGroups) {
       for (const pgid of new Set([r.claude_pid, r.reap_pgid].filter((p): p is number => p !== null))) {
-        if (await killStaleGroup(pgid, r.claude_boot, boot, markers, config.claudePath)) killedGroups.push(pgid);
+        if (await processes.killStaleGroup(pgid, r.claude_boot, boot, markers, config.claudePath)) killedGroups.push(pgid);
       }
       updateRun(store, r.run_id, shortWaits.includes(r.run_id) ? { reap_pgid: null } : { claude_pid: null, reap_pgid: null });
     }
-    const killedTools = await killEscapedTools(config.claudeConfigDir);
+    const killedTools = await processes.killEscapedTools(config.claudeConfigDir);
 
     // 2. Caches a killed claude leaves behind (F1, F5). The SDK puts claude-resume-* in TMPDIR.
     if (o.setTmpdir !== false) process.env.TMPDIR = config.tmpDir;
@@ -303,5 +305,5 @@ export function takeLock(runDir: string): () => void {
 }
 
 function alive(pid: number): boolean {
-  return pidAlive(pid);
+  return processes.pidAlive(pid);
 }
