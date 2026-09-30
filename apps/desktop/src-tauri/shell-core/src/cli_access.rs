@@ -3,6 +3,8 @@
 //! connection. A request that is withdrawn (`cli.access_withdrawn`), expires or belongs to a
 //! runtime that went away closes its prompt with no answer.
 //!
+//! Link requests from phones and browsers (§10.5, `link_prompt`) share the queue and the prompt.
+//!
 //! What the CLI sends about itself (its name, version and hostname) is untrusted: it is shown
 //! cleaned and shortened, and the prompt says to allow only a `homerun` the user just ran.
 
@@ -38,8 +40,51 @@ impl Request {
     }
 }
 
+/// A request the shell asks about with a native prompt: the CLI's access (here) or a device's
+/// link (`link_prompt`). They share one queue, so only one prompt is ever on screen.
+pub trait Ask {
+    fn id(&self) -> &str;
+    fn expires_at_ms(&self) -> i64;
+    fn prompt(&self) -> Prompt;
+}
+
+impl Ask for Request {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn expires_at_ms(&self) -> i64 {
+        self.expires_at_ms
+    }
+    fn prompt(&self) -> Prompt {
+        prompt(self)
+    }
+}
+
+/// The shell's queue holds prompts of either kind (UUIDs, so their ids never clash).
+impl Ask for Prompt {
+    fn id(&self) -> &str {
+        &self.request_id
+    }
+    fn expires_at_ms(&self) -> i64 {
+        self.deadline_ms
+    }
+    fn prompt(&self) -> Prompt {
+        self.clone()
+    }
+}
+
+/// Which runtime method a prompt's answer goes to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// `cli.approve` / `cli.deny`.
+    Cli,
+    /// `devices.link.decide`.
+    Link,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prompt {
+    pub kind: Kind,
     pub request_id: String,
     pub title: String,
     pub message: String,
@@ -69,6 +114,7 @@ pub fn shown(s: &str) -> String {
 
 pub fn prompt(r: &Request) -> Prompt {
     Prompt {
+        kind: Kind::Cli,
         request_id: r.id.clone(),
         title: "Allow the Homerun CLI to control your agents?".into(),
         message: format!(
@@ -95,13 +141,16 @@ pub enum Answer {
 }
 
 /// The call that answers a closed prompt, if any.
-pub fn answer_call(request_id: &str, a: Answer) -> Option<(&'static str, Value)> {
-    let method = match a {
-        Answer::Allow => "cli.approve",
-        Answer::DontAllow => "cli.deny",
+pub fn answer_call(kind: Kind, request_id: &str, a: Answer) -> Option<(&'static str, Value)> {
+    let allow = match a {
+        Answer::Allow => true,
+        Answer::DontAllow => false,
         Answer::Dismissed => return None,
     };
-    Some((method, json!({"request_id": request_id})))
+    Some(match kind {
+        Kind::Cli => (if allow { "cli.approve" } else { "cli.deny" }, json!({"request_id": request_id})),
+        Kind::Link => ("devices.link.decide", json!({"request_id": request_id, "approve": allow})),
+    })
 }
 
 /// Whether a failed answer is worth logging as an error: a click that lands after the request
@@ -111,18 +160,24 @@ pub fn answer_failed(e: &CallError) -> bool {
 }
 
 /// Requests waiting for the user, shown one at a time in arrival order.
-#[derive(Debug, Default)]
-pub struct Queue {
-    waiting: VecDeque<Request>,
+#[derive(Debug)]
+pub struct Queue<R = Request> {
+    waiting: VecDeque<R>,
     showing: Option<String>,
 }
 
-impl Queue {
+impl<R> Default for Queue<R> {
+    fn default() -> Self {
+        Queue { waiting: VecDeque::new(), showing: None }
+    }
+}
+
+impl<R: Ask> Queue<R> {
     /// A request arrived, or was replayed when the shell reconnected. Returns the prompt to show
     /// now, if nothing is on screen.
-    pub fn requested(&mut self, r: Request, now_ms: i64) -> Option<Prompt> {
-        let known = self.showing.as_deref() == Some(r.id.as_str()) || self.waiting.iter().any(|w| w.id == r.id);
-        if !known && r.expires_at_ms > now_ms {
+    pub fn requested(&mut self, r: R, now_ms: i64) -> Option<Prompt> {
+        let known = self.showing.as_deref() == Some(r.id()) || self.waiting.iter().any(|w| w.id() == r.id());
+        if !known && r.expires_at_ms() > now_ms {
             self.waiting.push_back(r);
         }
         self.next(now_ms)
@@ -131,7 +186,7 @@ impl Queue {
     /// The runtime withdrew a request. True when it is on screen: close it with no answer, then
     /// call `closed`.
     pub fn withdrawn(&mut self, id: &str) -> bool {
-        self.waiting.retain(|w| w.id != id);
+        self.waiting.retain(|w| w.id() != id);
         self.showing.as_deref() == Some(id)
     }
 
@@ -159,9 +214,9 @@ impl Queue {
             return None;
         }
         while let Some(r) = self.waiting.pop_front() {
-            if r.expires_at_ms > now_ms {
-                self.showing = Some(r.id.clone());
-                return Some(prompt(&r));
+            if r.expires_at_ms() > now_ms {
+                self.showing = Some(r.id().to_string());
+                return Some(r.prompt());
             }
         }
         None
@@ -218,7 +273,7 @@ mod tests {
 
     #[test]
     fn one_prompt_at_a_time_in_order() {
-        let mut q = Queue::default();
+        let mut q: Queue = Queue::default();
         assert_eq!(q.requested(req("a", 100), 0).map(|p| p.request_id), Some("a".into()));
         assert_eq!(q.requested(req("b", 100), 0), None, "a is on screen");
         assert_eq!(q.requested(req("c", 100), 0), None);
@@ -230,7 +285,7 @@ mod tests {
 
     #[test]
     fn replays_are_not_shown_twice() {
-        let mut q = Queue::default();
+        let mut q: Queue = Queue::default();
         assert!(q.requested(req("a", 100), 0).is_some());
         assert_eq!(q.requested(req("b", 100), 0), None);
         // The shell reconnected; the runtime replays both.
@@ -242,7 +297,7 @@ mod tests {
 
     #[test]
     fn expired_requests_are_skipped() {
-        let mut q = Queue::default();
+        let mut q: Queue = Queue::default();
         assert_eq!(q.requested(req("old", 10), 10), None, "already expired");
         assert!(q.requested(req("a", 100), 0).is_some());
         assert_eq!(q.requested(req("b", 50), 0), None);
@@ -252,7 +307,7 @@ mod tests {
 
     #[test]
     fn withdrawal_closes_the_prompt_or_drops_the_queued_request() {
-        let mut q = Queue::default();
+        let mut q: Queue = Queue::default();
         q.requested(req("a", 100), 0);
         q.requested(req("b", 100), 0);
         q.requested(req("c", 100), 0);
@@ -264,7 +319,7 @@ mod tests {
 
     #[test]
     fn a_runtime_restart_drops_everything() {
-        let mut q = Queue::default();
+        let mut q: Queue = Queue::default();
         q.requested(req("a", 100), 0);
         q.requested(req("b", 100), 0);
         assert_eq!(q.reset(), Some("a".into()));
@@ -274,9 +329,12 @@ mod tests {
 
     #[test]
     fn answers() {
-        assert_eq!(answer_call("r", Answer::Allow), Some(("cli.approve", json!({"request_id": "r"}))));
-        assert_eq!(answer_call("r", Answer::DontAllow), Some(("cli.deny", json!({"request_id": "r"}))));
-        assert_eq!(answer_call("r", Answer::Dismissed), None);
+        assert_eq!(answer_call(Kind::Cli, "r", Answer::Allow), Some(("cli.approve", json!({"request_id": "r"}))));
+        assert_eq!(answer_call(Kind::Cli, "r", Answer::DontAllow), Some(("cli.deny", json!({"request_id": "r"}))));
+        assert_eq!(answer_call(Kind::Cli, "r", Answer::Dismissed), None);
+        assert_eq!(answer_call(Kind::Link, "r", Answer::Allow), Some(("devices.link.decide", json!({"request_id": "r", "approve": true}))));
+        assert_eq!(answer_call(Kind::Link, "r", Answer::DontAllow), Some(("devices.link.decide", json!({"request_id": "r", "approve": false}))));
+        assert_eq!(answer_call(Kind::Link, "r", Answer::Dismissed), None);
         assert!(!answer_failed(&CallError::Rpc(RpcError::new(NOT_FOUND, "gone"))), "a late click");
         assert!(answer_failed(&CallError::Rpc(RpcError::new(-32002, "forbidden"))));
         assert!(answer_failed(&CallError::Closed));

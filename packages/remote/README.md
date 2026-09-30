@@ -13,6 +13,9 @@ clients build on it: they supply a browser for sign-in, a `RemoteStore`, and the
   - A WebSocket that answers the relay's challenge and re-authenticates before the token expires.
   - Reconnects with jittered backoff. It gives up only when the device is removed (4410),
     replaced (4409) or refused (4403).
+  - Doesn't offer permessage-deflate: frames are mostly ciphertext, a reauth frame's token
+    shouldn't share a compression context, and Bun's client fails some of workerd's compressed
+    frames. `homerund` uses this same class for the desktop's link.
 - **`RemoteClient`** does what the app does:
   - `register()` and `connect()`.
   - `pair(qrUrl)` pairs by QR code with Noise IKpsk1 (§9.6).
@@ -21,7 +24,8 @@ clients build on it: they supply a browser for sign-in, a `RemoteStore`, and the
     pinned.
   - `openLive(desktopId)` opens a live session: Noise KK, then JSON-RPC (§9.3).
   - `sendInstruction()` sends sealed instructions for an offline desktop (§9.4). They go over the
-    socket, or by HTTPS when not connected.
+    socket, or by HTTPS when not connected. `waitDelivered(msgId)` resolves once the desktop has
+    taken it, even if that receipt came first.
   - `openPush()` opens a push as the iOS Notification Service Extension would, or falls back to the
     generic text (§9.7).
   - `answerFromLockScreen()` answers by HTTPS POST. It works only for a push that offers actions.
@@ -39,7 +43,10 @@ destructive approval sent from a lock screen.
 `bun test` runs the client against the relay's Bun adapter (`@homerun/relay/local`), the
 testkit's OIDC issuer and APNs mock, and a scripted desktop
 ([`test/fake-desktop.ts`](test/fake-desktop.ts)) built on the protocol's responder APIs. The
-scripted desktop is replaced by the real runtime in milestone 9b.
+scripted desktop keeps these tests fast and independent of the runtime. The same client
+against the real runtime is `homerund`'s remote suite
+([`apps/homerund/test/remote`](../../apps/homerund/test/remote)), which CI runs as
+`remote-e2e`.
 
 The tests cover:
 

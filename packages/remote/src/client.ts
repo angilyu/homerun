@@ -103,6 +103,8 @@ export class RemoteClient {
   private linkedIds = new Set<string>();
   private sealedListeners = new Set<(e: SealedEvent) => void>();
   private receiptListeners = new Set<(r: Extract<ServerFrame, { type: "receipt" }>) => void>();
+  /** Recently delivered msg_ids, so a receipt that beat `waitDelivered` still counts. */
+  private delivered = new Set<string>();
   private linksListeners = new Set<() => void>();
 
   private constructor(
@@ -319,8 +321,9 @@ export class RemoteClient {
     return this.postSealed(env);
   }
 
-  /** Resolves when the desktop has taken the message off the relay's queue. */
+  /** Resolves when the desktop has taken the message off the relay's queue (or already had). */
   waitDelivered(msgId: string, timeoutMs = 30_000): Promise<void> {
+    if (this.delivered.has(msgId)) return Promise.resolve();
     return withTimeout(
       new Promise<void>((resolve) => {
         const off = this.onReceipt((r) => r.msg_id === msgId && r.status === "delivered" && (off(), resolve()));
@@ -463,6 +466,10 @@ export class RemoteClient {
         this.presence.set(f.device_id, { online: f.online, last_seen_at: f.last_seen_at });
         return;
       case "receipt":
+        if (f.status === "delivered") {
+          this.delivered.add(f.msg_id);
+          if (this.delivered.size > DELIVERED_KEPT) this.delivered.delete(this.delivered.values().next().value!);
+        }
         for (const l of [...this.receiptListeners]) l(f);
         return;
       case "sealed":
@@ -530,6 +537,8 @@ export class RemoteClient {
     await this.o.store.clear();
   }
 }
+
+const DELIVERED_KEPT = 256;
 
 function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
   let t: ReturnType<typeof setTimeout>;

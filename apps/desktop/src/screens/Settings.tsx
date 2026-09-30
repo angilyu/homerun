@@ -6,6 +6,7 @@ import { useAction, useApp, useLoad, useStore } from "../hooks";
 import { ConfirmButton, Empty, ErrorText, Page, Time } from "../ui/bits";
 import { runtimeText } from "./Layout";
 import { KeyForm } from "./Onboarding";
+import { RemoteSection } from "./Remote";
 
 export function Settings() {
   return (
@@ -13,6 +14,7 @@ export function Settings() {
       <KeySection />
       <BackgroundSection />
       <DigestSection />
+      <RemoteSection />
       <CliSection />
       <UpdatesSection />
       <RuntimeSection />

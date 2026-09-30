@@ -3,11 +3,13 @@
 //! notifications and the updater; every decision lives here and tests on any OS with std alone.
 
 pub mod allowlist;
+pub mod browser;
 pub mod cli_access;
 /// Putting `homerun` on PATH is a macOS feature for now (a symlink into `/usr/local/bin`).
 pub mod cli_tool;
 pub mod dirs;
 pub mod keys;
+pub mod link_prompt;
 pub mod logfile;
 pub mod login;
 pub mod notify;

@@ -39,6 +39,16 @@
       "blobs.get",
       "cli.tokens.list",
       "cli.tokens.revoke",
+      "account.status",
+      "account.sign_in",
+      "account.cancel_sign_in",
+      "account.sign_out",
+      "account.delete",
+      "devices.list",
+      "devices.unpair",
+      "devices.pairing.start",
+      "devices.pairing.cancel",
+      "devices.link.decide",
       "cli.approve",
       "cli.deny",
       "secrets.set",
@@ -82,7 +92,16 @@
       "monitors.state.reset",
       "blobs.get",
       "cli.tokens.list",
-      "cli.tokens.revoke"
+      "cli.tokens.revoke",
+      "account.status",
+      "account.sign_in",
+      "account.cancel_sign_in",
+      "account.sign_out",
+      "account.delete",
+      "devices.list",
+      "devices.unpair",
+      "devices.pairing.start",
+      "devices.pairing.cancel"
     ],
     "cli": [
       "hello",
@@ -227,6 +246,7 @@
     ]
   },
   "shell_only": [
+    "devices.link.decide",
     "cli.approve",
     "cli.deny",
     "secrets.set",
@@ -238,20 +258,27 @@
     "cli.request_access"
   ],
   "runtime_to_shell": [
-    "secrets.persist"
+    "secrets.persist",
+    "secrets.delete"
   ],
   "notifications": {
     "runtime_to_client": [
       "thread.event",
       "threads.changed",
       "cli.access_decision",
-      "health.digest_ready"
+      "health.digest_ready",
+      "account.changed",
+      "devices.changed",
+      "devices.pairing_completed"
     ],
     "runtime_to_shell": [
       "cli.access_requested",
       "cli.access_withdrawn",
       "notification.requested",
-      "notification.withdrawn"
+      "notification.withdrawn",
+      "devices.link_requested",
+      "devices.link_withdrawn",
+      "browser.open"
     ],
     "shell_to_runtime": [
       "power.will_sleep",

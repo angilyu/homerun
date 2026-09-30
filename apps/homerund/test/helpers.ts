@@ -117,6 +117,7 @@ export async function socketRuntime(
     deviceZone?: string;
     verifyKey?: RuntimeOptions["verifyKey"];
     helloTimeoutMs?: number;
+    remote?: RuntimeOptions["remote"];
   } = {},
 ): Promise<SocketRuntime> {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "hr-rpc-"));
@@ -135,6 +136,7 @@ export async function socketRuntime(
     ...(opts.deviceZone ? { deviceZone: () => opts.deviceZone! } : {}),
     ...(opts.verifyKey ? { verifyKey: opts.verifyKey } : {}),
     ...(opts.helloTimeoutMs ? { helloTimeoutMs: opts.helloTimeoutMs } : {}),
+    ...(opts.remote ? { remote: opts.remote } : {}),
   });
   const clients: RpcClient[] = [];
   const track = async (p: Promise<RpcClient>) => {
@@ -154,6 +156,7 @@ export async function socketRuntime(
       crashed = true;
       for (const c of clients) c.close();
       rt.server.stop();
+      rt.remote.stop();
       rt.scheduler.halt();
       rt.fires.halt();
       rt.store.db.close();

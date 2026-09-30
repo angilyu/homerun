@@ -50,6 +50,12 @@ Native. Nothing here imports React, the DOM, Tauri or Bun: `tsconfig.json` build
 - `grants.ts`, `format.ts`: display text.
 - `markdown.ts`: model markdown as a neutral block and inline tree, never HTML. Raw HTML stays
   text. Only http(s) and mailto links keep a target, and images become links (§13).
+- `remote.ts`: the desktop's remote access (§10): the account and relay status, the paired
+  devices and an open QR pairing offer, kept current by `account.changed`, `devices.changed` and
+  `devices.pairing_completed`, with their display text. `relayText` says *Connected* or *Offline
+  since …*; `sentFromText` says *Sent 3 h ago from Ada's iPhone* for a message that waited at
+  the relay (`QUEUED_MIN_MS` or more, in `threads/timeline.ts`). These methods are the desktop's
+  local UI's only, so `AppClient` loads them only with `{ remote: true }`.
 - `client.ts`: `AppClient`, the root.
   - It routes notifications (`thread.event`, `threads.changed`, `health.digest_ready`).
   - It keeps open threads alive while a view retains them, plus a linger.

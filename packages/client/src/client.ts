@@ -2,6 +2,7 @@ import type { Socket } from "bun";
 import {
   METHODS,
   PROTOCOL_VERSION,
+  RPC_ERROR,
   type CallerRole,
   type HelloAuth,
   type HelloParams,
@@ -71,6 +72,7 @@ export class RpcClient {
   private inbuf = "";
   private out: Buffer[] = [];
   private listeners = new Set<(method: string, params: unknown) => void>();
+  private requestHandler: ((method: string, params: unknown) => unknown) | null = null;
   private closedResolve!: () => void;
   readonly closed = new Promise<void>((r) => (this.closedResolve = r));
   /** The `hello` result, once `open` has completed the handshake. */
@@ -201,6 +203,10 @@ export class RpcClient {
         for (const l of [...this.listeners]) l(f.method, f.params);
         continue;
       }
+      if (f.method !== undefined) {
+        this.answer(f.id ?? null, f.method, f.params);
+        continue;
+      }
       const p = typeof f.id === "number" ? this.pending.get(f.id) : undefined;
       if (f.id === null || !p) {
         // An error without a readable id (parse error): fail the oldest pending call.
@@ -215,6 +221,29 @@ export class RpcClient {
       if (f.error) p.reject(new RpcCallError(f.error.code, f.error.message, f.error.data));
       else p.resolve(f.result);
     }
+  }
+
+  /**
+   * Answer requests from the runtime (the shell's `secrets.persist`, §5.2). Without a handler,
+   * they get METHOD_NOT_FOUND.
+   */
+  onRequest(fn: (method: string, params: unknown) => unknown): void {
+    this.requestHandler = fn;
+  }
+
+  private answer(id: string | number | null, method: string, params: unknown): void {
+    const fail = (message: string, code: number = RPC_ERROR.INTERNAL_ERROR) => {
+      if (this.isOpen) this.write({ jsonrpc: "2.0", id, error: { code, message } });
+    };
+    if (!this.requestHandler) return fail(`${method} is not handled here`, RPC_ERROR.METHOD_NOT_FOUND);
+    Promise.resolve()
+      .then(() => this.requestHandler!(method, params))
+      .then(
+        (result) => {
+          if (this.isOpen) this.write({ jsonrpc: "2.0", id, result });
+        },
+        (e: unknown) => fail(e instanceof Error ? e.message : String(e)),
+      );
   }
 
   private abort(e: Error): void {

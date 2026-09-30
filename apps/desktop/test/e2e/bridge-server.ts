@@ -12,7 +12,11 @@
  *
  * Runtimes (one at a time, chosen by POST /__e2e/scene):
  * - `fake`: homerund in this process with the fake engine (test/e2e/fake-script.ts), like the
- *   CLI's end-to-end tests.
+ *   CLI's end-to-end tests. With `remote: true` it also gets a local OIDC issuer, the relay's Bun
+ *   adapter and a mock APNs (homerund's test/remote harness, §16.2): the shell connection then
+ *   stores what the runtime persists (`secrets.persist` / `secrets.delete`), signs in when the
+ *   runtime asks it to open the browser (`browser.open`), and a reference-client phone can scan
+ *   the QR code the page was given.
  * - `replay`: a real `homerund serve` subprocess and the real bundled `claude`, against one of
  *   homerund's recorded cassettes (§16.2). No key, no network, no spend.
  * - `live` (only with HOMERUN_E2E_LIVE=1; the manual check in live.manual.ts): a real
@@ -29,6 +33,7 @@ import callers from "../../../../packages/core/schema/callers.json";
 import { LAUNCH_TOKEN, sessionSpec, socketRuntime, type SocketRuntime } from "../../../homerund/test/helpers";
 import { HOMERUND_DIR, Homerund, REPLAY_KEY, scratchDir } from "../../../homerund/test/replay/harness";
 import { ReplayServer } from "../../../homerund/test/replay/replay-server";
+import { envFor, newUser, phone, startWorld, type World } from "../../../homerund/test/remote/harness";
 import { e2eScript } from "./fake-script";
 
 const PORT = Number(process.env.HOMERUN_E2E_PORT ?? 5179);
@@ -63,7 +68,7 @@ const SCENES: Record<string, ReplayScene> = {
 };
 
 type Active =
-  | { kind: "fake"; srt: SocketRuntime; socketPath: string }
+  | { kind: "fake"; srt: SocketRuntime; socketPath: string; world: World | null }
   | { kind: "replay"; name: string; hr: Homerund; server: ReplayServer; root: string }
   | { kind: "live"; hr: Homerund; proxy: MeteredProxy; root: string; dataDir: string; stopping: boolean };
 
@@ -202,6 +207,12 @@ class Shell {
   /** `cli.access_requested` prompts not yet answered or withdrawn: the stand-in for the NSAlert. */
   cliPrompts = new Map<string, Record<string, unknown>>();
   cliRun: CliRun | null = null;
+  /** Remote scene: the sign-in pages the runtime asked to open, the QR offer the page was given,
+   * and link prompts (the stand-in for the shell's native prompt, src-tauri/src/cli_prompts.rs). */
+  browsed: string[] = [];
+  lastQr: string | null = null;
+  linkPrompts = new Map<string, Record<string, unknown>>();
+  phones: Array<Awaited<ReturnType<typeof phone>>> = [];
 
   emit(event: unknown): void {
     const text = JSON.stringify({ event });
@@ -221,7 +232,11 @@ class Shell {
     const a = this.active;
     this.active = null;
     if (!a) return;
-    if (a.kind === "fake") await a.srt.close();
+    if (a.kind === "fake") {
+      for (const p of this.phones.splice(0)) await p.client.close();
+      await a.srt.close();
+      await a.world?.stop();
+    }
     else if (a.kind === "live") {
       a.stopping = true;
       // Spend across runs of the manual check, so the total stays under the budget.
@@ -242,11 +257,33 @@ class Shell {
     const client = { name: "homerun-desktop-e2e", version: "0" };
     this.shell = await RpcClient.open(socketPath, "shell", { kind: "launch_token", token }, { client });
     this.cliPrompts.clear();
-    // src-tauri/src/cli_prompts.rs: the shell connection hears access requests and withdrawals.
+    this.linkPrompts.clear();
+    // src-tauri/src/cli_prompts.rs: the shell connection hears access and link requests and
+    // their withdrawals; src-tauri/src/shell.rs opens the sign-in page.
     this.shell.onNotification((method, params) => {
-      const p = params as { request_id: string };
+      const p = params as { request_id: string; url: string };
       if (method === "cli.access_requested") this.cliPrompts.set(p.request_id, params as Record<string, unknown>);
       if (method === "cli.access_withdrawn") this.cliPrompts.delete(p.request_id);
+      if (method === "devices.link_requested") this.linkPrompts.set(p.request_id, params as Record<string, unknown>);
+      if (method === "devices.link_withdrawn") this.linkPrompts.delete(p.request_id);
+      const world = this.active?.kind === "fake" ? this.active.world : null;
+      if (method === "browser.open" && world) {
+        this.browsed.push(p.url);
+        void world.issuer.browse(p.url).then((cb) => fetch(cb)).catch((e) => console.error("sign-in failed", e));
+      }
+    });
+    // shell-core/src/keys.rs `persist` and `delete`.
+    this.shell.onRequest((method, params) => {
+      const p = params as { name: string; value?: string };
+      if (method === "secrets.persist" && p.value) {
+        this.keys.set(p.name, p.value);
+        return { stored: true };
+      }
+      if (method === "secrets.delete" && p.name !== API_KEY) {
+        this.keys.delete(p.name);
+        return { deleted: true };
+      }
+      throw new RpcCallError(-32602, `the shell doesn't handle ${method}`);
     });
     for (const [name, value] of this.keys) await this.shell.call("secrets.set", { name: name as "anthropic_api_key", value });
     this.webview = await RpcClient.open(socketPath, "webview", { kind: "launch_token", token }, { client });
@@ -255,16 +292,21 @@ class Shell {
     this.setStatus({ state: "ready", connection: ++this.connection, device_id: h.device_id, runtime_version: h.runtime_version, protocol: h.protocol });
   }
 
-  async fake(key: string | null): Promise<Record<string, unknown>> {
+  async fake(key: string | null, remote = false): Promise<Record<string, unknown>> {
     await this.stop();
     this.setStatus({ state: "starting" });
     this.keys = new Map(key ? [[API_KEY, key]] : []);
+    this.browsed = [];
+    this.lastQr = null;
+    const world = remote ? await startWorld() : null;
+    if (world) newUser(world);
     const srt = await socketRuntime({
       script: e2eScript,
       verifyKey: async (k) => (GOOD_KEY.test(k) ? { outcome: "valid" } : { outcome: "invalid", detail: "Anthropic didn't accept this key (401)." }),
+      ...(world ? { env: envFor(world), remote: { linkBackoff: { initialMs: 50, maxMs: 500 } } } : {}),
     });
     const socketPath = srt.rt.config.socketPath;
-    this.active = { kind: "fake", srt, socketPath };
+    this.active = { kind: "fake", srt, socketPath, world };
     this.work = join(srt.dir, "work");
     mkdirSync(this.work, { recursive: true });
     await this.connect(socketPath, LAUNCH_TOKEN);
@@ -414,6 +456,16 @@ class Shell {
     return out;
   }
 
+  /** Remote scene: a reference-client iPhone, signed in to the same account, scans the QR code. */
+  async scan(name: string): Promise<{ device_id: string }> {
+    const world = this.active?.kind === "fake" ? this.active.world : null;
+    if (!world || !this.lastQr) throw new Error("no QR code to scan");
+    const p = await phone(world, { kind: "ios", name });
+    this.phones.push(p);
+    await p.client.pair(this.lastQr);
+    return { device_id: p.client.deviceId };
+  }
+
   /** After a replay scene: every cassette entry was used and nothing unexpected was asked. */
   finish(): string[] {
     const a = this.active;
@@ -433,7 +485,9 @@ class Shell {
         if (!webviewAllows(method)) throw err("rpc", `The app may not call ${method}.`, -32003);
         if (typeof params !== "object" || params === null || Array.isArray(params)) throw err("rpc", "Params must be an object.", -32602);
         if (!this.webview?.isOpen) throw err("not_connected", "Homerun's runtime isn't running right now.");
-        return this.webview.raw(method, params);
+        const out = await this.webview.raw(method, params);
+        if (method === "devices.pairing.start") this.lastQr = (out as { qr_url: string }).qr_url;
+        return out;
       }
       case "rpc_attach":
         return null;
@@ -528,10 +582,10 @@ const server = Bun.serve({
     if (url.pathname === "/bridge") return srv.upgrade(req) ? undefined : new Response("upgrade failed", { status: 400 });
     if (url.pathname === "/__e2e/health") return Response.json({ ok: true });
     if (url.pathname === "/__e2e/scene" && req.method === "POST") {
-      const body = (await req.json()) as { mode: "fake" | "replay" | "live"; key?: string | null; scenario?: string };
+      const body = (await req.json()) as { mode: "fake" | "replay" | "live"; key?: string | null; scenario?: string; remote?: boolean };
       try {
         const out =
-          body.mode === "replay" ? await shell.replay(body.scenario ?? "") : body.mode === "live" ? await shell.live() : await shell.fake(body.key === undefined ? "sk-ant-mock-not-a-real-key" : body.key);
+          body.mode === "replay" ? await shell.replay(body.scenario ?? "") : body.mode === "live" ? await shell.live() : await shell.fake(body.key === undefined ? "sk-ant-mock-not-a-real-key" : body.key, body.remote === true);
         shell.opened = [];
         return Response.json(out);
       } catch (e) {
@@ -545,6 +599,15 @@ const server = Bun.serve({
       return Response.json({ errors });
     }
     if (url.pathname === "/__e2e/opened") return Response.json({ opened: shell.opened });
+    if (url.pathname === "/__e2e/remote/browsed") return Response.json({ browsed: shell.browsed.map((u) => new URL(u).origin + new URL(u).pathname) });
+    if (url.pathname === "/__e2e/remote/scan" && req.method === "POST") {
+      try {
+        const body = (await req.json()) as { name?: string };
+        return Response.json(await shell.scan(body.name ?? "Ada's iPhone"));
+      } catch (e) {
+        return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+      }
+    }
     if (url.pathname.startsWith("/__e2e/cli/")) {
       try {
         const body = req.method === "POST" ? ((await req.json()) as Record<string, unknown>) : {};

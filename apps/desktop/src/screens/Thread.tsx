@@ -4,6 +4,7 @@ import {
   contentText,
   duration,
   errorMessage,
+  sentFromText,
   threadView,
   toolName,
   toolSummary,
@@ -18,7 +19,7 @@ import {
   type UserItem,
 } from "@homerun/app-state";
 import type { Content } from "@homerun/core";
-import { useApp, useStore } from "../hooks";
+import { useApp, useNow, useStore } from "../hooks";
 import { Markdown } from "../ui/Markdown";
 import { Badge, ErrorText, Fold, Time } from "../ui/bits";
 import { InputCard, ResolvedLine } from "./InputCards";
@@ -190,7 +191,9 @@ function Item({ item, sync, pending }: { item: TimelineItem; sync: ThreadSync; p
 }
 
 function UserBubble({ item, sync }: { item: UserItem; sync: ThreadSync }) {
-  const note = deliveryNote(item);
+  const devices = useStore(useApp().client.remote.devices);
+  const now = useNow();
+  const note = (item.delivery === "delivered" && item.disposition !== "steered" && sentFromText(item, devices, now)) || deliveryNote(item);
   const retry = item.delivery === "failed" || item.delivery === "not_delivered";
   return (
     <div className={`msg user delivery-${item.delivery}`} data-delivery={item.delivery}>

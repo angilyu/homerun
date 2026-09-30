@@ -5,6 +5,7 @@ import { DEFAULT_CONCURRENCY, type BuildChannel } from "@homerun/core";
 import { chooseRunDir, dataDir as resolveDataDir, resolveBuildChannel, runningCompiled } from "@homerun/client";
 import { resolveClaudeShell, type ClaudeShell } from "./agent/claude/shell";
 import { secureDir } from "./platform/secure";
+import { remoteConfig, type RemoteConfig } from "./remote/config";
 
 export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "@homerun/client";
 
@@ -86,6 +87,8 @@ export interface Config {
    * the process exits (§5.6 short waits). Development builds may shorten it for tests.
    */
   inputGraceMs: number;
+  /** The relay and identity provider (§9, §10.4); null when this build has none. */
+  remote: RemoteConfig | null;
 }
 
 /** §5.6: the grace period before a waiting call is deferred. */
@@ -195,5 +198,6 @@ export function loadConfig(input: ConfigInput = {}): Config {
     chatMaxBudgetUsd: num(dev ? env.HOMERUN_CHAT_MAX_BUDGET_USD : undefined, 2),
     shutdownGraceMs: num(dev ? env.HOMERUN_SHUTDOWN_GRACE_MS : undefined, 10_000),
     inputGraceMs: num(dev ? env.HOMERUN_INPUT_GRACE_MS : undefined, INPUT_GRACE_MS),
+    remote: remoteConfig(env, dev, devOnly),
   };
 }

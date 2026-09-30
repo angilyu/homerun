@@ -111,6 +111,21 @@ The topic is the iOS app's bundle id, `com.angilyu.homerun.ios`. Real delivery t
    ```
 5. `pnpm exec wrangler deploy`, then check `https://<your-relay>/v1/health` returns `{"ok":true}`.
 6. In the Cloudflare dashboard, add a rate-limiting rule by IP for the relay's hostname. The relay limits each account itself, but a request without a valid token is refused at the Worker before it reaches an account.
-7. Point the desktop at the relay's URL (milestone 9b adds the setting).
+7. Build the desktop against it (below).
+
+### 4. The desktop
+
+A release build of the desktop has the relay and the identity provider baked in, and shows remote access as not configured without them. Pass them to the build:
+
+```sh
+export HOMERUND_RELAY_URL=https://relay.homerun.app      # your relay, https
+export HOMERUND_OIDC_ISSUER=https://<your-authkit-domain>  # exactly as its discovery document says
+export HOMERUND_OIDC_CLIENT_ID=client_...
+scripts/macos/package.sh                                   # or apps/desktop/scripts/stage-sidecars.ts --release
+```
+
+None of them is a secret: the client id is public (a desktop app can't keep a secret, which is why it uses PKCE). Then sign in from **Settings → Remote access** and check the relay shows **Connected**. Pairing a phone needs the iOS app (milestone 10); until then the reference client in [`packages/remote`](../../packages/remote) can play the phone against a real relay.
+
+To try it all on your machine without any account, run a development desktop against a local relay and issuer: `HOMERUN_RELAY_URL`, `HOMERUN_OIDC_ISSUER` and `HOMERUN_OIDC_CLIENT_ID` in its environment (development builds only, plain http on `127.0.0.1` allowed; [`apps/homerund`](../homerund/README.md#remote-access-9-10-milestone-9)).
 
 `APNS_ENDPOINT` is a test-only override that points push at the mock. Don't set it in production; without it the relay uses Apple's production or sandbox host for each token's environment.

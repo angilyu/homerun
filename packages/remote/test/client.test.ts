@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import type { RequestId } from "@homerun/core";
+import type { DeviceId, RequestId } from "@homerun/core";
 import { startLocalRelay, type LocalRelay } from "@homerun/relay/local";
-import { decodePairingUrl, encodePairingUrl, newPairingCode, RELAY_PATHS, type SealedEnvelope } from "@homerun/protocol";
+import { decodePairingUrl, encodePairingUrl, generateDeviceKeys, identityFromStored, newPairingCode, RELAY_PATHS, type SealedEnvelope } from "@homerun/protocol";
 import { ApnsMock, fakeDeviceToken, OidcIssuer } from "@homerun/testkit";
-import { Account, LinkDeclinedError, LiveClosedError, MemoryStore, RemoteClient, RpcCallError, type ConnectionState } from "../src";
+import { Account, LinkDeclinedError, LiveClosedError, MemoryStore, RelayConnection, RemoteClient, RpcCallError, type ConnectionState } from "../src";
 import { FakeDesktop } from "./fake-desktop";
 
 let issuer: OidcIssuer;
@@ -109,6 +109,29 @@ describe("sign-in and the relay link", () => {
     expect(client.connectionState).toBe("ready");
     // The account's other devices: none yet.
     expect(await client.accountDevices()).toEqual([]);
+  });
+
+  test("doesn't offer permessage-deflate: Bun's client can't read workerd's compressed frames", async () => {
+    let offered: string | null = "not asked";
+    const stub = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req, srv) {
+        offered = req.headers.get("sec-websocket-extensions");
+        return srv.upgrade(req, { headers: { "sec-websocket-protocol": "homerun.v1" } }) ? undefined : new Response(null, { status: 400 });
+      },
+      websocket: { open: (ws) => ws.close(1000, "bye"), message() {} },
+    });
+    const conn = new RelayConnection({
+      url: `http://127.0.0.1:${stub.port}`,
+      identity: identityFromStored(crypto.randomUUID() as DeviceId, "ios", generateDeviceKeys()),
+      token: async () => "t",
+      freshToken: async () => "t",
+      reconnect: false,
+    });
+    await conn.connect().catch(() => {});
+    void stub.stop(true);
+    expect(offered).toBeNull();
   });
 
   test("web clients authenticate with the subprotocol form", async () => {
@@ -239,6 +262,8 @@ describe("sealed messages", () => {
     const got = await d.nextReceived();
     expect(got).toMatchObject({ ok: true, inner: { sender_device_id: client.deviceId, body: { type: "instruction", text: "run the tests" } } });
     await delivered;
+    // Asked again after the receipt came: it was delivered, so no wait.
+    await client.waitDelivered(r.msg_id, 1);
   });
 
   test("an instruction waits for an offline desktop, with when it was sent", async () => {

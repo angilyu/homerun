@@ -2,6 +2,7 @@ import { z } from "zod";
 import { named } from "../registry";
 import {
   ClientMsgId,
+  DeviceId,
   GrantId,
   JsonValue,
   MONITOR_STATE_MAX_BYTES,
@@ -117,6 +118,61 @@ export const CLI_ACCESS_REQUEST_TTL_MS = 2 * 60 * 1000;
 export const CLI_ACCESS_MAX_PENDING = 3;
 
 const Base64 = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
+
+// ---------------------------------------------------------------- accounts and devices (§9.6, §10)
+
+/**
+ * The desktop's account and relay link (§10.4, §10.10). `not_configured`: this build has no
+ * identity provider or relay. `needs_sign_in`: the refresh token stopped working, so remote access
+ * is paused until the user signs in again.
+ */
+export const AccountState = named("AccountState", z.enum(["not_configured", "signed_out", "signing_in", "signed_in", "needs_sign_in"]));
+export type AccountState = z.infer<typeof AccountState>;
+
+export const RelayLinkState = named("RelayLinkState", z.enum(["off", "connecting", "connected", "offline"]));
+export type RelayLinkState = z.infer<typeof RelayLinkState>;
+
+export const AccountStatus = named(
+  "AccountStatus",
+  z.object({
+    state: AccountState,
+    /** The provider's email for the signed-in account, when it gave one. */
+    email: z.string().max(320).nullable(),
+    /** Why the last sign-in didn't finish (denied, timed out, the provider unreachable). */
+    error: z.string().max(500).nullable(),
+    relay: z.object({
+      state: RelayLinkState,
+      /** When the link entered this state. */
+      since: TimestampMs.nullable(),
+      /** Why the last attempt failed, in words the user can act on. */
+      error: z.string().max(500).nullable(),
+    }),
+    /** A device asking to link, while the shell's prompt shows its code (§10.5). */
+    link_request: z.object({ name: z.string().max(100), platform: z.enum(["ios", "web"]) }).nullable(),
+  }),
+);
+export type AccountStatus = z.infer<typeof AccountStatus>;
+
+/** A phone or browser linked to this desktop (§9.6 revocation). */
+export const PairedDevice = named(
+  "PairedDevice",
+  z.object({
+    device_id: DeviceId,
+    name: z.string().min(1).max(100),
+    platform: z.enum(["ios", "web"]),
+    /** QR pairing (§9.6) or code linking (§10.5). */
+    method: z.enum(["qr", "code"]),
+    paired_at: TimestampMs,
+    online: z.boolean(),
+    last_seen_at: TimestampMs.nullable(),
+  }),
+);
+export type PairedDevice = z.infer<typeof PairedDevice>;
+
+/** How long a QR pairing offer stays open (§9.6). */
+export const PAIRING_OFFER_TTL_MS = 5 * 60 * 1000;
+/** How long the shell's link prompt waits for the user (§10.5). */
+export const LINK_REQUEST_TTL_MS = 2 * 60 * 1000;
 /** Largest `blobs.get` page, before base64. */
 export const BLOB_PAGE_MAX_BYTES = 1024 * 1024;
 
@@ -409,7 +465,71 @@ export const METHODS = {
     description: "Revoke the token this connection authenticated with (`homerun logout`). The connection is closed after the reply.",
   }),
 
+  // ---- account and devices (§9.6, §10)
+  "account.status": def("account.status", {
+    params: Empty,
+    result: z.object({ status: AccountStatus }),
+    callers: LOCAL_UI,
+    description: "Whether this desktop is signed in, and its relay link.",
+  }),
+  "account.sign_in": def("account.sign_in", {
+    params: Empty,
+    result: z.object({ status: AccountStatus }),
+    callers: LOCAL_UI,
+    description:
+      "Start signing in (§10.4): the runtime asks the shell to open the provider's page in the system browser (`browser.open`) and waits on a loopback redirect. `account.changed` reports the outcome.",
+  }),
+  "account.cancel_sign_in": def("account.cancel_sign_in", {
+    params: Empty,
+    result: z.object({ status: AccountStatus }),
+    callers: LOCAL_UI,
+    description: "Stop waiting for the browser.",
+  }),
+  "account.sign_out": def("account.sign_out", {
+    params: Empty,
+    result: z.object({ status: AccountStatus }),
+    callers: LOCAL_UI,
+    description: "Revoke the refresh token, close the relay link and forget the token. Paired devices are kept for the same account.",
+  }),
+  "account.delete": def("account.delete", {
+    params: Empty,
+    result: z.object({ status: AccountStatus }),
+    callers: LOCAL_UI,
+    description: "Delete the account's devices, links and queued messages at the relay (§10.7), unpair everything here, and sign out.",
+  }),
+  "devices.list": def("devices.list", {
+    params: Empty,
+    result: z.object({ devices: z.array(PairedDevice) }),
+    callers: LOCAL_UI,
+    description: "Phones and browsers linked to this desktop, with presence.",
+  }),
+  "devices.unpair": def("devices.unpair", {
+    params: z.object({ device_id: DeviceId }),
+    result: Ok,
+    callers: LOCAL_UI,
+    description: "Remove the link at the relay and forget the device's key (§9.6). Its live sessions close.",
+  }),
+  "devices.pairing.start": def("devices.pairing.start", {
+    params: Empty,
+    result: z.object({ offer_id: Uuid, qr_url: z.string().url().max(512), expires_at: TimestampMs }),
+    callers: LOCAL_UI,
+    description:
+      "Open a QR pairing offer (§9.6). The QR code holds a one-time secret: show it only on this screen. `devices.pairing_completed` follows when a phone scans it.",
+  }),
+  "devices.pairing.cancel": def("devices.pairing.cancel", {
+    params: z.object({ offer_id: Uuid }),
+    result: Ok,
+    callers: LOCAL_UI,
+    description: "Close a pairing offer before it expires.",
+  }),
+
   // ---- shell only (§5.2)
+  "devices.link.decide": def("devices.link.decide", {
+    params: z.object({ request_id: Uuid, approve: z.boolean() }),
+    result: Ok,
+    callers: SHELL,
+    description: "The user compared the codes in the shell's native prompt and linked the device, or didn't (§10.5).",
+  }),
   "cli.approve": def("cli.approve", {
     params: z.object({ request_id: Uuid }),
     result: z.object({ token_id: Uuid }),
@@ -449,6 +569,13 @@ export const METHODS = {
     result: z.object({ stored: z.literal(true) }),
     callers: [],
     description: "Store a runtime-created secret in the keychain. Pending in the runtime until acknowledged.",
+  }),
+  "secrets.delete": def("secrets.delete", {
+    direction: "to_shell",
+    params: z.object({ name: SecretName }),
+    result: z.object({ deleted: z.literal(true) }),
+    callers: [],
+    description: "Remove a runtime-created secret from the keychain (the refresh token after sign-out).",
   }),
 } as const satisfies Record<string, MethodDef>;
 
@@ -581,6 +708,52 @@ export const NOTIFICATIONS = {
     params: z.object({ digest: HealthDigest }),
     recipients: EVERYONE,
     description: "The daily digest (§8.3) was generated. Also stored; `health.digest` recomputes any period.",
+  }),
+  "account.changed": note("account.changed", {
+    direction: "runtime_to_client",
+    params: z.object({ status: AccountStatus }),
+    recipients: LOCAL_UI,
+    description: "Sign-in state or the relay link changed.",
+  }),
+  "devices.changed": note("devices.changed", {
+    direction: "runtime_to_client",
+    params: z.object({ devices: z.array(PairedDevice) }),
+    recipients: LOCAL_UI,
+    description: "A device was paired, linked or unpaired, or came online or went offline.",
+  }),
+  "devices.pairing_completed": note("devices.pairing_completed", {
+    direction: "runtime_to_client",
+    params: z.object({ offer_id: Uuid, device: PairedDevice }),
+    recipients: LOCAL_UI,
+    description: "A phone scanned this offer's QR code and is now paired: close the pairing screen.",
+  }),
+  "devices.link_requested": note("devices.link_requested", {
+    direction: "runtime_to_shell",
+    params: z.object({
+      request_id: Uuid,
+      name: z.string().min(1).max(100),
+      platform: z.enum(["ios", "web"]),
+      /** The six-digit code the other device shows too (§10.5). */
+      code: z.string().regex(/^[0-9]{6}$/),
+      requested_at: TimestampMs,
+      expires_at: TimestampMs,
+    }),
+    recipients: SHELL,
+    description:
+      "Show the native 'Link this device?' prompt with the code, defaulting to Don't Link. Answer with `devices.link.decide`. Never shown in the webview: a new device gets the app's authority.",
+  }),
+  "devices.link_withdrawn": note("devices.link_withdrawn", {
+    direction: "runtime_to_shell",
+    params: z.object({ request_id: Uuid, reason: z.enum(["expired", "cancelled"]) }),
+    recipients: SHELL,
+    description: "Close the link prompt: it expired, or the other device gave up.",
+  }),
+  "browser.open": note("browser.open", {
+    direction: "runtime_to_shell",
+    params: z.object({ url: z.string().url().max(4096) }),
+    recipients: SHELL,
+    description:
+      "Open the identity provider's sign-in page in the system browser (§10.4, RFC 8252). The shell opens https URLs only (and http on 127.0.0.1 in development builds).",
   }),
   "power.will_sleep": note("power.will_sleep", {
     direction: "shell_to_runtime",

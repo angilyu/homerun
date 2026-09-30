@@ -78,14 +78,18 @@ last persisted `seq` they follow) instead of `seq`.
 |---|---|
 | `user.message` `message.final` `tool.call` `tool.result` `input.requested` `input.resolved` `run.started` `run.resumed` `run.cancelled` `run.end` `schedule.missed` `schedule.paused` | `message.delta` `run.status` |
 
-**IPC methods.** `schema/manifest.json` lists all 45 methods and 10 notifications with their
-callers. Shell-only: `secrets.set`, `secrets.clear`, `secrets.verify`, `cli.approve`, `cli.deny`.
-Runtime → shell: `secrets.persist`. Allowed before `hello` (preauth): `hello`,
+**IPC methods.** `schema/manifest.json` lists all 56 methods and 16 notifications with their
+callers. Shell-only: `secrets.set`, `secrets.clear`, `secrets.verify`, `cli.approve`, `cli.deny`,
+`devices.link.decide`. Runtime → shell: `secrets.persist`, `secrets.delete`. Allowed before `hello` (preauth): `hello`,
 `cli.request_access`. The surface was provisional until milestone 7 (D8), which added
 `threads.create` with a `task_id` and `secrets.verify`. Milestone 8a added `cli.sign_out` (the
 release CLI revokes its own token) and `cli.access_withdrawn` (runtime → shell: dismiss the
 prompt), put `hostname` on `CliTokenInfo`, `expires_at` on a request, and a `reason` on a refused
 decision. `CliAuthFailureData` and `CliAccessUnavailableData` type their errors' `data`.
+Milestone 9 added the account and paired-device methods (`account.*`, `devices.*`, local UI
+only), `devices.link.decide` for the shell's native link prompt, `secrets.delete`, and the
+notifications `account.changed`, `devices.changed`, `devices.pairing_completed`, and, to the shell
+only, `devices.link_requested`, `devices.link_withdrawn` and `browser.open` (§9.6, §10.4, §10.5).
 
 ## Versioning
 

@@ -89,7 +89,7 @@ describe("socket and hello (§5.2)", () => {
     await b.closed;
   });
 
-  test("cli_token and paired_device arrive later: UNAUTHENTICATED", async () => {
+  test("an unknown cli_token is UNAUTHENTICATED", async () => {
     srt = await socketRuntime();
     const a = await RpcClient.connect(srt.rt.config.socketPath);
     expect((await rejects(a.raw("hello", helloParams("cli", { kind: "cli_token", token: "x".repeat(43) })))).code).toBe(RPC_ERROR.UNAUTHENTICATED);

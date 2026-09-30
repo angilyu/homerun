@@ -102,7 +102,20 @@ mod tests {
 
     #[test]
     fn the_webview_list_is_the_core_one_minus_the_shells_methods() {
-        for m in ["threads.subscribe", "messages.send", "input.answer", "grants.revoke", "tasks.update", "schedules.coverage", "health.digest", "ping"] {
+        for m in [
+            "threads.subscribe",
+            "messages.send",
+            "input.answer",
+            "grants.revoke",
+            "tasks.update",
+            "schedules.coverage",
+            "health.digest",
+            "ping",
+            "account.sign_in",
+            "devices.list",
+            "devices.pairing.start",
+            "devices.unpair",
+        ] {
             assert!(webview_allows(m), "{m}");
         }
         for m in [
@@ -115,6 +128,8 @@ mod tests {
             "cli.approve",
             "cli.deny",
             "power.did_wake",
+            "secrets.delete",
+            "devices.link.decide",
             "nope",
         ] {
             assert!(!webview_allows(m), "{m}");

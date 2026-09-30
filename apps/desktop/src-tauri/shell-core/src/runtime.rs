@@ -203,6 +203,7 @@ impl Handler for ShellHandler {
     fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
         match method {
             "secrets.persist" => keys::persist(self.host.keys(), &params),
+            "secrets.delete" => keys::delete(self.host.keys(), &params),
             _ => Err(RpcError::new(codes::METHOD_NOT_FOUND, format!("the shell doesn't handle {method}"))),
         }
     }

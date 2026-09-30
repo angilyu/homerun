@@ -13,6 +13,8 @@ export const CLIENT_MSG = "7c8d9e0f-1a2b-4c3d-8e5f-6a7b8c9d0e01";
 export const SUBSCRIPTION = "8d9e0f1a-2b3c-4d4e-9f6a-7b8c9d0e1f01";
 export const CLI_REQUEST = "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01";
 export const CLI_TOKEN_ID = "0f1a2b3c-4d5e-4f6a-9b8c-9d0e1f2a3b01";
+export const OFFER = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c01";
+export const LINK_REQUEST = "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01";
 export const TOOL_CALL = "toolu_01A09q90qw90lq917835lq9";
 export const MESSAGE = "msg_01XFDUDYJgAACzvnptvVoYEL";
 export const SDK_SESSION = "8f7e6d5c-sdk-session";
@@ -22,6 +24,8 @@ export const CLI_TOKEN = "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx";
 export const MSG_ID = "q83vEjRWeJq83vEjRWeJqw";
 export const STATIC_KEY = "3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08";
 export const T0 = 1_767_225_600_000; // 2026-01-01T00:00:00Z
+
+export const pairedDevice = () => ({ device_id: PHONE, name: "Ada's iPhone", platform: "ios", method: "qr", paired_at: T0, online: false, last_seen_at: T0 + 60_000 });
 
 export const origin = (surface: "desktop" | "cli" | "ios" | "web" = "desktop", device_id = DEVICE) => ({ device_id, surface });
 

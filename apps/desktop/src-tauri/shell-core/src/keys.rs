@@ -204,6 +204,17 @@ pub fn persist(store: &dyn KeyStore, params: &Value) -> Result<Value, RpcError> 
     Ok(json!({"stored": true}))
 }
 
+/// `secrets.delete` from the runtime: forget a secret it created (the refresh token after
+/// sign-out, the device key when the identity rotates). The API key is the user's, removed only
+/// from Settings.
+pub fn delete(store: &dyn KeyStore, params: &Value) -> Result<Value, RpcError> {
+    let Some(name) = params.get("name").and_then(Value::as_str).filter(|n| SECRET_NAMES.contains(n) && *n != API_KEY) else {
+        return Err(RpcError::new(codes::INVALID_PARAMS, "secrets.delete needs the name of a secret the runtime created"));
+    };
+    store.delete(name).map_err(|e| RpcError::new(codes::INTERNAL_ERROR, e.to_string()))?;
+    Ok(json!({"deleted": true}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +357,21 @@ mod tests {
         clear_key(&s, Some(&r)).unwrap();
         assert_eq!(s.get(API_KEY).unwrap(), None);
         assert_eq!(methods(&r).last().unwrap(), "secrets.clear");
+    }
+
+    #[test]
+    fn the_runtime_deletes_only_what_it_created() {
+        let s = MemoryKeyStore::default();
+        s.set(API_KEY, KEY).unwrap();
+        persist(&s, &json!({"name": "refresh_token", "value": "rt"})).unwrap();
+        persist(&s, &json!({"name": "device_static_key", "value": "k"})).unwrap();
+        assert_eq!(delete(&s, &json!({"name": "refresh_token"})).unwrap(), json!({"deleted": true}));
+        assert_eq!(delete(&s, &json!({"name": "refresh_token"})).unwrap(), json!({"deleted": true}), "already gone");
+        assert_eq!(s.get("refresh_token").unwrap(), None);
+        assert_eq!(s.get("device_static_key").unwrap().as_deref(), Some("k"));
+        for bad in [json!({"name": API_KEY}), json!({"name": "other"}), json!({})] {
+            assert_eq!(delete(&s, &bad).unwrap_err().code, codes::INVALID_PARAMS, "{bad}");
+        }
+        assert_eq!(s.get(API_KEY).unwrap().as_deref(), Some(KEY));
     }
 }

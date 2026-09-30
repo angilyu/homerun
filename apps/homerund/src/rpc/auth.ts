@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { writeFileSync, chmodSync } from "node:fs";
 import { roleAllowedInBuild, type BuildChannel, type CliAuthFailureData, type HelloParams } from "@homerun/core";
 import { devTokenPath } from "@homerun/client";
+import type { RemotePeer } from "./server";
 
 export type AuthCheck = { ok: true; cliTokenId?: string } | { ok: false; message: string; data?: CliAuthFailureData };
 
@@ -16,7 +17,9 @@ export type CliTokenCheck = (token: string) => { ok: true; token_id: string } | 
  *   written to `<run dir>/dev-token` (0600) for local tools and the replay harness.
  * - `cli_token`: issued when the user approves a CLI (milestone 8a, `cli-access.ts`), checked by
  *   its SHA-256 against `cli_tokens`.
- * - `paired_device` arrives with remote access (M9).
+ * - `paired_device`: a paired phone or browser (M9). Only on a live session, whose Noise handshake
+ *   already authenticated the device; the hello must name that device and its pinned platform.
+ *   A live session can't use any other kind: it never learns the launch or CLI tokens.
  */
 export class Authenticator {
   constructor(
@@ -26,8 +29,13 @@ export class Authenticator {
     private cliTokens: CliTokenCheck | null = null,
   ) {}
 
-  check(p: HelloParams): AuthCheck {
+  check(p: HelloParams, remote: RemotePeer | null = null): AuthCheck {
     if (!roleAllowedInBuild(p.role, this.build)) return { ok: false, message: `The ${p.role} role is not available in release builds.` };
+    if (remote) {
+      if (p.auth.kind !== "paired_device") return { ok: false, message: "A paired device authenticates as itself." };
+      if (p.auth.device_id !== remote.deviceId || p.role !== remote.platform) return { ok: false, message: "This isn't the device the session belongs to." };
+      return { ok: true };
+    }
     switch (p.auth.kind) {
       case "launch_token":
         return equal(this.launchToken, p.auth.token) ? { ok: true } : { ok: false, message: "Invalid launch token." };
@@ -40,7 +48,7 @@ export class Authenticator {
         return { ok: false, message, data: { reason: r.reason } };
       }
       case "paired_device":
-        return { ok: false, message: "Remote devices arrive in a later version of Homerun." };
+        return { ok: false, message: "Paired devices connect through the relay." };
     }
   }
 }

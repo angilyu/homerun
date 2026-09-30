@@ -1,6 +1,7 @@
 import { NOTIFICATIONS, parseThreadEventLenient, type HealthDigest } from "@homerun/core";
 import { defaultEnv, type Env } from "./env";
 import { Inbox } from "./inbox";
+import { Remote } from "./remote";
 import { Rpc } from "./rpc";
 import { Store } from "./store";
 import { Tasks } from "./tasks";
@@ -14,6 +15,8 @@ export interface AppClientOptions {
   keepThreadMs?: number;
   /** Reports a notification that didn't parse (a bug or a version mismatch). */
   onProtocolError?: (what: string, detail: unknown) => void;
+  /** Load the account and paired devices on connect: the desktop's local UI only (§10). */
+  remote?: boolean;
 }
 
 /**
@@ -28,6 +31,8 @@ export class AppClient {
   readonly threads: ThreadList;
   readonly inbox: Inbox;
   readonly tasks: Tasks;
+  /** The desktop's account, relay link and paired devices (§10). */
+  readonly remote: Remote;
   /** The latest daily digest pushed by the runtime (§8.3), until read. */
   readonly digest = new Store<HealthDigest | null>(null);
 
@@ -48,6 +53,7 @@ export class AppClient {
     this.threads = new ThreadList(this.rpc);
     this.inbox = new Inbox(this.rpc);
     this.tasks = new Tasks(this.rpc);
+    this.remote = new Remote(this.rpc);
   }
 
   start(): void {
@@ -130,10 +136,12 @@ export class AppClient {
     void this.threads.load();
     void this.inbox.refresh();
     void this.tasks.refresh();
+    if (this.opts.remote) void this.remote.refresh();
     for (const { sync } of this.syncs.values()) void sync.reconnected().catch(() => {});
   }
 
   private onNotification(method: string, params: unknown): void {
+    if (this.remote.apply(method, params, this.opts.onProtocolError)) return;
     switch (method) {
       case "thread.event": {
         const raw = (params as { event?: unknown } | null)?.event;

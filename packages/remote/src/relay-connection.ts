@@ -165,9 +165,12 @@ export class RelayConnection {
     }
     if (!this.wanted) return;
     const wsUrl = this.o.url.replace(/^http/, "ws") + RELAY_PATHS.connect;
+    // No permessage-deflate (Bun offers it by default): ciphertext doesn't compress, the reauth
+    // frame's token shouldn't share a compression context, and Bun's client fails with 1002
+    // "Invalid compressed data" on some of workerd's compressed frames.
     const ws = this.o.browser
       ? new WebSocket(wsUrl, [WS_SUBPROTOCOL, WS_BEARER_PREFIX + token])
-      : new WebSocket(wsUrl, { headers: { authorization: `Bearer ${token}` }, protocols: [WS_SUBPROTOCOL] } as never);
+      : new WebSocket(wsUrl, { headers: { authorization: `Bearer ${token}` }, protocols: [WS_SUBPROTOCOL], perMessageDeflate: false } as never);
     this.ws = ws;
     ws.addEventListener("message", (e) => {
       if (ws !== this.ws) return;

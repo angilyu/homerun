@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { connect } from "node:net";
 import { dirname } from "node:path";
-import type { Socket, TCPSocketListener, UnixSocketListener } from "bun";
+import type { TCPSocketListener, UnixSocketListener } from "bun";
 import {
   MAX_FRAME_BYTES,
   METHODS,
@@ -17,6 +17,8 @@ import {
   type RpcId,
   type RpcNotification,
   type RpcRequest,
+  type RpcFailure,
+  type RpcSuccess,
 } from "@homerun/core";
 import { endpointPath, EndpointError, readEndpointFile } from "@homerun/client";
 import { log, scrub } from "../log";
@@ -45,6 +47,31 @@ export interface ServerOptions {
 }
 
 type Data = { conn: Connection };
+
+/** Where a connection writes its NDJSON: the socket, or a live session's encryptor. */
+export interface FrameSink {
+  /** Bytes accepted; fewer means the rest waits for `onDrain`. */
+  write(buf: Buffer): number;
+  end(): void;
+}
+
+/** A paired device, authenticated by its Noise session (§9.4, §12). */
+export interface RemotePeer {
+  deviceId: string;
+  platform: "ios" | "web";
+}
+
+export class ShellCallError extends Error {
+  constructor(
+    readonly code: number | null,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** How long the runtime waits for the shell to answer a request (`secrets.persist`). */
+export const SHELL_CALL_TIMEOUT_MS = 10_000;
 
 /** The local JSON-RPC server (§5.2): NDJSON frames on a 0600 unix socket in a 0700 directory. */
 export class RpcServer {
@@ -121,6 +148,29 @@ export class RpcServer {
     for (const c of this.connections) c.notify(method, params);
   }
 
+  /**
+   * Serve a connection that isn't on the socket: a paired device's live session (§9.4), whose
+   * Noise session already authenticated `remote`. Its frames arrive through `onData`.
+   */
+  adopt(sink: FrameSink, remote: RemotePeer): Connection {
+    const c = new Connection(sink, this.opts, remote);
+    c.onClosed(() => this.connections.delete(c));
+    this.connections.add(c);
+    return c;
+  }
+
+  /** The shell's own connection, if it is connected and said hello. */
+  shell(): Connection | null {
+    let found: Connection | null = null;
+    for (const c of this.connections) if (c.role === "shell" && c.open) found = c;
+    return found;
+  }
+
+  /** Close every live session from this paired device (it was unpaired). */
+  closeRemoteConnections(deviceId: string): void {
+    for (const c of [...this.connections]) if (c.remote?.deviceId === deviceId) c.close();
+  }
+
   /** Close every connection that said hello with this CLI token (it was revoked, §5.2). */
   closeTokenConnections(tokenId: string): void {
     for (const c of [...this.connections]) if (c.cliTokenId === tokenId) c.close();
@@ -174,13 +224,44 @@ export class Connection implements Conn {
   private closeAfterFlush = false;
   private closedNotified = false;
   private helloTimer: ReturnType<typeof setTimeout> | null;
+  private nextCallId = 1;
+  private calls = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private closedListeners: (() => void)[] = [];
 
   constructor(
-    private socket: Socket<Data>,
+    private socket: FrameSink,
     private opts: ServerOptions,
+    /** Set for a paired device's live session; null on the local socket. */
+    readonly remote: RemotePeer | null = null,
   ) {
     this.helloTimer = null;
     this.restartHelloTimeout();
+  }
+
+  get open(): boolean {
+    return !this.closed && !this.closeAfterFlush;
+  }
+
+  onClosed(fn: () => void): void {
+    this.closedListeners.push(fn);
+  }
+
+  /**
+   * A runtime → shell request (§5.2: `secrets.persist`). Only on the shell's connection; the
+   * reply arrives as a response frame on the same connection.
+   */
+  request(method: string, params: unknown, timeoutMs = SHELL_CALL_TIMEOUT_MS): Promise<unknown> {
+    if (this.role !== "shell") return Promise.reject(new ShellCallError(null, "not the shell's connection"));
+    if (!this.open) return Promise.reject(new ShellCallError(null, "the shell's connection is closed"));
+    const id = `rt-${this.nextCallId++}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.calls.delete(id);
+        reject(new ShellCallError(null, `the shell didn't answer ${method}`));
+      }, timeoutMs);
+      this.calls.set(id, { resolve, reject, timer });
+      this.send({ jsonrpc: "2.0", id, method, params });
+    });
   }
 
   setRole(role: CallerRole): void {
@@ -239,9 +320,19 @@ export class Connection implements Conn {
       return this.fail(id, RPC_ERROR.INVALID_REQUEST, "Invalid request.", { issues: c.error.issues.slice(0, 20) as unknown as object });
     }
     if (c.kind === "notification") return this.onNotification(c.frame as RpcNotification);
-    // Replies to runtime → shell requests arrive in a later milestone.
-    if (c.kind !== "request") return;
+    if (c.kind === "success" || c.kind === "failure") return this.onResponse(c.frame as RpcSuccess | RpcFailure);
     this.onRequest(c.frame as RpcRequest);
+  }
+
+  /** A reply to one of our requests; anything else is dropped. */
+  private onResponse(r: RpcSuccess | RpcFailure): void {
+    if (typeof r.id !== "string") return;
+    const call = this.calls.get(r.id);
+    if (!call) return;
+    this.calls.delete(r.id);
+    clearTimeout(call.timer);
+    if ("error" in r) call.reject(new ShellCallError(r.error.code, r.error.message));
+    else call.resolve(r.result);
   }
 
   /** Only the shell may send notifications, only known ones, and a bad one is dropped (§5.2). */
@@ -384,7 +475,15 @@ export class Connection implements Conn {
     this.helloTimer = null;
     for (const unsub of this.subscriptions.values()) unsub();
     this.subscriptions.clear();
-    if (first) this.opts.onConnectionClosed?.(this);
+    for (const [, call] of this.calls) {
+      clearTimeout(call.timer);
+      call.reject(new ShellCallError(null, "the shell's connection closed"));
+    }
+    this.calls.clear();
+    if (first) {
+      this.opts.onConnectionClosed?.(this);
+      for (const fn of this.closedListeners.splice(0)) fn();
+    }
   }
 }
 

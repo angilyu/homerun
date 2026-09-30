@@ -1,11 +1,12 @@
 //! The shell's side of the runtime (§5.1): start the supervisor, pick the key store, relay
 //! runtime notifications and status to the webview through one ordered Tauri channel, post the
-//! runtime's local notifications (§8.2), prompt for CLI access (§5.2) and keep the menu bar's
-//! summary fresh.
+//! runtime's local notifications (§8.2), prompt for CLI access (§5.2) and device links (§10.5),
+//! open the sign-in page (§10.4) and keep the menu bar's summary fresh.
 
 use crate::cli_prompts::CliPrompts;
 use crate::keychain::Keychain;
 use crate::notifications;
+use homerun_shell_core::browser::sign_in_host;
 use homerun_shell_core::keys::{KeyStore, MemoryKeyStore, Remembered, API_KEY};
 use homerun_shell_core::notify::{Notices, Op};
 use homerun_shell_core::prefs::{self, Prefs};
@@ -17,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::Duration;
 use tauri::ipc::Channel;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 /// Shell events for the webview (`navigate`, `update`), queued until it attaches: a notification
 /// click can launch the app before the page has loaded.
@@ -34,6 +35,7 @@ pub struct AppHost {
     events: Mutex<Events>,
     notices: Mutex<Notices>,
     cli: Arc<CliPrompts>,
+    app: AppHandle,
     /// Something the menu bar shows may have changed.
     dirty: (Mutex<bool>, Condvar),
 }
@@ -92,6 +94,24 @@ impl AppHost {
         std::mem::take(&mut *g)
     }
 
+    /// `browser.open` (§10.4): the sign-in page, in the system browser. The URL carries the PKCE
+    /// state, so only its host is logged.
+    fn open_browser(&self, params: &Value) {
+        let url = params["url"].as_str().unwrap_or_default();
+        let log = |msg: &str, fields: Value| {
+            if let Some(s) = self.app.try_state::<Arc<Shell>>() {
+                s.rt.log_event(msg, fields);
+            }
+        };
+        match sign_in_host(url, cfg!(debug_assertions)) {
+            Some(host) => match crate::commands::open(url) {
+                Ok(()) => log("browser.opened", json!({"host": host})),
+                Err(e) => log("browser.open_failed", json!({"host": host, "error": e.message})),
+            },
+            None => log("browser.refused", json!({})),
+        }
+    }
+
     fn apply(&self, ops: Vec<Op>) {
         for op in ops {
             match op {
@@ -128,7 +148,8 @@ impl Host for AppHost {
                 self.apply(ops);
             }
             "threads.changed" => self.mark_dirty(),
-            "cli.access_requested" | "cli.access_withdrawn" => self.cli.notification(method, &params),
+            "cli.access_requested" | "cli.access_withdrawn" | "devices.link_requested" | "devices.link_withdrawn" => self.cli.notification(method, &params),
+            "browser.open" => self.open_browser(&params),
             _ => {}
         }
     }
@@ -243,7 +264,8 @@ pub fn start(version: &str, test: bool, app: AppHandle) -> Shell {
         status: Mutex::new(RuntimeStatus::Starting),
         events: Mutex::new(Events::default()),
         notices: Mutex::new(Notices::default()),
-        cli: CliPrompts::new(app),
+        cli: CliPrompts::new(app.clone()),
+        app,
         dirty: (Mutex::new(false), Condvar::new()),
     });
     let prefs = prefs::load(&prefs::path(&data_dir));
