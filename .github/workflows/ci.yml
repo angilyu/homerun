@@ -168,7 +168,8 @@ jobs:
     name: apps/desktop shell supervisor
     # The platform-neutral half of the Tauri shell (supervisor, launch-token connection, webview
     # forwarding allowlist, §5.1–§5.2). It depends on serde only, so it builds in seconds; the Tauri
-    # crate itself (WebKit, AppKit) builds nightly on macOS (nightly.yml).
+    # crate itself (WebKit and AppKit, or WebView2 and Win32) builds nightly on macOS and Windows
+    # (nightly.yml).
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -181,12 +182,14 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: cargo test -p homerun-shell-core --locked
 
-  windows-probe:
-    name: Windows probe (temporary, milestone 8b)
-    # Round 4: the runtime, client, win32 and CLI unit suites on Windows, with the cross-user pipe
-    # test, then probes P8 (compiled self-detection) and P7 (claude's shell). Each step reports on
-    # its own (continue-on-error) so one run shows every failure; replaced by the per-PR Windows
-    # jobs before merge.
+  windows-runtime:
+    name: Windows runtime, CLI and client
+    # The runtime's named pipe (private DACL, §5.2), job objects, keep-awake, claude's environment
+    # and the Windows denylist; the client's pipe endpoint; the CLI's peer check against a real
+    # pipe and its Credential Manager token store; and the win32 FFI they share. The cross-user
+    # test creates a throwaway local user (the runner is an administrator) and expects every open
+    # of the pipe, the endpoint and the dev token to be denied. About 2 minutes. Replay and the
+    # crash sweep stay on Linux (§18 row 40).
     runs-on: windows-latest
     timeout-minutes: 10
     defaults:
@@ -199,31 +202,36 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Install
-        run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/cli..."
-      - name: win32
-        continue-on-error: true
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/cli..."
+      - name: win32 FFI
         run: pnpm --filter @homerun/win32 test
-      - name: client
-        continue-on-error: true
+      - name: Client
         run: pnpm --filter @homerun/client test
-      - name: homerund unit (with the cross-user pipe test)
-        continue-on-error: true
-        timeout-minutes: 5
+      - name: Runtime unit tests (with the cross-user pipe test)
+        run: pnpm --filter @homerun/homerund test:unit
         env:
           HOMERUN_WIN_CROSS_USER: "1"
-        run: pnpm --filter @homerun/homerund test:unit
-      - name: CLI unit
-        continue-on-error: true
+      - name: CLI unit tests
         run: pnpm --filter @homerun/cli test:unit
-      - name: P8 what a compiled executable reports about itself
-        continue-on-error: true
-        run: |
-          pnpm exec bun build --compile spikes/windows-probe/compiled.ts --outfile p8.exe
-          ./p8.exe
-      # Last: it renames Git for Windows away and back, so nothing here may be using it (pwsh).
-      - name: P7 which shell claude's Bash tool runs, with and without Git Bash
-        shell: pwsh
-        continue-on-error: true
-        timeout-minutes: 3
-        run: pnpm exec bun spikes/windows-probe/bash.ts --hide-git
+
+  windows-shell:
+    name: Windows shell supervisor
+    # shell-core on Windows: the pipe client's server-pid check, overlapped I/O, the shell's job
+    # object, BCryptGenRandom, and the supervisor against the fake runtime. The Tauri crate itself
+    # builds nightly on Windows (nightly.yml). Warnings fail here because the Windows-only code
+    # compiles nowhere else per pull request.
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+      # Saving the cache takes about 40 s on Windows, so only main saves it; pull requests restore.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Supervisor tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test -p homerun-shell-core --locked
+        env:
+          RUSTFLAGS: -D warnings
