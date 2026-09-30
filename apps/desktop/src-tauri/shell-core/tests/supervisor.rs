@@ -50,8 +50,16 @@ fn fast() -> Timing {
     }
 }
 
+/// Where the fake serves: a socket in `dir` (short, to fit in sun_path), or a pipe on Windows.
+fn endpoint(dir: &std::path::Path, name: &str) -> String {
+    if cfg!(windows) {
+        format!(r"\\.\pipe\hrs-{}-{name}", std::process::id())
+    } else {
+        dir.join("s").display().to_string()
+    }
+}
+
 fn start(name: &str, env: &[(&str, &str)], key: Option<&str>) -> Fixture {
-    // Short: the socket path must fit in sun_path.
     let dir = std::env::temp_dir().join(format!("hrs-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -60,7 +68,7 @@ fn start(name: &str, env: &[(&str, &str)], key: Option<&str>) -> Fixture {
     cfg.hello_timeout = Duration::from_secs(2);
     cfg.ping_timeout = Duration::from_millis(100);
     cfg.env = vec![
-        ("FAKE_SOCK".into(), dir.join("s").display().to_string()),
+        ("FAKE_SOCK".into(), endpoint(&dir, name)),
         ("FAKE_RECORD".into(), dir.join("record").display().to_string()),
         ("ANTHROPIC_API_KEY".into(), "leak".into()),
     ];
@@ -157,7 +165,8 @@ fn a_runtime_that_ignores_eof_is_terminated() {
     let took = t0.elapsed();
     assert!(took >= Duration::from_millis(1400) && took < Duration::from_secs(4), "{took:?}");
     let log = std::fs::read_to_string(f.dir.join("logs/homerund.log")).unwrap();
-    assert!(log.contains("SIGTERM"));
+    // Windows has no SIGTERM: the job is terminated (§5.1).
+    assert!(log.contains(if cfg!(windows) { "TerminateJobObject" } else { "SIGTERM" }), "{log}");
 }
 
 #[test]
@@ -247,4 +256,77 @@ fn a_user_restart_reconnects_with_a_new_connection_number() {
     f.rt.restart();
     f.wait("ready 2", |s| matches!(s, RuntimeStatus::Ready { connection: 2, .. }));
     assert_eq!(f.record().matches("stdin closed").count(), 1);
+}
+
+/// The fake's grandchildren, from its record, each held open so its pid can't be reused; None
+/// for one that has already ended.
+#[cfg(windows)]
+fn grandchildren(f: &Fixture) -> Vec<(u32, Option<win::Process>)> {
+    f.record()
+        .lines()
+        .filter_map(|l| l.strip_prefix("grandchild pid="))
+        .map(|l| {
+            let pid: u32 = l.split(' ').next().unwrap().parse().unwrap();
+            (pid, win::Process::open(pid))
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+mod win {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+
+    pub struct Process(HANDLE);
+    impl Process {
+        pub fn open(pid: u32) -> Option<Process> {
+            let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+            (!h.is_null()).then_some(Process(h))
+        }
+        /// Whether it ends within `ms`.
+        pub fn ends_within(&self, ms: u32) -> bool {
+            unsafe { WaitForSingleObject(self.0, ms) == WAIT_OBJECT_0 }
+        }
+    }
+    impl Drop for Process {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+/// §5.1 on Windows: `homerund` is in a job, so whatever it started ends with it, whether it
+/// exits on stdin EOF or has to be terminated.
+#[cfg(windows)]
+#[test]
+fn the_runtimes_whole_tree_ends_with_it() {
+    for (name, mode) in [("tree-eof", ""), ("tree-term", "ignore_eof")] {
+        let f = start(name, &[("FAKE_GRANDCHILD", "1"), ("FAKE_MODE", mode)], None);
+        f.wait("ready", ready);
+        let kids = grandchildren(&f);
+        assert_eq!(kids.len(), 1, "{mode}: {}", f.record());
+        let (pid, kid) = &kids[0];
+        let kid = kid.as_ref().expect("the grandchild runs while the runtime does");
+        assert!(!kid.ends_within(0), "{mode}: the grandchild runs while the runtime does");
+        assert!(f.rt.stop(Duration::from_secs(5)), "{mode}");
+        assert!(kid.ends_within(5000), "{mode}: grandchild {pid} outlived the runtime");
+    }
+}
+
+/// §5.2 on Windows: the shell checks the pipe's server before it writes. A runtime whose
+/// announced pipe is served by another process is treated as failing to start, and that
+/// process hears nothing, so never the launch token.
+#[cfg(windows)]
+#[test]
+fn a_pipe_served_by_another_process_never_hears_the_token() {
+    let f = start("impostor", &[("FAKE_MODE", "impostor")], Some("sk-ant-TEST-not-a-real-key"));
+    let s = f.wait("refused", |s| matches!(s, RuntimeStatus::Restarting { .. }));
+    let RuntimeStatus::Restarting { last_error: Some(e), .. } = s else { panic!("{s:?}") };
+    assert!(e.contains("Couldn't connect to the runtime") && e.contains("not the runtime the shell started"), "{e}");
+    let impostors = grandchildren(&f);
+    assert!(!impostors.is_empty(), "{}", f.record());
+    // The first impostor ended with its runtime's tree (it was in the job).
+    assert!(impostors[0].1.as_ref().is_none_or(|p| p.ends_within(5000)), "impostor {} outlived its runtime", impostors[0].0);
+    let rec = f.record();
+    assert!(!rec.contains("impostor heard") && !rec.contains("hello role"), "{rec}");
 }

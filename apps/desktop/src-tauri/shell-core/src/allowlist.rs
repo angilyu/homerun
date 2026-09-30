@@ -96,7 +96,7 @@ pub fn forward(conn: Option<&Connection>, method: &str, params: Value) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rpc::tests::{serve, sock, Recorder};
+    use crate::rpc::tests::{me, serve, sock, Recorder};
     use serde_json::json;
     use std::sync::{Arc, Mutex};
 
@@ -140,7 +140,7 @@ mod tests {
             };
             writeln!(w, "{r}").unwrap();
         });
-        let c = Connection::connect(&p, Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
+        let c = Connection::connect(&p, me(), Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
         assert_eq!(forward(Some(&c), "threads.list", json!({})).unwrap(), json!({"threads": [], "has_more": false}));
         let e = forward(Some(&c), "tasks.update", json!({})).unwrap_err();
         assert_eq!(e, ShellError { kind: "rpc", code: Some(-32005), message: "Changed elsewhere".into(), data: Some(json!({"current_version": 3})) });

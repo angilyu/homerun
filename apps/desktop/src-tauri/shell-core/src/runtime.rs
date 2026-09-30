@@ -1,16 +1,17 @@
 //! The supervisor with real processes (§5.1): executes `policy` effects with `std::process`,
-//! Unix sockets and a timer loop on its own thread.
+//! the runtime's endpoint (`transport`) and a timer loop on its own thread. What differs by OS,
+//! process groups or a job object, is in `proc`.
 
 use crate::keys;
 use crate::logfile::LogFile;
-use crate::policy::{Effect, Event, Exit, Hello, Now, Policy, Signal, Timing};
+use crate::policy::{Effect, Event, Exit, Hello, Now, Policy, Timing};
+use crate::proc::{self, Tree};
 use crate::rpc::{codes, CallError, Connection, Handler, RpcError};
 use crate::status::RuntimeStatus;
 use crate::token::launch_token;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -104,10 +105,6 @@ fn wall_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-extern "C" {
-    fn kill(pid: i32, sig: i32) -> i32;
-}
-
 impl Runtime {
     /// Start supervising: spawns `homerund` at once.
     pub fn start(config: Config, host: Arc<dyn Host>) -> Runtime {
@@ -182,7 +179,7 @@ impl Runtime {
 
 struct Child {
     gen: u64,
-    pid: i32,
+    tree: Arc<Tree>,
     stdin: Option<ChildStdin>,
     token: String,
 }
@@ -274,12 +271,8 @@ impl Driver {
                 }
                 Effect::Signal(s) => {
                     if let Some(c) = &self.child {
-                        let (sig, name) = match s {
-                            Signal::Term => (15, "SIGTERM"),
-                            Signal::Kill => (9, "SIGKILL"),
-                        };
-                        self.shared.shell_log("signal", json!({"pid": c.pid, "signal": name}));
-                        unsafe { kill(c.pid, sig) };
+                        let name = c.tree.signal(s);
+                        self.shared.shell_log("signal", json!({"pid": c.tree.pid(), "signal": name}));
                     }
                 }
                 Effect::Status(s) => {
@@ -310,8 +303,9 @@ impl Driver {
         for k in &self.config.env_remove {
             cmd.env_remove(k);
         }
-        // Its own process group, so a terminal's Ctrl-C to the shell doesn't reach it (§5.1).
-        cmd.process_group(0);
+        // Its own process group (on Windows, a console group and no console window), so a
+        // terminal's Ctrl-C to the shell doesn't reach it (§5.1).
+        proc::prepare(&mut cmd);
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
@@ -321,7 +315,9 @@ impl Driver {
                 return;
             }
         };
-        let pid = child.id() as i32;
+        let shared = self.shared.clone();
+        let tree = Arc::new(proc::adopt(&child, |w| shared.shell_log("process tree", json!({"warning": w}))));
+        let pid = tree.pid();
         self.shared.shell_log("spawned", json!({"pid": pid, "gen": gen}));
         let mut stdin = child.stdin.take();
         // The token goes on stdin line 1, never argv or env (§5.2). A failed write means the
@@ -366,26 +362,28 @@ impl Driver {
             let shared = self.shared.clone();
             std::thread::spawn(move || read_lines(out, |line| shared.log(line)));
         }
-        let (shared, tx) = (self.shared.clone(), self.tx.clone());
+        let (shared, tx, reap) = (self.shared.clone(), self.tx.clone(), tree.clone());
         std::thread::spawn(move || {
             let st = child.wait();
+            // Whatever it started and left running goes with it (§5.1; a no-op on POSIX).
+            reap.reap();
             // Let stderr drain so the last error is known; a grandchild holding it open can't
             // delay the exit for long.
             let _ = done_rx.recv_timeout(Duration::from_secs(1));
             let (code, signal) = match st {
-                Ok(s) => (s.code(), s.signal()),
+                Ok(s) => proc::exit_parts(&s),
                 Err(_) => (None, None),
             };
             shared.shell_log("exited", json!({"pid": pid, "code": code, "signal": signal}));
             let last_error = last_error.lock().unwrap().take();
             let _ = tx.send(Event::Exited { gen, exit: Exit { code, signal, last_error } });
         });
-        self.child = Some(Child { gen, pid, stdin, token });
+        self.child = Some(Child { gen, tree, stdin, token });
     }
 
     fn connect(&self, gen: u64, socket: String) {
         let Some(child) = self.child.as_ref().filter(|c| c.gen == gen) else { return };
-        let token = child.token.clone();
+        let (token, pid) = (child.token.clone(), child.tree.pid());
         let (host, shared, tx) = (self.host.clone(), self.shared.clone(), self.tx.clone());
         let (version, timeout) = (self.config.client_version.clone(), self.config.hello_timeout);
         std::thread::spawn(move || {
@@ -401,14 +399,15 @@ impl Driver {
                     (msg, incompatible)
                 };
                 let path = Path::new(&socket);
-                let shell = Connection::connect(path, Arc::new(ShellHandler { host: host.clone() })).map_err(io)?;
+                // On Windows the pipe must be served by the child just spawned (`transport`).
+                let shell = Connection::connect(path, Some(pid), Arc::new(ShellHandler { host: host.clone() })).map_err(io)?;
                 shell.hello("shell", &token, &version, timeout).map_err(hello_err)?;
                 // Secrets before the UI connects, so its first chat has the key (§5.2).
                 match keys::hand_over(host.keys(), shell.as_ref()) {
                     Ok(names) => shared.shell_log("secrets handed over", json!({"names": names})),
                     Err(e) => shared.shell_log("secrets not handed over", json!({"error": e})),
                 }
-                let webview = Connection::connect(path, Arc::new(WebviewHandler { host: host.clone() })).map_err(|e| {
+                let webview = Connection::connect(path, Some(pid), Arc::new(WebviewHandler { host: host.clone() })).map_err(|e| {
                     shell.close();
                     io(e)
                 })?;
