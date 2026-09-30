@@ -10,7 +10,7 @@ import type { Target } from "./connect";
 import type { Io } from "./context";
 import { CliError, EXIT } from "./exit";
 import type { Output } from "./output";
-import { peerRefusal, verifyPeer, type PeerInspector } from "./peer";
+import { peerRefusal, verifyPeer, verifyWindowsPeer, type PeerInspector, type WindowsPeerInspector } from "./peer";
 import type { TokenStore } from "./token-store";
 import { Waiting } from "./waiting";
 
@@ -25,6 +25,7 @@ export interface AccessOptions {
   /** Development builds only: `--dev-skip-peer-check`. */
   skipPeerCheck: boolean;
   inspector: () => PeerInspector | Promise<PeerInspector>;
+  windowsInspector: () => WindowsPeerInspector | Promise<WindowsPeerInspector>;
   platform: string;
   /** How long to wait past the runtime's own expiry before giving up on it. */
   graceMs?: number;
@@ -60,10 +61,14 @@ export class CliAccess {
       this.o.note(this.o.ce.yellow("homerun: warning: --dev-skip-peer-check: not checking who is listening on the socket"));
       return c;
     }
-    const v = await verifyPeer(c.fd, this.opts.requirement, this.opts.platform, this.opts.inspector);
+    const { requirement, platform } = this.opts;
+    const v =
+      platform === "win32"
+        ? await verifyWindowsPeer(target.socketPath, requirement, this.opts.windowsInspector)
+        : await verifyPeer(c.fd, requirement, platform, this.opts.inspector);
     if (!v.ok) {
       c.close();
-      throw peerRefusal(v.why);
+      throw peerRefusal(v.why, platform);
     }
     return c;
   }

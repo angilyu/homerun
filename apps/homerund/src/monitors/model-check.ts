@@ -77,6 +77,7 @@ export function runModelCheck(
     authority: "full",
     grantsAllowed: false,
     denylist: denylistConfig(cfg),
+      shellDialect: cfg.claudeShell.dialect,
     sessionId: null,
   };
   const forced = cfg.build === "development" && process.env.HOMERUN_FORCE_MODEL ? process.env.HOMERUN_FORCE_MODEL : null;
@@ -151,6 +152,7 @@ export function runModelCheck(
           anthropicBaseUrl: cfg.anthropicBaseUrl,
           useShellEnvironment: false,
           userShell: process.env.SHELL,
+          gitBash: cfg.claudeShell.gitBash,
         }),
         initialInputs: [{ uuid: crypto.randomUUID(), text: checkPrompt(spec, prev, observation) }],
         gate,

@@ -18,6 +18,7 @@
   "dependencies": {
     "@homerun/client": "workspace:*",
     "@homerun/core": "workspace:*",
+    "@homerun/win32": "workspace:*",
     "zod": "4.6.5"
   },
   "devDependencies": {

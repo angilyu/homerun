@@ -10,8 +10,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEngine, EngineExit, EngineRun, EngineStart, UserInput } from "../engine";
 import { buildQueryOptions } from "./options";
-import { killRunTree } from "./process-tree";
-import { spawnInGroup } from "./spawn";
+import { processes } from "../../platform/processes";
 import { Translator } from "./translate";
 
 /** The tool `claude` adds for `outputFormat`; the model calls it to give its answer. */
@@ -141,7 +140,7 @@ export class ClaudeEngine implements AgentEngine {
         },
         canUseTool,
         spawn: (so) => {
-          const child = spawnInGroup(
+          const child = processes.spawnClaude(
             so,
             (p) => {
               pid = p;
@@ -186,10 +185,10 @@ export class ClaudeEngine implements AgentEngine {
       },
       closeInput: () => queue.close(),
       kill: () => {
-        if (pid !== null) void killRunTree(pid, this.rt.claudePath, 5000);
+        if (pid !== null) void processes.killRunTree(pid, this.rt.claudePath, 5000);
       },
       reap: async () => {
-        if (pid !== null) await killRunTree(pid, this.rt.claudePath, 5000, this.rt.claudeConfigDir);
+        if (pid !== null) await processes.killRunTree(pid, this.rt.claudePath, 5000, this.rt.claudeConfigDir);
       },
       get pid() {
         return pid;

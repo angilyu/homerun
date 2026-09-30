@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants } from "node:fs";
+import { ES_CONTINUOUS, ES_SYSTEM_REQUIRED, setThreadExecutionState } from "@homerun/win32";
 import { log } from "../log";
 
 /**
@@ -73,6 +74,41 @@ export class CaffeinateAssertions implements PowerAssertions {
   }
 }
 
+/**
+ * Windows: `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` on the runtime's main
+ * thread keeps the system from idle sleep, like `caffeinate -i`; `ES_CONTINUOUS` alone clears
+ * it. The state belongs to the thread, so a runtime that dies can't leave it set. Best-effort in
+ * the same way: a failed call warns once and keeping awake is given up.
+ */
+export class ExecutionStateAssertions implements PowerAssertions {
+  private failure: string | null = null;
+  private holders = 0;
+
+  constructor(private set: (flags: number) => number = setThreadExecutionState) {}
+
+  get unavailable(): string | null {
+    return this.failure;
+  }
+
+  acquire(reason: string): () => void {
+    if (this.failure) return released;
+    if (this.holders === 0 && this.set(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) === 0) {
+      this.failure = "SetThreadExecutionState failed";
+      log.warn("cannot keep the computer awake during runs; runs continue without it", { reason: this.failure });
+      return released;
+    }
+    this.holders++;
+    log.debug("power assertion taken", { reason });
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      if (--this.holders === 0) this.set(ES_CONTINUOUS);
+      log.debug("power assertion released", { reason });
+    };
+  }
+}
+
 export class NoopAssertions implements PowerAssertions {
   acquire(): () => void {
     return () => {};
@@ -103,8 +139,9 @@ export class FakeAssertions implements PowerAssertions {
   }
 }
 
-/** The platform's assertions: caffeinate on macOS, nothing elsewhere for now. */
+/** The platform's assertions: caffeinate on macOS, the thread's execution state on Windows. */
 export function platformAssertions(): PowerAssertions {
   if (process.platform === "darwin") return new CaffeinateAssertions();
+  if (process.platform === "win32") return new ExecutionStateAssertions();
   return new NoopAssertions();
 }

@@ -41,7 +41,8 @@ describe("process tree (F8)", () => {
   });
 });
 
-describe("a dead claude's session (milestone 4)", () => {
+// POSIX sessions and groups; Windows has job objects instead (processes-windows.test.ts).
+describe.skipIf(process.platform === "win32")("a dead claude's session (milestone 4)", () => {
   test("a tool in its own group that outlived its session leader is found by session id and killed", async () => {
     // Like claude: a session leader (detached = setsid) whose shell puts a job in its own group,
     // then dies before the job's command could show anything recognisable.

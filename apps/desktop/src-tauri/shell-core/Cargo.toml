@@ -2,9 +2,23 @@
 name = "homerun-shell-core"
 version = "0.0.1"
 edition = "2021"
-description = "The platform-independent part of the Homerun shell (§5.1, §5.2, §11): the runtime supervisor, the JSON-RPC connection, the webview allowlist, the key flow, and the menu-bar, quit, notification and updater decisions. std, serde and serde_json only, so it builds and tests on any CI runner without a webview."
+description = "The platform-independent part of the Homerun shell (§5.1, §5.2, §11): the runtime supervisor, the JSON-RPC connection, the webview allowlist, the key flow, and the menu-bar, quit, notification and updater decisions. std, serde and serde_json only (plus windows-sys on Windows, for the pipe, the job and the random source), so it builds and tests on any CI runner without a webview."
 publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# §5.1, §5.2 on Windows: the named-pipe client and its server check, job objects, and the system
+# random source. Already in the lockfile through Tauri; bindings only, no code of its own.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_JobObjects",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+] }

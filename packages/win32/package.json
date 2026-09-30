@@ -1,0 +1,18 @@
+{
+  "name": "@homerun/win32",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Win32 calls homerund and the homerun CLI make on Windows, through bun:ffi, and the pure security-descriptor checks behind them. Loads nothing until a call is made, so importing it elsewhere is free.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
+  }
+}

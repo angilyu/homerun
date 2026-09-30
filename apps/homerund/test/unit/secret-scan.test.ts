@@ -13,7 +13,8 @@ function scan(...files: string[]) {
   return { code: p.exitCode, out: p.stdout.toString() + p.stderr.toString() };
 }
 
-describe("no secrets in the repository", () => {
+// The repository scripts are bash; they are checked on Linux and macOS, not Windows.
+describe.skipIf(process.platform === "win32")("no secrets in the repository", () => {
   test("every tracked or committable file is clean, cassettes included", () => {
     const r = scan();
     expect(r.out).toContain("no secrets found");

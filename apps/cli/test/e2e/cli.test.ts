@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FakeScript } from "../../../homerund/src/agent/fake-engine";
 import { monitorSpec, sessionSpec, until, type SocketRuntime } from "../../../homerund/test/helpers";
-import { cli, devToken, events, runtime, spawnCli } from "./support";
+import { currentUserSid, privateFileSddl, setPathProtectedDacl } from "@homerun/win32";
+import { cli, devToken, events, NO_CTRL_C, runtime, spawnCli, WIN } from "./support";
 
 /**
  * The CLI from source (a development build) against the whole runtime with the fake engine: no
@@ -38,7 +39,8 @@ describe("status and the connection", () => {
     try {
       const r = await cli(dir, ["status"]);
       expect(r.code).toBe(69);
-      expect(r.stderr).toContain("homerund is not running");
+      // Windows finds the pipe through the endpoint the runtime publishes; there is none.
+      expect(r.stderr).toContain(WIN ? "Homerun is not running" : "homerund is not running");
       expect(r.stderr).toContain("pnpm --filter @homerun/homerund dev");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -48,11 +50,13 @@ describe("status and the connection", () => {
   test("a dev token readable by others, or a wrong one, is refused with 77", async () => {
     srt = await runtime();
     const path = devToken(srt.dir);
-    chmodSync(path, 0o644);
+    if (WIN) setPathProtectedDacl(path, `D:P(A;;FA;;;${currentUserSid()})(A;;FR;;;WD)`);
+    else chmodSync(path, 0o644);
     let r = await cli(srt.dir, ["status"]);
     expect(r.code).toBe(77);
-    expect(r.stderr).toContain("readable by other users");
-    chmodSync(path, 0o600);
+    expect(r.stderr).toContain(WIN ? "is not private to this user" : "readable by other users");
+    if (WIN) setPathProtectedDacl(path, privateFileSddl(currentUserSid()));
+    else chmodSync(path, 0o600);
 
     const other = join(srt.dir, "other-token");
     writeFileSync(other, "x".repeat(43), { mode: 0o600 });
@@ -65,9 +69,17 @@ describe("status and the connection", () => {
     srt = await runtime();
     const sock = srt.rt.config.socketPath;
     const elsewhere = mkdtempSync(join(tmpdir(), "hr-cli-else-"));
+    const ok = (r: { code: number; stderr: string }) => expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
     try {
-      expect((await cli(elsewhere, ["status", "--socket", sock])).code).toBe(0);
-      expect((await cli(elsewhere, ["status"], { env: { HOMERUN_SOCKET: sock } })).code).toBe(0);
+      // A socket's dev token is beside it; a Windows pipe has no folder, so its token must be named.
+      const token = WIN ? ["--dev-token-file", devToken(srt.dir)] : [];
+      if (WIN) {
+        const r = await cli(elsewhere, ["status", "--socket", sock]);
+        expect(r.code).toBe(77);
+        expect(r.stderr).toContain("pass --dev-token-file");
+      }
+      ok(await cli(elsewhere, ["status", "--socket", sock, ...token]));
+      ok(await cli(elsewhere, ["status", ...token], { env: { HOMERUN_SOCKET: sock } }));
     } finally {
       rmSync(elsewhere, { recursive: true, force: true });
     }
@@ -167,7 +179,8 @@ describe("send", () => {
     const b = await cli(srt.dir, ["blob", sha!, "-o", out]);
     expect(b.code).toBe(0);
     expect(readFileSync(out, "utf8")).toBe(big);
-    expect(statSync(out).mode & 0o777).toBe(0o600);
+    // Windows has no mode bits: the file takes its folder's permissions (§17 item 8).
+    if (!WIN) expect(statSync(out).mode & 0o777).toBe(0o600);
     const missing = await cli(srt.dir, ["blob", "0".repeat(64)]);
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("unknown, or deleted by retention");
@@ -399,7 +412,8 @@ const lingering: FakeScript = async (s) => {
 };
 
 describe("interrupts and stop", () => {
-  test("Ctrl-C detaches (130) and the run continues; stop THREAD cancels it", async () => {
+  // NO_CTRL_C: Windows can't send one process Ctrl-C (support.ts).
+  test.skipIf(NO_CTRL_C)("Ctrl-C detaches (130) and the run continues; stop THREAD cancels it", async () => {
     srt = await runtime({ script: lingering });
     const t = await thread();
     const p = spawnCli(srt.dir, ["send", t, "go"]);
@@ -418,7 +432,8 @@ describe("interrupts and stop", () => {
     expect((await cli(srt.dir, ["stop", t])).code).toBe(1);
   });
 
-  test("--stop-on-interrupt stops the run, then exits 130", async () => {
+  // NO_CTRL_C: Windows can't send one process Ctrl-C (support.ts).
+  test.skipIf(NO_CTRL_C)("--stop-on-interrupt stops the run, then exits 130", async () => {
     srt = await runtime({ script: lingering });
     const t = await thread();
     const p = spawnCli(srt.dir, ["send", t, "go", "--stop-on-interrupt"]);
@@ -445,7 +460,8 @@ describe("interrupts and stop", () => {
     expect(JSON.parse((await cli(srt.dir, ["runs", "show", run_id, "--json"])).stdout).run.state).toBe("cancelled");
   });
 
-  test("watch shows recent history, follows live, and Ctrl-C exits 130", async () => {
+  // NO_CTRL_C: Windows can't send one process Ctrl-C (support.ts).
+  test.skipIf(NO_CTRL_C)("watch shows recent history, follows live, and Ctrl-C exits 130", async () => {
     srt = await runtime();
     const t = await thread();
     expect((await cli(srt.dir, ["send", t, "first"])).code).toBe(0);

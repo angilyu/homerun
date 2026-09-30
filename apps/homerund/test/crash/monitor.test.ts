@@ -7,6 +7,7 @@ import { Database } from "bun:sqlite";
 import { isTerminal, type RunState } from "@homerun/core";
 import type { MonitorChildArgs } from "./monitor-child";
 import { crashSeed, sampleBoundaries, sweepMode } from "./sampler";
+import { killSignal } from "./die";
 
 /**
  * Kill the scheduler at every boundary (design §8.2, §8.4, §16 row 5). A monitor was last checked
@@ -42,7 +43,7 @@ async function life(a: MonitorChildArgs): Promise<Result> {
   await p.exited;
   const m = /^\{"points":.*\}$/m.exec(out);
   const r = m ? (JSON.parse(m[0]) as { points: number; kinds?: string[] }) : null;
-  return { code: p.exitCode, signal: p.signalCode, points: r?.points ?? null, kinds: r?.kinds ?? null, stderr: err };
+  return { code: p.exitCode, signal: killSignal(p), points: r?.points ?? null, kinds: r?.kinds ?? null, stderr: err };
 }
 
 async function pool<T>(items: readonly T[], fn: (t: T) => Promise<void>): Promise<void> {

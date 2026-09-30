@@ -2,7 +2,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CONCURRENCY, type BuildChannel } from "@homerun/core";
-import { chooseRunDir, dataDir as resolveDataDir, isCompiledUrl, resolveBuildChannel } from "@homerun/client";
+import { chooseRunDir, dataDir as resolveDataDir, resolveBuildChannel, runningCompiled } from "@homerun/client";
+import { resolveClaudeShell, type ClaudeShell } from "./agent/claude/shell";
+import { secureDir } from "./platform/secure";
 
 export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "@homerun/client";
 
@@ -10,7 +12,7 @@ export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "
 export const APP_ID = "com.angilyu.homerun";
 export const RUNTIME_VERSION: string = typeof HOMERUND_VERSION === "string" ? HOMERUND_VERSION : "0.2.0-dev";
 /** True when running as a `bun build --compile` executable. */
-export const isCompiled = isCompiledUrl(import.meta.url);
+export const isCompiled = runningCompiled(import.meta.url);
 
 /**
  * The build channel fails closed (`resolveBuildChannel`): a compiled executable is release unless
@@ -56,6 +58,8 @@ export interface Config {
   tmpDir: string;
   logsDir: string;
   claudePath: string;
+  /** The shell behind claude's Bash tool, and so the dialect its commands are in (`shell.ts`). */
+  claudeShell: ClaudeShell;
   limits: Limits;
   /** The user's real home, passed to tools as HOMERUN_USER_HOME. */
   userHome: string;
@@ -103,7 +107,15 @@ function option(argv: string[], name: string): string | undefined {
   return eq?.slice(name.length + 3);
 }
 
+/**
+ * A directory under the data dir. POSIX: 0700. Windows: created, inheriting the data dir's
+ * private DACL (`secureDir` sets that on the data and run dirs).
+ */
 function ensureDir(d: string): string {
+  if (process.platform === "win32") {
+    mkdirSync(d, { recursive: true });
+    return d;
+  }
   mkdirSync(d, { recursive: true, mode: 0o700 });
   chmodSync(d, 0o700);
   return d;
@@ -112,18 +124,19 @@ function ensureDir(d: string): string {
 /** Locate the bundled `claude` (§5.1). In development it comes from the SDK's platform package. */
 export function findClaude(env: Record<string, string | undefined>): string {
   if (env.HOMERUN_CLAUDE_PATH) return env.HOMERUN_CLAUDE_PATH;
-  const besideExe = join(dirname(process.execPath), "claude");
+  const exe = process.platform === "win32" ? "claude.exe" : "claude";
+  const besideExe = join(dirname(process.execPath), exe);
   if (isCompiled && existsSync(besideExe)) return besideExe;
   const pkg = `claude-agent-sdk-${process.platform}-${process.arch}`;
   let dir = resolve(import.meta.dir);
   for (let i = 0; i < 8; i++) {
     for (const suffix of ["", "-musl"]) {
-      const p = join(dir, "node_modules", "@anthropic-ai", pkg + suffix, "claude");
+      const p = join(dir, "node_modules", "@anthropic-ai", pkg + suffix, exe);
       if (existsSync(p)) return p;
     }
     const pnpmDir = join(dir, "node_modules", ".pnpm");
     if (existsSync(pnpmDir)) {
-      const hit = [...new Bun.Glob(`@anthropic-ai+${pkg}@*/node_modules/@anthropic-ai/*/claude`).scanSync({ cwd: pnpmDir })][0];
+      const hit = [...new Bun.Glob(`@anthropic-ai+${pkg}@*/node_modules/@anthropic-ai/*/${exe}`).scanSync({ cwd: pnpmDir })][0];
       if (hit) return join(pnpmDir, hit);
     }
     dir = dirname(dir);
@@ -136,9 +149,9 @@ export function loadConfig(input: ConfigInput = {}): Config {
   const argv = input.argv ?? [];
   const build = BUILD_CHANNEL;
   const dev = build === "development";
-  const dataDir = ensureDir(resolveDataDir(env));
+  const dataDir = secureDir(resolveDataDir(env));
   const { runDir, socketPath } = chooseRunDir(dataDir);
-  ensureDir(runDir);
+  secureDir(runDir);
 
   const devOnly = (what: string, v: unknown) => {
     if (!dev && v) throw new DevOnlyError(what);
@@ -167,6 +180,7 @@ export function loadConfig(input: ConfigInput = {}): Config {
     tmpDir: ensureDir(join(dataDir, "tmp")),
     logsDir: ensureDir(join(dataDir, "logs")),
     claudePath: findClaude(env),
+    claudeShell: resolveClaudeShell(process.platform, env),
     limits: {
       session: num(env.HOMERUN_MAX_SESSIONS, DEFAULT_CONCURRENCY.session),
       monitor: num(env.HOMERUN_MAX_MONITORS, DEFAULT_CONCURRENCY.monitor),

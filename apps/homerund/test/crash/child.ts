@@ -19,6 +19,7 @@ import { MOCK_KEY } from "../helpers";
 import { SCENARIOS, type ChildArgs, CLIENT_MSG_ID, HELD_MSG_ID, TOKEN } from "./scenarios";
 import { BoundaryKinds } from "./boundaries";
 import { SimEngine } from "./sim-claude";
+import { killSelf } from "./die";
 
 const args = JSON.parse(process.argv[2]!) as ChildArgs;
 const scenario = SCENARIOS[args.scenario]!;
@@ -29,7 +30,7 @@ let dying = false;
 const kinds = args.label ? new BoundaryKinds(args.dir) : null;
 const point = () => {
   points++;
-  if (args.killAt === points) process.kill(process.pid, "SIGKILL");
+  if (args.killAt === points) killSelf();
   if (args.dieAt === points) dying = true;
 };
 Store.commitObserver = () => {

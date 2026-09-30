@@ -26,11 +26,11 @@ jobs:
       - name: Packages resolve from registry.npmjs.org only
         run: scripts/check-registry.sh
       # Root devDependency `bun` pins the Bun version used by `bun test`.
-      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/core..." --filter "@homerun/client..." --filter "@homerun/homerund"
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/core..." --filter "@homerun/client..." --filter "@homerun/win32" --filter "@homerun/homerund"
       - name: Typecheck
-        run: pnpm --filter @homerun/core --filter @homerun/client --filter @homerun/homerund typecheck
+        run: pnpm --filter @homerun/core --filter @homerun/client --filter @homerun/win32 --filter @homerun/homerund typecheck
       - name: Test
-        run: pnpm --filter @homerun/core --filter @homerun/client test
+        run: pnpm --filter @homerun/core --filter @homerun/client --filter @homerun/win32 test
       - name: Generated JSON Schema and vectors are up to date
         run: pnpm --filter @homerun/core schema:check
       - name: Markdown links and anchors resolve
@@ -168,7 +168,8 @@ jobs:
     name: apps/desktop shell supervisor
     # The platform-neutral half of the Tauri shell (supervisor, launch-token connection, webview
     # forwarding allowlist, §5.1–§5.2). It depends on serde only, so it builds in seconds; the Tauri
-    # crate itself (WebKit, AppKit) builds nightly on macOS (nightly.yml).
+    # crate itself (WebKit and AppKit, or WebView2 and Win32) builds nightly on macOS and Windows
+    # (nightly.yml).
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -180,3 +181,65 @@ jobs:
       - name: Supervisor tests
         working-directory: apps/desktop/src-tauri
         run: cargo test -p homerun-shell-core --locked
+
+  windows-runtime:
+    name: Windows runtime, CLI and client
+    # The runtime's named pipe (private DACL, §5.2), job objects, keep-awake, claude's environment
+    # and the Windows denylist; the client's pipe endpoint; the CLI's peer check against a real
+    # pipe and its Credential Manager token store; and the win32 FFI they share. The cross-user
+    # test creates a throwaway local user (the runner is an administrator) and expects every open
+    # of the pipe, the endpoint and the dev token to be denied. About 2 minutes. The CLI's end-to-end
+    # tests and a sampled crash sweep run nightly on Windows (nightly.yml, windows-full); replay
+    # stays on Linux (§18 row 69).
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - id: install
+        run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/cli..."
+      # Each suite runs even when an earlier one failed, so one failure doesn't hide another; any
+      # failure still fails the job.
+      - name: win32 FFI
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm --filter @homerun/win32 test
+      - name: Client
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm --filter @homerun/client test
+      - name: Runtime unit tests (with the cross-user pipe test)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm --filter @homerun/homerund test:unit
+        env:
+          HOMERUN_WIN_CROSS_USER: "1"
+      - name: CLI unit tests (with the Authenticode peer check against PowerShell 7)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm --filter @homerun/cli test:unit
+
+  windows-shell:
+    name: Windows shell supervisor
+    # shell-core on Windows: the pipe client's server-pid check, overlapped I/O, the shell's job
+    # object, BCryptGenRandom, and the supervisor against the fake runtime. The Tauri crate itself
+    # builds nightly on Windows (nightly.yml). Warnings fail here because the Windows-only code
+    # compiles nowhere else per pull request.
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+      # Saving the cache takes about 40 s on Windows, so only main saves it; pull requests restore.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Supervisor tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test -p homerun-shell-core --locked
+        env:
+          RUSTFLAGS: -D warnings

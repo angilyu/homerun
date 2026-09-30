@@ -20,6 +20,7 @@ import {
   type ToolClass,
   type ToolGrant,
 } from "@homerun/core";
+import type { ShellDialect } from "./claude/shell";
 import { denylistHit, type DenylistConfig } from "./denylist";
 import { canonicalPath, expandTilde } from "./paths";
 
@@ -65,6 +66,11 @@ export interface PolicyContext {
   denylist: DenylistConfig;
   /** The run's `claude` session: its own saved tool results stay readable (`denylist.ts`). */
   sessionId: string | null;
+  /**
+   * The dialect of the Bash tool's shell (`claude/shell.ts`). Bash patterns, grants and the
+   * metacharacter check read bash only, so under any other every call asks as destructive.
+   */
+  shellDialect: ShellDialect;
 }
 
 export type PolicyVerdict = "allowed" | "granted" | "needs_approval" | "denied";
@@ -98,7 +104,7 @@ export function parseMcpName(tool: string): { server: string; tool: string } | n
 
 export function resolveRoots(roots: readonly string[], home: string, fallback: string): string[] {
   const abs = roots.length ? roots.map((r) => expandTilde(r, home)) : [fallback];
-  return abs.map(canonicalPath);
+  return abs.map((p) => canonicalPath(p));
 }
 
 export function insideRoots(roots: readonly string[], path: string): boolean {
@@ -157,7 +163,7 @@ function decideFull(ctx: PolicyContext, tool: string, input: unknown): Decision 
 
   if (tool === "Bash") {
     const command = (bashCommandOf(input) ?? "").trim();
-    if (!command || hasShellMetacharacters(command)) return ask("destructive", { reason: "destructive", offerAlways: false });
+    if (ctx.shellDialect !== "bash" || !command || hasShellMetacharacters(command)) return ask("destructive", { reason: "destructive", offerAlways: false });
     const declared = ctx.spec.bashPatterns.find((p) => bashPatternMatches(p.pattern, command));
     if (declared) {
       if (declared.class === "destructive") return ask("destructive", { reason: "destructive", offerAlways: false });

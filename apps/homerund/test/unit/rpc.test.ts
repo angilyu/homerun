@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { statSync } from "node:fs";
 import { dirname } from "node:path";
+import { newPipeName } from "@homerun/client";
 import { METHODS, NOTIFICATIONS, PROTOCOL_VERSION, RPC_ERROR, ThreadEvent, type MethodName, type ThreadId } from "@homerun/core";
 import type { FakeScript } from "../../src/agent/fake-engine";
 import { RpcCallError, RpcClient } from "../../src/rpc/client";
@@ -48,7 +49,7 @@ function collect(c: RpcClient) {
 }
 
 describe("socket and hello (§5.2)", () => {
-  test("the socket is 0600 in a 0700 directory", async () => {
+  test.skipIf(process.platform === "win32")("the socket is 0600 in a 0700 directory", async () => {
     srt = await socketRuntime();
     const sock = srt.rt.config.socketPath;
     expect(statSync(sock).mode & 0o777).toBe(0o600);
@@ -108,9 +109,10 @@ describe("socket and hello (§5.2)", () => {
 
   test("a connection that never says hello is closed", async () => {
     const dir = (await import("node:fs")).mkdtempSync(`${(await import("node:os")).tmpdir()}/hr-hello-`);
-    const server = new RpcServer({ socketPath: `${dir}/s.sock`, handlers: {}, helloTimeoutMs: 50 });
+    const path = process.platform === "win32" ? newPipeName() : `${dir}/s.sock`;
+    const server = new RpcServer({ socketPath: path, runDir: dir, handlers: {}, helloTimeoutMs: 50 });
     await server.start();
-    const c = await RpcClient.connect(`${dir}/s.sock`);
+    const c = await RpcClient.connect(path);
     await c.closed;
     server.stop();
   });
@@ -394,7 +396,7 @@ describe("single instance", () => {
 
   test("a live pid in the lock refuses", async () => {
     srt = await socketRuntime();
-    const child = Bun.spawn(["/bin/sleep", "5"]);
+    const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"]);
     await Bun.write(`${srt.rt.config.runDir}/homerund.lock`, String(child.pid));
     const config = loadConfig({ env: { HOMERUN_DATA_DIR: srt.dir, HOMERUN_CLAUDE_PATH: "/usr/bin/false", HOME: srt.dir } });
     await expect(startRuntime({ config, launchToken: null, setTmpdir: false })).rejects.toBeInstanceOf(AlreadyRunningLockError);

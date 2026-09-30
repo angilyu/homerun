@@ -6,7 +6,8 @@ import { sessionSpec, until, type SocketRuntime } from "../../../homerund/test/h
 import { FakeClock } from "../../../homerund/src/schedule/clock";
 import type { Io } from "../../src/context";
 import { main } from "../../src/main";
-import { cli, runtime, spawnCli } from "./support";
+import { currentUserSid, privacyProblems, readPathSecurity } from "@homerun/win32";
+import { cli, NO_CTRL_C, runtime, spawnCli, WIN } from "./support";
 
 /**
  * The release role's access flow (§5.2) from a development build: `--dev-role cli` with a file
@@ -58,7 +59,8 @@ describe("asking for access", () => {
     expect(r.stderr).toContain("Homerun needs to approve this command-line tool.");
     expect(r.stderr).toContain("✓ Approved. The token is saved in the development token store");
     expect(r.stderr).toContain("--dev-skip-peer-check: not checking who is listening");
-    expect(statSync(storePath()).mode & 0o777).toBe(0o600);
+    if (WIN) expect(privacyProblems(readPathSecurity(storePath()), currentUserSid(), { protected: true })).toEqual([]);
+    else expect(statSync(storePath()).mode & 0o777).toBe(0o600);
     const token = readFileSync(storePath(), "utf8").trim();
     expect(r.stdout + r.stderr).not.toContain(token);
 
@@ -96,7 +98,8 @@ describe("asking for access", () => {
     expect((await a.next("cli.access_withdrawn")).reason).toBe("expired");
   }, 30_000);
 
-  test("Ctrl-C: exit 130, and the prompt is withdrawn", async () => {
+  // NO_CTRL_C: Windows can't send one process Ctrl-C (support.ts).
+  test.skipIf(NO_CTRL_C)("Ctrl-C: exit 130, and the prompt is withdrawn", async () => {
     srt = await runtime();
     const a = await app();
     const p = spawnCli(srt.dir, rel(["login"]));
@@ -115,6 +118,7 @@ describe("asking for access", () => {
     const r = await cli(srt.dir, rel(["login"]));
     expect(r.code).toBe(69);
     expect(r.stderr).toContain("answer the waiting requests in the Homerun app first");
+    // On Windows this terminates them; either way they are gone before the count is checked.
     for (const w of waiting) w.proc.kill("SIGINT");
     await Promise.all(waiting.map((w) => w.done));
     expect(a.of("cli.access_requested")).toHaveLength(3);

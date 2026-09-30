@@ -1,7 +1,9 @@
-import { dirname } from "node:path";
+import { dirname, win32 } from "node:path";
 import {
   ConnectionClosedError,
   DevTokenError,
+  EndpointError,
+  localEndpoint,
   RpcCallError,
   RpcClient,
   RpcProtocolError,
@@ -54,13 +56,52 @@ export const releaseQuestionsOnly = () =>
 export interface Target {
   socketPath: string;
   tokenPath: string;
+  /** Why the development token may be missing, when the default path is only a guess. */
+  tokenHint?: string;
 }
 
-/** The socket from the shared data-dir rules (§5.2), and the dev token beside it. */
-export function resolveTarget(values: Values, env: Env): Target {
-  const socketPath = (values.socket as string | undefined) ?? (env.HOMERUN_SOCKET || chooseRunDir(dataDir(env)).socketPath);
-  const tokenPath = (values["dev-token-file"] as string | undefined) ?? devTokenPath(dirname(socketPath));
-  return { socketPath, tokenPath };
+const PIPE_TOKEN_HINT =
+  "a pipe name doesn't say where its runtime keeps the development token: pass --dev-token-file, or set HOMERUN_DATA_DIR to that runtime's data dir";
+
+/**
+ * The socket from the shared data-dir rules (§5.2), and the dev token beside it. On Windows the
+ * pipe name is the one the running runtime published, read when first needed, so a command that
+ * can do without it (`logout`) still runs when homerund doesn't. A pipe has no folder, so the dev
+ * token is always the data dir's unless `--dev-token-file` says otherwise.
+ */
+export function resolveTarget(
+  values: Values,
+  env: Env,
+  platform: string = process.platform,
+  published: (dataDir: string) => string = (d) => localEndpoint(d, "win32").socketPath,
+): Target {
+  const explicit = (values.socket as string | undefined) ?? (env.HOMERUN_SOCKET || undefined);
+  const devToken = values["dev-token-file"] as string | undefined;
+  if (platform !== "win32") {
+    const socketPath = explicit ?? chooseRunDir(dataDir(env)).socketPath;
+    return { socketPath, tokenPath: devToken ?? devTokenPath(dirname(socketPath)) };
+  }
+  const data = dataDir(env, undefined, "win32");
+  const tokenPath = devToken ?? devTokenPath(win32.join(data, "run"), "win32");
+  if (explicit) return { socketPath: explicit, tokenPath, ...(devToken ? {} : { tokenHint: PIPE_TOKEN_HINT }) };
+  let pipe: string | undefined;
+  return {
+    tokenPath,
+    get socketPath() {
+      pipe ??= publishedPipe(() => published(data));
+      return pipe;
+    },
+  };
+}
+
+function publishedPipe(read: () => string): string {
+  try {
+    return read();
+  } catch (e) {
+    if (!(e instanceof EndpointError)) throw e;
+    if (e.reason === "missing") throw new CliError("Homerun is not running", EXIT.UNAVAILABLE, START_HINT);
+    throw new CliError(`the runtime's endpoint can't be trusted: ${e.message}`, EXIT.NOPERM, "quit Homerun, delete the file, and open Homerun again");
+  }
 }
 
 /**
@@ -83,7 +124,11 @@ export async function connectDev(channel: BuildChannel, target: Target): Promise
   } catch (e) {
     c.close();
     if (e instanceof DevTokenError)
-      throw new CliError(e.message, EXIT.NOPERM, e.reason === "missing" ? "only a development build of homerund writes a development token" : undefined);
+      throw new CliError(
+        e.message,
+        EXIT.NOPERM,
+        e.reason === "missing" ? (target.tokenHint ?? "only a development build of homerund writes a development token") : undefined,
+      );
     throw e;
   }
   try {

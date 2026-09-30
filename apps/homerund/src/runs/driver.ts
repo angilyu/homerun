@@ -217,6 +217,7 @@ export class RunDriver {
       egress: spec.policy.egress,
       grantsAllowed: row.task_id !== null,
       denylist: denylistConfig(cfg),
+      shellDialect: cfg.claudeShell.dialect,
     };
     // Only once the run can start: a resume that fails here never delivered its held messages,
     // and clients tell that from the missing `run.resumed` (`HeldMessages`).
@@ -313,6 +314,7 @@ export class RunDriver {
         anthropicBaseUrl: cfg.anthropicBaseUrl,
         useShellEnvironment: spec.policy.use_shell_environment,
         userShell: process.env.SHELL,
+        gitBash: cfg.claudeShell.gitBash,
       }),
       initialInputs: inputs,
       gate: { preTool: (c) => this.preTool(c), postTool: (o) => this.postTool(o) },

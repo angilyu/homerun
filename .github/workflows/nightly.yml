@@ -1,7 +1,8 @@
 name: Nightly
 
 # The full crash sweep: homerund killed at every event boundary (§16.2). Pull requests run a
-# sample of it (ci.yml). Also the macOS-only desktop shell build, which is too slow per pull request.
+# sample of it (ci.yml). Also the desktop shell builds on macOS and Windows, which are too slow per
+# pull request, and on Windows the CLI's end-to-end tests and a sampled crash sweep.
 on:
   schedule:
     - cron: "0 9 * * *"
@@ -28,6 +29,35 @@ jobs:
         run: pnpm --filter @homerun/homerund test:crash
         env:
           HOMERUN_CRASH_SWEEP: full
+
+  windows-full:
+    name: Windows CLI end to end and crash sweep (sampled)
+    # What per pull request runs on Linux only, on Windows: the CLI against a whole runtime over
+    # the named pipe, and homerund killed at a seeded sample of boundaries with TerminateProcess,
+    # recovering on the next life (§16.2). Tests that can't run on Windows are skipped one by one,
+    # each with its reason (§17 item 8).
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - id: install
+        run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/homerund..." --filter "@homerun/cli..."
+      - name: CLI end to end
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm --filter @homerun/cli test:e2e
+      - name: Crash tests (sampled)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm --filter @homerun/homerund test:crash
+        env:
+          HOMERUN_CRASH_SWEEP: sample
 
   desktop-macos:
     name: apps/desktop Tauri build (macOS)
@@ -73,3 +103,36 @@ jobs:
           name: update-test
           path: dist/update-test/
           if-no-files-found: ignore
+
+  desktop-windows:
+    name: apps/desktop Tauri build (Windows)
+    # The Tauri crate on Windows (§18 row 40): its tests (Credential Manager round trip, the
+    # registry reads behind Open at login, the sleep/wake registration) and a release build with
+    # the Windows sidecars, unbundled. The installer, signing and the updater on Windows are
+    # milestone 11; the tray, dialogs, toasts, login and sleep/wake need a desktop session and are
+    # checked by hand (apps/desktop/README.md).
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/desktop..."
+      # homerund.exe compiled from source (release channel) and the SDK's win32-x64 claude.exe.
+      - name: Stage the sidecars
+        run: pnpm exec bun apps/desktop/scripts/stage-sidecars.ts --release
+      - name: Rust tests (whole shell workspace)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --workspace --locked
+      - name: Release build (no bundle)
+        run: pnpm --filter @homerun/desktop tauri build --no-bundle

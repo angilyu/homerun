@@ -1,4 +1,4 @@
-import { isCompiledUrl, resolveBuildChannel } from "@homerun/client";
+import { resolveBuildChannel, runningCompiled } from "@homerun/client";
 import type { BuildChannel } from "@homerun/core";
 
 export const CLI_VERSION: string = typeof HOMERUN_CLI_VERSION === "string" ? HOMERUN_CLI_VERSION : "0.3.0-dev";
@@ -9,7 +9,7 @@ export const CLI_VERSION: string = typeof HOMERUN_CLI_VERSION === "string" ? HOM
  */
 export const BUILD_CHANNEL: BuildChannel = resolveBuildChannel(
   typeof HOMERUN_CLI_BUILD === "string" ? HOMERUN_CLI_BUILD : undefined,
-  isCompiledUrl(import.meta.url),
+  runningCompiled(import.meta.url),
 );
 
 /**

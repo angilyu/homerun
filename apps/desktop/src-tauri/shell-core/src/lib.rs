@@ -4,21 +4,27 @@
 
 pub mod allowlist;
 pub mod cli_access;
+/// Putting `homerun` on PATH is a macOS feature for now (a symlink into `/usr/local/bin`).
 pub mod cli_tool;
+pub mod dirs;
 pub mod keys;
 pub mod logfile;
 pub mod login;
 pub mod notify;
 pub mod policy;
 pub mod prefs;
+pub mod proc;
 pub mod quit;
 pub mod rpc;
 pub mod runtime;
 pub mod status;
 pub mod summary;
 pub mod token;
+pub mod transport;
 pub mod tray;
 pub mod update;
+#[cfg(windows)]
+pub mod win;
 
 pub use policy::Timing;
 pub use status::{BlockedReason, RuntimeStatus};

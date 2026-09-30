@@ -7,17 +7,21 @@ import { denylistHit, sdkDenyRules, type DenylistConfig } from "../../src/agent/
 import { canonicalPath } from "../../src/agent/paths";
 import { decide, type PolicyContext } from "../../src/agent/policy";
 
-// §5.5, §13: the hard denylist.
+// §5.5, §13: the hard denylist, macOS and Linux entries against the real file system. The Windows
+// entries and path rules are in denylist-windows.test.ts.
+const POSIX = process.platform !== "win32";
 const dir = canonicalPath(mkdtempSync(join(tmpdir(), "hr-deny-")));
 const home = join(dir, "home");
 const data = join(dir, "data");
 const root = join(home, "proj");
-for (const d of [".ssh", "Library/Keychains", "proj/src", ".aws", "Library/Application Support/Google/Chrome/Default"]) mkdirSync(join(home, d), { recursive: true });
-for (const d of ["workspaces/t1", "claude-config/projects/p/sess-1/tool-results", "claude-config/projects/p/sess-2", "tmp/u/p/sess-1/tasks", "logs"]) mkdirSync(join(data, d), { recursive: true });
-writeFileSync(join(home, ".ssh", "id_rsa"), "k");
-writeFileSync(join(data, "homerun.db"), "");
-symlinkSync(join(home, ".ssh"), join(root, "keys"));
-symlinkSync(join(home, ".ssh", "id_rsa"), join(root, "src", "notes.txt"));
+if (POSIX) {
+  for (const d of [".ssh", "Library/Keychains", "proj/src", ".aws", "Library/Application Support/Google/Chrome/Default"]) mkdirSync(join(home, d), { recursive: true });
+  for (const d of ["workspaces/t1", "claude-config/projects/p/sess-1/tool-results", "claude-config/projects/p/sess-2", "tmp/u/p/sess-1/tasks", "logs"]) mkdirSync(join(data, d), { recursive: true });
+  writeFileSync(join(home, ".ssh", "id_rsa"), "k");
+  writeFileSync(join(data, "homerun.db"), "");
+  symlinkSync(join(home, ".ssh"), join(root, "keys"));
+  symlinkSync(join(home, ".ssh", "id_rsa"), join(root, "src", "notes.txt"));
+}
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const cfg = (over: Partial<DenylistConfig> = {}): DenylistConfig => ({
@@ -35,7 +39,7 @@ const hit = (tool: string, input: unknown, o: { sessionId?: string | null; c?: D
 const read = (p: string, o: { sessionId?: string | null; c?: DenylistConfig } = {}) => hit("Read", { file_path: p }, o)?.category ?? null;
 const write = (p: string, o: { sessionId?: string | null } = {}) => hit("Write", { file_path: p, content: "x" }, o)?.category ?? null;
 
-describe("the hard denylist (§5.5, §13)", () => {
+describe.skipIf(!POSIX)("the hard denylist (§5.5, §13)", () => {
   test("each category", () => {
     expect(read(join(home, ".ssh", "id_rsa"))).toBe("ssh");
     expect(read(join(home, ".ssh"))).toBe("ssh");
@@ -174,11 +178,12 @@ function ctx(over: Partial<PolicyContext> = {}): PolicyContext {
     grantsAllowed: true,
     denylist: cfg(),
     sessionId: null,
+    shellDialect: "bash",
     ...over,
   };
 }
 
-describe("the policy denies a denylisted call outright (§5.5, §13)", () => {
+describe.skipIf(!POSIX)("the policy denies a denylisted call outright (§5.5, §13)", () => {
   test("even inside a declared root, and whatever grants the task has", () => {
     const denied = { policy: "denied", allow: false, reason: "Homerun never lets the agent read SSH keys. This call was not run." };
     expect(decide(ctx(), "Read", { file_path: join(home, ".ssh", "id_rsa") })).toMatchObject(denied);

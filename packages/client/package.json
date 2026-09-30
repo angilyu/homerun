@@ -12,7 +12,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@homerun/core": "workspace:*"
+    "@homerun/core": "workspace:*",
+    "@homerun/win32": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

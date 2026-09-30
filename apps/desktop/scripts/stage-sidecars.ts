@@ -2,7 +2,8 @@
  * Stage the helpers `tauri dev` bundles next to the shell (`externalBin`, §5.1):
  * a development-channel `homerund` compiled from source, and `claude` from the Agent SDK's
  * platform package in node_modules. No network. `--release` builds the release channel, which is
- * what scripts/macos/fetch-toolchain.sh (and so package.sh) stages for a bundle.
+ * what scripts/macos/fetch-toolchain.sh (and so package.sh) stages for a bundle. On Windows the
+ * names end in `.exe`, as Tauri expects there.
  *
  *   [HOMERUND_VERSION=x.y.z] bun scripts/stage-sidecars.ts [--release]
  */
@@ -17,13 +18,15 @@ const TRIPLES: Record<string, string> = {
   "darwin-x64": "x86_64-apple-darwin",
   "linux-x64": "x86_64-unknown-linux-gnu",
   "linux-arm64": "aarch64-unknown-linux-gnu",
+  "win32-x64": "x86_64-pc-windows-msvc",
 };
 const triple = TRIPLES[`${process.platform}-${process.arch}`];
 if (!triple) throw new Error(`no sidecars for ${process.platform}-${process.arch}`);
 const release = process.argv.includes("--release");
+const exe = process.platform === "win32" ? ".exe" : "";
 
 mkdirSync(OUT, { recursive: true });
-const homerund = join(OUT, `homerund-${triple}`);
+const homerund = join(OUT, `homerund-${triple}${exe}`);
 const main = join(ROOT, "apps", "homerund", "src", "main.ts");
 // Release: no build define (a compiled binary defaults to the release channel), minified, and the
 // app version when package.sh passes one.
@@ -36,7 +39,7 @@ const t0 = Date.now();
 const r = Bun.spawnSync([process.execPath, "build", "--compile", ...noAutoload, ...define, main, "--outfile", homerund], { stdout: "pipe", stderr: "pipe" });
 if (r.exitCode !== 0) throw new Error(`building homerund failed:\n${r.stderr.toString()}`);
 
-const claude = join(OUT, `claude-${triple}`);
+const claude = join(OUT, `claude-${triple}${exe}`);
 const src = findClaude({});
 if (!existsSync(claude) || statSync(claude).size !== statSync(src).size) copyFileSync(src, claude);
 for (const f of [homerund, claude]) chmodSync(f, 0o755);

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { setLogSink } from "../../src/log";
-import { CaffeinateAssertions } from "../../src/power/power";
+import { ES_CONTINUOUS, ES_SYSTEM_REQUIRED, setThreadExecutionState } from "@homerun/win32";
+import { CaffeinateAssertions, ExecutionStateAssertions } from "../../src/power/power";
 import { MOCK_KEY, socketRuntime, until, uuid, type SocketRuntime } from "../helpers";
 
 /**
@@ -38,7 +39,7 @@ function fakeCaffeinate(body: string, mode = 0o755): { path: string; starts: () 
   return { path, starts: () => readFileSync(log, "utf8").split("\n").filter(Boolean).length };
 }
 
-describe("caffeinate is best-effort (§8.1)", () => {
+describe.skipIf(process.platform === "win32")("caffeinate is best-effort (§8.1)", () => {
   test("a missing binary: one warning, and later runs don't try again", () => {
     const a = new CaffeinateAssertions(join(dir, "nope"));
     for (let i = 0; i < 3; i++) {
@@ -104,3 +105,38 @@ describe("caffeinate is best-effort (§8.1)", () => {
 function cycle(a: CaffeinateAssertions, times: number): void {
   for (let i = 0; i < times; i++) a.acquire("run")();
 }
+
+describe("the thread's execution state keeps Windows awake (§8.1)", () => {
+  test("taken once for overlapping holders, cleared when the last lets go", () => {
+    const calls: number[] = [];
+    const a = new ExecutionStateAssertions((f) => (calls.push(f), 1));
+    const r1 = a.acquire("run 1");
+    const r2 = a.acquire("run 2");
+    r1();
+    r1();
+    expect(calls).toEqual([ES_CONTINUOUS | ES_SYSTEM_REQUIRED]);
+    r2();
+    expect(calls).toEqual([ES_CONTINUOUS | ES_SYSTEM_REQUIRED, ES_CONTINUOUS]);
+    expect(a.unavailable).toBeNull();
+  });
+
+  test("a failed call warns once and gives up", () => {
+    let n = 0;
+    const a = new ExecutionStateAssertions(() => (n++, 0));
+    a.acquire("run 1")();
+    a.acquire("run 2")();
+    expect(n).toBe(1);
+    expect(a.unavailable).toBe("SetThreadExecutionState failed");
+    expect(warnings).toEqual(["SetThreadExecutionState failed"]);
+  });
+
+  test.skipIf(process.platform !== "win32")("the real call sets and clears ES_SYSTEM_REQUIRED", () => {
+    const a = new ExecutionStateAssertions();
+    const release = a.acquire("run");
+    expect(a.unavailable).toBeNull();
+    // Reading the state means setting it; set it to what it should already be.
+    expect(setThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) & ES_SYSTEM_REQUIRED).toBe(ES_SYSTEM_REQUIRED);
+    release();
+    expect(setThreadExecutionState(ES_CONTINUOUS) & ES_SYSTEM_REQUIRED).toBe(0);
+  });
+});

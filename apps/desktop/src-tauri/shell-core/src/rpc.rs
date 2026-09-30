@@ -2,11 +2,10 @@
 //! own (`role: "shell"`) and the one it forwards webview calls on (`role: "webview"`). Ids are
 //! the connection's own, so the webview never chooses them; frames are capped at `MAX_FRAME`.
 
+use crate::transport;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -69,7 +68,8 @@ pub trait Handler: Send + Sync {
 type Reply = mpsc::Sender<Result<Value, CallError>>;
 
 pub struct Connection {
-    writer: Mutex<UnixStream>,
+    writer: Mutex<Box<dyn Write + Send>>,
+    closer: Box<dyn Fn() + Send + Sync>,
     pending: Mutex<Option<HashMap<u64, Reply>>>,
     next_id: AtomicU64,
     closed: AtomicBool,
@@ -83,12 +83,13 @@ pub struct HelloInfo {
 }
 
 impl Connection {
-    pub fn connect(path: &Path, handler: Arc<dyn Handler>) -> std::io::Result<Arc<Connection>> {
-        let stream = UnixStream::connect(path)?;
-        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-        let reader = stream.try_clone()?;
+    /// Connect to the runtime's endpoint (§5.2). `server_pid` is the runtime the shell started;
+    /// on Windows the pipe must be served by it (see `transport`).
+    pub fn connect(path: &Path, server_pid: Option<u32>, handler: Arc<dyn Handler>) -> std::io::Result<Arc<Connection>> {
+        let transport::Parts { reader, writer, closer } = transport::connect(path, server_pid)?;
         let conn = Arc::new(Connection {
-            writer: Mutex::new(stream),
+            writer: Mutex::new(writer),
+            closer,
             pending: Mutex::new(Some(HashMap::new())),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
@@ -147,12 +148,10 @@ impl Connection {
         self.closed.load(Ordering::SeqCst)
     }
 
-    /// Close the socket; pending calls fail with `Closed`.
+    /// Close the connection; pending calls fail with `Closed`.
     pub fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        if let Ok(w) = self.writer.lock() {
-            let _ = w.shutdown(Shutdown::Both);
-        }
+        (self.closer)();
         self.fail_all();
     }
 
@@ -183,7 +182,7 @@ impl Connection {
         w.write_all(line.as_bytes()).map_err(|e| CallError::Io(e.to_string()))
     }
 
-    fn read_loop(self: Arc<Self>, stream: UnixStream, handler: Arc<dyn Handler>) {
+    fn read_loop(self: Arc<Self>, stream: Box<dyn Read + Send>, handler: Arc<dyn Handler>) {
         let mut r = BufReader::new(stream);
         let mut buf = Vec::new();
         loop {
@@ -231,8 +230,25 @@ impl Connection {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
+
+    #[cfg(unix)]
+    pub type ServerStream = std::os::unix::net::UnixStream;
+    #[cfg(windows)]
+    pub type ServerStream = crate::win::pipe::PipeStream;
+
+    /// This process serves the test endpoints.
+    pub fn me() -> Option<u32> {
+        Some(std::process::id())
+    }
+
+    /// The server hangs up.
+    pub fn hang_up(s: &ServerStream) {
+        #[cfg(unix)]
+        let _ = s.shutdown(std::net::Shutdown::Both);
+        #[cfg(windows)]
+        s.shutdown();
+    }
 
     pub struct Recorder(pub Mutex<Vec<(String, Value)>>);
     impl Handler for Recorder {
@@ -248,6 +264,12 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(windows)]
+    pub fn sock(name: &str) -> PathBuf {
+        PathBuf::from(format!(r"\\.\pipe\hr-rpc-{}-{name}", std::process::id()))
+    }
+
+    #[cfg(unix)]
     pub fn sock(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("hr-rpc-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -257,12 +279,25 @@ pub(crate) mod tests {
     }
 
     /// A server that answers with `f(request)` and can push frames of its own.
-    pub fn serve(path: &Path, f: impl Fn(&Value, &mut UnixStream) + Send + 'static) {
-        let l = UnixListener::bind(path).unwrap();
-        std::thread::spawn(move || {
-            for s in l.incoming() {
-                let Ok(s) = s else { return };
+    pub fn serve(path: &Path, f: impl Fn(&Value, &mut ServerStream) + Send + 'static) {
+        #[cfg(unix)]
+        let l = std::os::unix::net::UnixListener::bind(path).unwrap();
+        #[cfg(windows)]
+        let mut l = crate::win::pipe::PipeListener::bind(path).unwrap();
+        std::thread::spawn(move || loop {
+            #[cfg(unix)]
+            let Ok((s, _)) = l.accept() else {
+                return;
+            };
+            #[cfg(windows)]
+            let Ok(s) = l.accept() else {
+                return;
+            };
+            {
+                #[cfg(unix)]
                 let mut w = s.try_clone().unwrap();
+                #[cfg(windows)]
+                let mut w = s.try_clone();
                 for line in BufReader::new(s).lines() {
                     let Ok(line) = line else { break };
                     let v: Value = serde_json::from_str(&line).unwrap();
@@ -272,7 +307,7 @@ pub(crate) mod tests {
         });
     }
 
-    fn answer(w: &mut UnixStream, v: Value) {
+    fn answer(w: &mut ServerStream, v: Value) {
         writeln!(w, "{v}").unwrap();
     }
 
@@ -287,7 +322,7 @@ pub(crate) mod tests {
                 _ => {}
             }
         });
-        let c = Connection::connect(&p, Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
+        let c = Connection::connect(&p, me(), Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
         let t = Duration::from_secs(5);
         assert_eq!(c.call("echo", json!({"a": 1}), t).unwrap(), json!({"a": 1}));
         assert_eq!(c.call("fail", json!({}), t), Err(CallError::Rpc(RpcError { code: -32004, message: "Not found".into(), data: Some(json!({"x": 1})) })));
@@ -318,7 +353,7 @@ pub(crate) mod tests {
             }
         });
         let rec = Arc::new(Recorder(Mutex::new(vec![])));
-        let c = Connection::connect(&p, rec.clone()).unwrap();
+        let c = Connection::connect(&p, me(), rec.clone()).unwrap();
         c.call("go", json!({}), Duration::from_secs(5)).unwrap();
         for _ in 0..100 {
             if rec.0.lock().unwrap().len() == 2 {
@@ -334,10 +369,8 @@ pub(crate) mod tests {
     #[test]
     fn a_close_fails_pending_calls() {
         let p = sock("close");
-        serve(&p, |_, w| {
-            let _ = w.shutdown(Shutdown::Both);
-        });
-        let c = Connection::connect(&p, Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
+        serve(&p, |_, w| hang_up(w));
+        let c = Connection::connect(&p, me(), Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
         assert_eq!(c.call("x", json!({}), Duration::from_secs(5)), Err(CallError::Closed));
         assert!(c.is_closed());
         assert_eq!(c.call("x", json!({}), Duration::from_secs(5)), Err(CallError::Closed));
@@ -352,7 +385,7 @@ pub(crate) mod tests {
                 answer(w, json!({"jsonrpc": "2.0", "id": v["id"], "result": s}));
             }
         });
-        let c = Connection::connect(&p, Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
+        let c = Connection::connect(&p, me(), Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
         let big = json!({"s": "x".repeat(MAX_FRAME)});
         assert!(matches!(c.call("echo", big, Duration::from_secs(5)), Err(CallError::Rpc(RpcError { code: codes::INVALID_PARAMS, .. }))));
         assert_eq!(c.call("big", json!({}), Duration::from_secs(5)), Err(CallError::Closed));
@@ -370,11 +403,68 @@ pub(crate) mod tests {
                 json!({"jsonrpc": "2.0", "id": v["id"], "result": {"protocol": 1, "runtime_version": "0.2.0", "device_id": "dev", "role": "webview", "capabilities": []}}),
             );
         });
-        let c = Connection::connect(&p, Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
+        let c = Connection::connect(&p, me(), Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
         let h = c.hello("webview", &"a".repeat(64), "0.1.0", Duration::from_secs(5)).unwrap();
         assert_eq!(h, HelloInfo { device_id: "dev".into(), runtime_version: "0.2.0".into(), protocol: 1 });
         let v = seen.lock().unwrap().clone();
         assert_eq!(v["params"]["role"], "webview");
         assert_eq!(v["params"]["auth"], json!({"kind": "launch_token", "token": "a".repeat(64)}));
+    }
+
+    /// §5.2 on Windows: a pipe served by any process but the runtime the shell started gets no
+    /// bytes at all, so it never sees the launch token.
+    #[cfg(windows)]
+    #[test]
+    fn a_pipe_served_by_another_process_hears_nothing() {
+        let p = sock("impostor");
+        let heard = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let h2 = heard.clone();
+        serve(&p, move |v, _| h2.lock().unwrap().push(v.clone()));
+        let rec = || Arc::new(Recorder(Mutex::new(vec![])));
+        // Windows pids are multiples of four; this one isn't ours.
+        let e = Connection::connect(&p, Some(std::process::id() + 4), rec()).err().expect("refused");
+        assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "{e}");
+        assert!(e.to_string().contains("nothing was sent"), "{e}");
+        let e = Connection::connect(&p, None, rec()).err().expect("refused");
+        assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
+        // The server's own pid gets through; the refused clients sent nothing before it.
+        let c = Connection::connect(&p, me(), rec()).unwrap();
+        c.notify("marker", json!({})).unwrap();
+        for _ in 0..200 {
+            if !heard.lock().unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let got = heard.lock().unwrap().clone();
+        assert_eq!(got, vec![json!({"jsonrpc": "2.0", "method": "marker", "params": {}})]);
+    }
+
+    /// Reads and writes on one pipe don't wait for each other, and a close wakes a blocked read.
+    #[test]
+    fn a_blocked_read_neither_holds_up_writes_nor_outlives_close() {
+        let p = sock("duplex");
+        let heard = Arc::new(Mutex::new(0usize));
+        let h2 = heard.clone();
+        serve(&p, move |_, _| *h2.lock().unwrap() += 1);
+        let c = Connection::connect(&p, me(), Arc::new(Recorder(Mutex::new(vec![])))).unwrap();
+        // The read thread is blocked: the server never answers. Writes still go through.
+        for i in 0..50 {
+            c.notify("n", json!({"i": i})).unwrap();
+        }
+        for _ in 0..200 {
+            if *heard.lock().unwrap() == 50 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(*heard.lock().unwrap(), 50);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let c2 = c.clone();
+        std::thread::spawn(move || tx.send(c2.call("silent", json!({}), Duration::from_secs(30))).unwrap());
+        std::thread::sleep(Duration::from_millis(50));
+        c.close();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Err(CallError::Closed));
+        assert!(c.is_closed());
     }
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { buildQueryOptions } from "../../src/agent/claude/options";
 import { claudeEnv, CHILD_PATH } from "../../src/agent/claude/env";
+import { findGitBash, resolveClaudeShell } from "../../src/agent/claude/shell";
 import { Translator } from "../../src/agent/claude/translate";
 import type { EngineStart } from "../../src/agent/engine";
 
@@ -69,6 +70,7 @@ describe("isolation (§5.3, F9, F10)", () => {
     runtimeVersion: "0.0.0",
     anthropicBaseUrl: null,
     useShellEnvironment: false,
+    platform: "darwin" as const,
   };
 
   test("the child environment is complete and owned: no inherited variables, clean bash, private config dir", () => {
@@ -91,6 +93,70 @@ describe("isolation (§5.3, F9, F10)", () => {
       ].sort(),
     );
     expect(claudeEnv({ ...input, useShellEnvironment: true, userShell: "/bin/zsh" })).toMatchObject({ HOME: "/Users/u", SHELL: "/bin/zsh" });
+  });
+
+  test("on Windows: system directories on PATH, what Win32 needs, TEMP and TMP, and no bash", () => {
+    const win = { ...input, platform: "win32" as const, systemRoot: "D:\\Win", shellHome: "C:\\d\\shell-home", tmpDir: "C:\\d\\tmp" };
+    const env = claudeEnv(win);
+    expect(env).toMatchObject({
+      PATH: "D:\\Win\\System32;D:\\Win;D:\\Win\\System32\\Wbem;D:\\Win\\System32\\WindowsPowerShell\\v1.0",
+      SystemRoot: "D:\\Win",
+      SystemDrive: "D:",
+      ComSpec: "D:\\Win\\System32\\cmd.exe",
+      HOME: "C:\\d\\shell-home",
+      USERPROFILE: "C:\\d\\shell-home",
+      TMPDIR: "C:\\d\\tmp",
+      TEMP: "C:\\d\\tmp",
+      TMP: "C:\\d\\tmp",
+    });
+    expect(env.SHELL).toBeUndefined();
+    expect(env.BASH_ENV).toBeUndefined();
+    expect(env.APPDATA).toBeUndefined();
+    // No Git Bash: claude has no Bash tool and needs its PowerShell tool on to start at all.
+    expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBeUndefined();
+    expect(env.CLAUDE_CODE_USE_POWERSHELL_TOOL).toBeUndefined();
+    // The user's own shell is never claude's on Windows.
+    expect(claudeEnv({ ...win, useShellEnvironment: true, userShell: "C:\\bin\\pwsh.exe" }).SHELL).toBeUndefined();
+  });
+
+  test("on Windows with Git Bash: pinned for the Bash tool, the PowerShell tool off, empty BASH_ENV", () => {
+    const git = "C:\\Program Files\\Git\\bin\\bash.exe";
+    const win = { ...input, platform: "win32" as const, systemRoot: "C:\\Windows", shellHome: "C:\\d\\shell-home", tmpDir: "C:\\d\\tmp", gitBash: git };
+    expect(claudeEnv(win)).toMatchObject({ CLAUDE_CODE_GIT_BASH_PATH: git, CLAUDE_CODE_USE_POWERSHELL_TOOL: "0", BASH_ENV: "", HOME: "C:\\d\\shell-home" });
+    expect(claudeEnv(win).SHELL).toBeUndefined();
+    const own = claudeEnv({ ...win, useShellEnvironment: true, userShell: "C:\\bin\\pwsh.exe" });
+    expect(own).toMatchObject({ CLAUDE_CODE_GIT_BASH_PATH: git, CLAUDE_CODE_USE_POWERSHELL_TOOL: "0", HOME: "/Users/u" });
+    expect(own.SHELL).toBeUndefined();
+    // Never on macOS or Linux.
+    expect(claudeEnv({ ...input, gitBash: git }).CLAUDE_CODE_GIT_BASH_PATH).toBeUndefined();
+  });
+
+  test("Git Bash is found at fixed install locations only, never through PATH or WSL", () => {
+    const has = (...ps: string[]) => (p: string) => ps.includes(p);
+    const pf = "C:\\Program Files\\Git\\bin\\bash.exe";
+    const env = { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Program Files", "ProgramFiles(x86)": "C:\\Program Files (x86)", LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" };
+    expect(resolveClaudeShell("darwin", env, has(pf))).toEqual({ dialect: "bash", gitBash: null });
+    expect(resolveClaudeShell("linux", {}, () => false)).toEqual({ dialect: "bash", gitBash: null });
+    expect(resolveClaudeShell("win32", env, has(pf))).toEqual({ dialect: "bash", gitBash: pf });
+    expect(resolveClaudeShell("win32", env, () => false)).toEqual({ dialect: "unknown", gitBash: null });
+    const x86 = "C:\\Program Files (x86)\\Git\\bin\\bash.exe";
+    const user = "C:\\Users\\u\\AppData\\Local\\Programs\\Git\\bin\\bash.exe";
+    expect(findGitBash(env, has(x86))).toBe(x86);
+    expect(findGitBash(env, has(user))).toBe(user);
+    // claude's own fallback location, whatever %ProgramFiles% says.
+    expect(findGitBash({ ...env, ProgramFiles: "D:\\Apps" }, has(pf))).toBe(pf);
+    // WSL's bash and anything else on PATH are never picked up.
+    const wsl = "C:\\Windows\\System32\\bash.exe";
+    expect(findGitBash({ ...env, PATH: "C:\\Windows\\System32;C:\\tools" }, has(wsl, "C:\\tools\\bash.exe"))).toBeNull();
+    // A user's CLAUDE_CODE_GIT_BASH_PATH: honoured if it is a local, absolute bash.exe outside Windows.
+    const custom = "D:\\Git\\usr\\bin\\bash.exe";
+    expect(findGitBash({ ...env, CLAUDE_CODE_GIT_BASH_PATH: custom }, has(custom, pf))).toBe(custom);
+    expect(findGitBash({ ...env, CLAUDE_CODE_GIT_BASH_PATH: wsl }, has(wsl, pf))).toBe(pf);
+    expect(findGitBash({ ...env, CLAUDE_CODE_GIT_BASH_PATH: "c:\\WINDOWS\\system32\\BASH.EXE" }, has("c:\\WINDOWS\\system32\\BASH.EXE"))).toBeNull();
+    expect(findGitBash({ ...env, CLAUDE_CODE_GIT_BASH_PATH: "D:\\Git\\bin\\sh.exe" }, has("D:\\Git\\bin\\sh.exe"))).toBeNull();
+    expect(findGitBash({ ...env, CLAUDE_CODE_GIT_BASH_PATH: "\\\\server\\share\\bash.exe" }, has("\\\\server\\share\\bash.exe"))).toBeNull();
+    expect(findGitBash({ ...env, CLAUDE_CODE_GIT_BASH_PATH: "bash.exe" }, has("bash.exe"))).toBeNull();
+    expect(findGitBash({ ...env, CLAUDE_CODE_GIT_BASH_PATH: "D:\\missing\\bash.exe" }, has(pf))).toBe(pf);
   });
 
   test("query() options carry the whole isolation list", () => {

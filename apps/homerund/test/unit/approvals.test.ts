@@ -10,7 +10,7 @@ import { APPROVED_NOT_RUN_TEXT, DENIED_TEXT, EXPIRED_TEXT, SIBLING_TEXT } from "
 import { InputTimeouts } from "../../src/runs/input-timeouts";
 import { systemClock } from "../../src/schedule/clock";
 import { findToolEvent } from "../../src/store/events";
-import { listGrants, revokeGrant } from "../../src/store/grants";
+import { insertGrant, listGrants, revokeGrant } from "../../src/store/grants";
 import { getGateRequest, getRunRow, pendingInputRequests } from "../../src/store/rows";
 import { DESKTOP, persisted, sessionSpec, testRuntime, types, until, uuid, type TestRuntime } from "../helpers";
 
@@ -435,6 +435,41 @@ describe("always allow and grants (§5.6)", () => {
     expect(listGrants(s.rt.store, s.task.task.task_id)).toHaveLength(0);
     s.answer(id, deny);
     await s.rt.scheduler.idle();
+  });
+});
+
+describe("Windows with no Git Bash where homerund looks (§5.5, §18 row 57)", () => {
+  test("claude may still find a bash of its own: every Bash call asks as destructive, with no pattern, grant or 'Always allow'", async () => {
+    const decisions: GateDecision[] = [];
+    const s = setup(
+      async (x) => {
+        const i = (await x.nextInput())!;
+        decisions.push(await x.tool({ toolCallId: "t1", tool: "Bash", input: { command: "git status" } }));
+        decisions.push(await x.tool({ toolCallId: "t2", tool: "Bash", input: { command: "npm install left-pad" } }));
+        x.result([i.uuid]);
+      },
+      { policy: { bash_patterns: [{ pattern: "git status*", class: "read" }] } as Policy },
+    );
+    // homerund found no Git Bash at a fixed location; claude reports a Bash tool anyway.
+    s.rt.config.claudeShell = { dialect: "unknown", gitBash: null };
+    const g = insertGrant(s.rt.store, s.task.task.task_id, { tool: "Bash", pattern: "npm install *", class: "write" }, s.rt.ctx.device.device_id, Date.now());
+
+    const r = s.send("go");
+    for (const id of ["t1", "t2"]) {
+      await until(() => s.pending(r.run_id).length === 1);
+      const [req] = s.pending(r.run_id);
+      expect(req!.prompt).toMatchObject({ type: "approval", tool: "Bash", class: "destructive", reason: "destructive", offer_always: false });
+      expect((req!.prompt as { suggested_grant?: unknown }).suggested_grant).toBeUndefined();
+      expect(findToolEvent(s.rt.store, s.threadId, "tool.call", id)!.payload).toMatchObject({ policy: "needs_approval", class: "destructive" });
+      expect(findToolEvent(s.rt.store, s.threadId, "tool.call", id)!.payload).not.toHaveProperty("grant_id");
+      // Nor can an answer make a grant for it.
+      expect(() => s.answer(req!.request_id, { type: "approval", decision: "allow_always", grant: { tool: "Bash", pattern: "git status*", class: "read" } })).toThrow(AnswerRejected);
+      s.answer(req!.request_id, deny);
+      await until(() => decisions.length === (id === "t1" ? 1 : 2));
+    }
+    await s.rt.scheduler.idle();
+    expect(decisions).toEqual([{ allow: false, reason: DENIED_TEXT }, { allow: false, reason: DENIED_TEXT }]);
+    expect(listGrants(s.rt.store, s.task.task.task_id).map((x) => x.grant_id)).toEqual([g.grant_id]);
   });
 });
 

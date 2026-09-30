@@ -102,7 +102,7 @@ Development-only switches:
 | Switch | Effect |
 |--------|--------|
 | `--socket PATH` / `HOMERUN_SOCKET` | Use this socket instead of the data dir's |
-| `--dev-token-file PATH` | Read the development token from here |
+| `--dev-token-file PATH` | Read the development token from here. By default it is next to the socket; on Windows, where a pipe has no folder, it is in the data dir's `run` folder, so `--socket` with another runtime's pipe needs this too |
 | `--dev-role cli` | Use the release role and token flow below instead of the development token |
 | `--dev-token-store PATH` / `HOMERUN_DEV_TOKEN_STORE` | With `--dev-role cli`: keep the token in a 0600 file, not the keychain |
 | `--dev-keychain PATH` | With `--dev-role cli`: use this keychain file instead of the login keychain |
@@ -127,10 +127,17 @@ A **release** build connects as `cli`:
   in by `scripts/macos/package.sh` (`LOCAL_PEERPID`, `LOCAL_PEERTOKEN`, then
   `SecCodeCopyGuestWithAttributes` and `SecCodeCheckValidity`). If it can't tell, it
   refuses (77): the check fails closed, including a build with no requirement.
+- On Windows (milestone 8b) it connects to the named pipe `run\endpoint` names, after
+  opening the pipe once to check it: an ACL that admits only this user, the server's
+  pid (`GetNamedPipeServerProcessId`) and user, and its image against the requirement,
+  `sha256:<hex of homerund.exe>` or `authenticode:<signer>` (§18 row 61). A release
+  Windows CLI ships with milestone 11's installer.
 - Its token is a generic password in the login keychain: service
   `com.angilyu.homerun.cli`, labelled "Homerun command-line tool", account `default`
   (or `data:<sha256 of the data dir>` under `HOMERUN_DATA_DIR`). homerund keeps only its
-  sha256.
+  sha256. On Windows it is a Credential Manager credential,
+  `com.angilyu.homerun.cli/<account>`, kept on this machine, which any process of the
+  user can read (§18 row 62).
 
 ### Getting a token
 
@@ -162,6 +169,13 @@ pnpm --filter @homerun/cli test:e2e      # the CLI spawned against homerund with
 pnpm --filter @homerun/cli test:replay   # the CLI driving real claude against recorded cassettes, no key
 pnpm --filter @homerun/cli test:macos    # macOS: the real keychain and peer-check calls (nightly)
 ```
+
+On Windows, CI runs `test:unit` on every pull request, which there includes the peer check
+against real pipes: one served by the test itself, one with the default ACL, a name nobody
+serves, and one served by PowerShell 7, whose Microsoft signature passes only a requirement
+naming exactly its signer (no prefix, suffix or case lookalike). It also covers the Credential
+Manager errors. `test:e2e` runs on Windows nightly, without the four Ctrl-C tests, which
+Windows can't drive; replay runs on Linux and macOS (§17 item 8).
 
 None of them need an API key. The e2e tests start homerund in-process on a temporary
 data dir, play the shell to set a mock key, and spawn the CLI from source.

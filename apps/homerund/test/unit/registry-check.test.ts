@@ -13,7 +13,8 @@ function check(...args: string[]) {
 const entry = (tarball?: string) =>
   `packages:\n\n  zod@3.25.76:\n    resolution: {integrity: sha512-AAAA${tarball ? `, tarball: ${tarball}` : ""}}\n`;
 
-describe("packages resolve from registry.npmjs.org only", () => {
+// The repository scripts are bash; they are checked on Linux and macOS, not Windows.
+describe.skipIf(process.platform === "win32")("packages resolve from registry.npmjs.org only", () => {
   test("the repository's lockfile and .npmrc pass", () => {
     const r = check();
     expect(r.out).toContain("packages resolve from registry.npmjs.org only");

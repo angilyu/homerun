@@ -1495,6 +1495,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "windows",
 ]
 
 [[package]]
@@ -1503,6 +1504,7 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

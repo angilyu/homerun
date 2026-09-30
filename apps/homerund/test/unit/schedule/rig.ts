@@ -46,12 +46,19 @@ export async function rig(o: { start: number; zone?: string; script?: FakeScript
   const file = join(sr.dir, "workspaces", "watched.txt");
   writeFileSync(file, "v1");
   const store = () => sr.rt.store;
-  const idle = () =>
-    until(
-      () => store().db.query<{ n: number }, []>("SELECT count(*) AS n FROM runs WHERE state IN ('pending','running')").get()!.n === 0,
+  // A test that timed out keeps running after `afterEach` closed the rig. Its next step waits forever
+  // instead of querying a closed database, so nothing is reported between tests.
+  let closed = false;
+  const halt = () => new Promise<never>(() => {});
+  const idle = async () => {
+    if (closed) return halt();
+    await until(
+      () => closed || store().db.query<{ n: number }, []>("SELECT count(*) AS n FROM runs WHERE state IN ('pending','running')").get()!.n === 0,
       5000,
       "runs to settle",
     );
+    if (closed) return halt();
+  };
   const r: Rig = {
     sr,
     clock,
@@ -71,6 +78,7 @@ export async function rig(o: { start: number; zone?: string; script?: FakeScript
       return { taskId, threadId: thread_id as string, schedule: () => scheduleForTask(store(), taskId)! };
     },
     async step(ms) {
+      if (closed) return halt();
       await clock.advance(ms);
       await idle();
     },
@@ -103,7 +111,10 @@ export async function rig(o: { start: number; zone?: string; script?: FakeScript
         )
         .all(taskId),
     state: (taskId) => getMonitorState(store(), taskId),
-    close: () => sr.close(),
+    close: () => {
+      closed = true;
+      return sr.close();
+    },
   };
   return r;
 }
