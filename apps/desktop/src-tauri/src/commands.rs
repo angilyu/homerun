@@ -111,13 +111,13 @@ fn couldnt(e: impl std::fmt::Display) -> ShellError {
 
 /// A link or a settings page in its default handler.
 #[cfg(not(windows))]
-fn open(target: &str) -> Res<()> {
+pub(crate) fn open(target: &str) -> Res<()> {
     let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     Command::new(program).arg(target).spawn().map(|_| ()).map_err(couldnt)
 }
 
 #[cfg(windows)]
-fn open(target: &str) -> Res<()> {
+pub(crate) fn open(target: &str) -> Res<()> {
     crate::win::shell_open(target).map_err(couldnt)
 }
 

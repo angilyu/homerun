@@ -236,7 +236,7 @@ pub fn confirm(d: &Dialog) -> bool {
     unsafe { MessageBoxW(None, &text, w!("Homerun"), MB_OKCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND) == IDOK }
 }
 
-/// The CLI access prompt (§5.2): **Don't Allow** is the default button (Return), **Allow** has
+/// The CLI access prompt (§5.2), also used to link a device by code (§10.5): **Don't Allow** is the default button (Return), **Allow** has
 /// to be chosen, and Esc or the close box is no answer. A timer closes it with no answer once
 /// `gone` says so. Without task dialogs there is no prompt: the request expires unanswered,
 /// which the CLI reports as denied.

@@ -119,7 +119,7 @@ mod imp {
         a.runModal() == 1000
     }
 
-    /// The CLI access prompt (§5.2): app-modal, so it shows with no window open. **Don't Allow**
+    /// The CLI access prompt (§5.2), also used to link a device by code (§10.5): app-modal, so it shows with no window open. **Don't Allow**
     /// is the first button and gets Return; **Allow** has no key equivalent and needs a click. A
     /// timer in the common run-loop modes, which run inside `runModal`, closes it with no answer
     /// once `gone` says so: the request was withdrawn, expired, or its runtime went away.
