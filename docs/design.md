@@ -524,6 +524,9 @@ Nothing is inherited implicitly. Every `query()` sets:
   tools that need to find project files. A **per-task opt-in**, *"Use my shell
   environment"*, runs with the user's `$SHELL` and real `HOME`. The UI labels it
   clearly, because it also loads the user's aliases, `PATH` and profile secrets.
+  On Windows the shell is Git Bash (§5.5), with the same Homerun-owned `HOME`
+  and empty `BASH_ENV`; Git's own `/etc/profile` can still run, and *"Use my shell
+  environment"* changes only `HOME` (§17 item 7).
 
 **Concurrency.** Each active run is a `claude` process, with its own memory and
 a share of the API rate limit.
@@ -758,6 +761,12 @@ constrain a shell: `python -c`, `curl`, and `$(…)` all reach outside it.
 - A command containing shell metacharacters — `;`, `&&`, `||`, `|`, `$(…)`,
   backticks, or redirection — never matches a pattern. It requires approval
   whatever its prefix.
+- **Patterns, grants and the metacharacter check read bash only.** On Windows
+  `claude` runs the `Bash` tool through Git for Windows' `bash.exe`, which the
+  runtime finds at fixed install locations and pins; `claude`'s PowerShell tool
+  is turned off and is never a task's tool. Without Git Bash the shell's
+  dialect is unknown, and every `Bash` call is `destructive`: no pattern or
+  grant matches and *"Always allow"* is not offered (§18 row 57).
 - **Monitors cannot use `Bash`.** Unattended scheduled runs have it removed from
   their tool list entirely (`disallowedTools`), not merely gated.
 
@@ -2433,6 +2442,12 @@ upgrade can change agent behaviour without any change to our code.
    CLI. Deferred: the runtime would need the socket's peer audit token, which
    Bun's server sockets don't expose, and the prompt already names the client
    and says to allow only if you just ran `homerun`.
+7. **A fully clean shell on Windows** (milestone 8b). Git Bash sources Git
+   for Windows' own `/etc/profile` whatever `HOME` is,
+   and on Windows *"Use my shell environment"* can't mean the user's shell,
+   which is rarely bash. Deferred: those profiles belong to the Git install, not
+   the user, and the classifier fails closed on anything that isn't bash
+   (§18 row 57).
 
 ---
 
@@ -2498,3 +2513,5 @@ One line per major decision: what was chosen, and why.
 | 54 | **The keychain calls are synchronous** (§5.2) | The plan ran them in a Worker so the CLI could print *"Waiting for keychain access…"*. The only call that blocks is one waiting on macOS's own keychain dialog, which the user already sees |
 | 55 | **In the access prompt, Return means *Don't Allow*; Escape does nothing, and *Allow* needs a click** (§5.2) | A stray keypress must never approve. An alert button takes one key, and Return is the key pressed without reading, so it denies; the plan's Escape would have needed a second deny button. *Allow* has its key cleared, so no key approves |
 | 56 | **Revoking a token closes its connections without a reason** (§5.2) | The runtime closes the socket; the CLI says Homerun closed the connection, and its next command says access was revoked. A reason frame sent just before closing adds a path for no gain |
+| 57 | **On Windows the `Bash` tool's shell is pinned Git Bash, and any other dialect fails closed** (§5.3, §5.5) | `claude` on Windows runs `Bash` through Git Bash, found by a fixed-path search and `PATH`, and without it offers a PowerShell tool instead. Bash patterns would read PowerShell's `(…)`, `@(…)` and `$(…)`, or cmd's `%VAR%`, as plain text, so a grant for `git status*` could approve a PowerShell command that deletes files. The runtime finds `bash.exe` at fixed install locations only (never `PATH`, which could find WSL's), passes it as `CLAUDE_CODE_GIT_BASH_PATH`, and sets `CLAUDE_CODE_USE_POWERSHELL_TOOL=0`. The PowerShell tool is not a Homerun tool name, so policy denies it. With no Git Bash, `claude` has no `Bash` tool and refuses to start with its PowerShell tool off, so that variable is left unset, and policy treats every `Bash` call as `destructive` with no pattern, grant or *"Always allow"*. PowerShell patterns would need a dialect on patterns and grants, a `@homerun/core` change for later |
+| 58 | **A compiled executable is detected by any of four signals** (§11) | A milestone 8b Windows CI run found a compiled `homerund` without a build define running as a development build. The embedded file system's marker is checked in `import.meta.url` (decoded too), `Bun.main` and `argv[1]`, and an executable not named `bun` counts as compiled, so a platform that reports one signal differently still fails closed to release |
