@@ -1,0 +1,9 @@
+{
+  "extends": "../../packages/protocol/tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["src", "test", "scripts"],
+  "exclude": ["src/worker.ts"]
+}
