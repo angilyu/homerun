@@ -118,6 +118,7 @@ legend { padding: 0 4px; font-weight: 600; }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .banner { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 8px 16px; background: var(--warn-bg); color: var(--warn); border-bottom: 1px solid var(--line); }
 .banner.danger { background: var(--danger-bg); color: var(--danger); }
+.banner.info { background: var(--bg-2); color: var(--fg); border-left: 3px solid var(--info); }
 .banner .actions { display: flex; gap: 6px; }
 .center { display: grid; place-items: center; height: 100%; overflow: auto; padding: 24px; }
 .narrow { max-width: 460px; width: 100%; padding: 28px; }

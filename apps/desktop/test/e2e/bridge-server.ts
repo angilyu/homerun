@@ -403,6 +403,26 @@ class Shell {
         return null;
       case "reveal_logs":
         return null;
+      // M8's shell services: there is no bundle here, so they report what `tauri dev` does.
+      case "shell_events_attach":
+      case "keep_running_done":
+      case "open_login_items":
+      case "open_notification_settings":
+      case "update_check":
+      case "update_restart":
+      case "update_set_auto":
+        return null;
+      case "shell_prefs":
+        return { keep_running_asked: true, auto_download_updates: true };
+      case "login_item_status":
+        return "unavailable";
+      case "login_item_set":
+        throw err("shell", "Open at login needs the installed app.");
+      case "notifications_status":
+      case "notifications_request":
+        return "unavailable";
+      case "update_status":
+        return { state: "unavailable", message: "Updates are off in development builds." };
       case "app_info":
         return { version: "0.0.1-e2e", build: "debug", platform: "e2e", data_dir: this.active?.kind === "fake" ? this.active.srt.dir : "", log_path: "", key_store: "memory" };
       default:

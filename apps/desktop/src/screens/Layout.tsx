@@ -2,9 +2,10 @@ import { groupThreads, oneLine, type RuntimeStatus } from "@homerun/app-state";
 import type { ThreadSummary } from "@homerun/core";
 import { useApp, useNow, useStore, type Route } from "../hooks";
 import { Time } from "../ui/bits";
+import { useState } from "react";
 import { Health } from "./Health";
 import { Inbox } from "./Inbox";
-import { Settings } from "./Settings";
+import { DOWNLOAD_PAGE, Settings } from "./Settings";
 import { TaskEditor } from "./TaskEditor";
 import { TaskPage } from "./TaskPage";
 import { Tasks } from "./Tasks";
@@ -19,6 +20,7 @@ export function Layout({ keyError }: { keyError: string | null }) {
       <main className="main">
         <RuntimeBanner />
         <KeyBanner error={keyError} />
+        <UpdateBanner />
         <Screen route={route} />
       </main>
     </div>
@@ -175,6 +177,48 @@ export function runtimeText(s: RuntimeStatus, now: number): string | null {
     case "blocked":
       return s.message;
   }
+}
+
+/** An update is downloaded (§11): it installs on quit, or now. */
+function UpdateBanner() {
+  const app = useApp();
+  const u = useStore(app.update);
+  const route = useStore(app.route);
+  const [hidden, setHidden] = useState<string | null>(null);
+  if (!u || route.name === "settings") return null;
+  if (u.state === "ready" && hidden !== u.version)
+    return (
+      <div className="banner info" role="status">
+        <span>
+          Homerun {u.version} is ready. It installs when you quit Homerun.{u.note ? ` ${u.note}` : ""}
+        </span>
+        <span className="actions">
+          <button type="button" className="primary" onClick={() => void app.shell.restartToUpdate().catch(() => {})}>
+            Restart now
+          </button>
+          <button type="button" onClick={() => setHidden(u.version)}>
+            Later
+          </button>
+        </span>
+      </div>
+    );
+  if (u.state === "manual" && hidden !== u.version)
+    return (
+      <div className="banner warn" role="status">
+        <span>
+          Homerun {u.version} is available. {u.reason}
+        </span>
+        <span className="actions">
+          <button type="button" onClick={() => void app.shell.openExternal(DOWNLOAD_PAGE).catch(() => {})}>
+            Download
+          </button>
+          <button type="button" onClick={() => setHidden(u.version)}>
+            Later
+          </button>
+        </span>
+      </div>
+    );
+  return null;
 }
 
 function KeyBanner({ error }: { error: string | null }) {

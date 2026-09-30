@@ -2,17 +2,19 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppClient, Store } from "@homerun/app-state";
 import { AppContext, type App, type Route } from "./hooks";
-import type { KeyStatus, Platform } from "./platform/types";
+import type { KeyStatus, Platform, UpdateState } from "./platform/types";
 import { Root } from "./screens/Root";
 
 export function createApp(platform: Platform, client = new AppClient(platform.transport)): App {
   const route = new Store<Route>({ name: "home" });
   const key = new Store<KeyStatus | null>(null);
+  const update = new Store<UpdateState | null>(null);
   return {
     client,
     shell: platform.shell,
     route,
     key,
+    update,
     go: (r) => route.set(r),
     refreshKey: async () => key.set(await platform.shell.keyStatus()),
   };
