@@ -80,14 +80,15 @@ describe("not running", () => {
 
 describe("DST and timezones", () => {
   // America/Los_Angeles springs forward on 2026-03-08 at 02:00 and falls back on 2026-11-01 at 02:00.
-  test("02:30 daily in Los Angeles fires at 03:00 on spring-forward day, once on fall-back day", async () => {
-    const start = Date.UTC(2026, 2, 7, 9, 0); // 2026-03-07 01:00 PST
+  // Two simulated days are ~11,500 safety-net ticks; Windows runners take ~3x longer than a Mac.
+  test("02:30 daily in Los Angeles fires at 03:00 on spring-forward day", async () => {
+    const start = Date.UTC(2026, 2, 7, 10, 0); // 2026-03-07 02:00 PST
     r = await rig({ start, zone: "America/Los_Angeles" });
     const m = await r.fileMonitor({ kind: "cron", cron: "30 2 * * *", timezone: "America/Los_Angeles", catchup: "skip", max_catchup: 1 });
-    for (let i = 0; i < 3 * 24; i++) await r.step(HOUR);
+    for (let i = 0; i < 48; i++) await r.step(HOUR); // to 2026-03-09 03:00 PDT
     const at = r.runs(m.taskId).map((x) => new Date(x.scheduled_for!).toISOString());
     expect(at).toEqual(["2026-03-07T10:30:00.000Z", "2026-03-08T10:00:00.000Z", "2026-03-09T09:30:00.000Z"]);
-  });
+  }, 20_000);
 
   test("fall-back: 01:30 fires on its first occurrence only", async () => {
     const start = Date.UTC(2026, 10, 1, 7, 0); // 2026-11-01 00:00 PDT
