@@ -35,6 +35,7 @@ import { verifyAnthropicKey, type KeyCheck } from "./secrets/verify";
 import { ThreadChanges } from "./threads/changes";
 import { Notifier } from "./notify/notifier";
 import { ShellSecrets } from "./shell-secrets";
+import { RemoteService, type RemoteTuning } from "./remote/service";
 
 export interface RuntimeOptions {
   config: Config;
@@ -59,6 +60,8 @@ export interface RuntimeOptions {
   notifyCoalesceMs?: number;
   /** How long a connection may wait before `hello` (tests shorten it). */
   helloTimeoutMs?: number;
+  /** Remote access timings and fetch, for tests. */
+  remote?: RemoteTuning;
 }
 
 export interface StartupReport {
@@ -76,6 +79,7 @@ export interface Runtime {
   device: Device;
   secrets: SecretStore;
   shellSecrets: ShellSecrets;
+  remote: RemoteService;
   scheduler: Scheduler;
   manager: RunManager;
   server: RpcServer;
@@ -208,6 +212,15 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       closeTokenConnections: (tokenId) => server?.closeTokenConnections(tokenId),
     });
     const shellSecrets = new ShellSecrets(secrets, () => server?.shell() ?? null);
+    const remote = new RemoteService({
+      config: config.remote,
+      store,
+      secrets,
+      shellSecrets,
+      now: t,
+      broadcast: (m, p) => server?.broadcast(m, p),
+      ...o.remote,
+    });
     const changes = new ThreadChanges(store, device.device_id, (summary) => server?.broadcast("threads.changed", { summary }));
     server = new RpcServer({
       socketPath: config.socketPath,
@@ -221,10 +234,12 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         settingsChanged: () => fires.run(),
         cliAccess,
         shellSecrets,
+        remote,
         shellConnected: (conn) => {
           notifier.replayPending((m, p) => conn.notify(m, p));
           cliAccess.replay((m, p) => conn.notify(m, p));
           void shellSecrets.flush();
+          remote.shellConnected();
         },
         verifyKey: o.verifyKey ?? ((key) => verifyAnthropicKey(key, config.anthropicBaseUrl)),
       }),
@@ -255,6 +270,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       device,
       secrets,
       shellSecrets,
+      remote,
       scheduler,
       manager,
       server: srv,
@@ -270,6 +286,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       shutdown: () =>
         (stopping ??= (async () => {
           cliAccess.stop();
+          remote.stop();
           srv.stop();
           changes.stop();
           notifier.stop();

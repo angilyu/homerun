@@ -30,6 +30,7 @@ import { listCliTokens } from "../store/cli-tokens";
 import type { Authenticator } from "./auth";
 import type { RemotePeer } from "./server";
 import type { ShellSecrets } from "../shell-secrets";
+import type { RemoteService } from "../remote/service";
 import type { AccessRequester, CliAccess } from "./cli-access";
 
 /** A JSON-RPC error a handler wants to send as is. */
@@ -73,6 +74,8 @@ export interface HandlerDeps {
   cliAccess: CliAccess;
   /** Secrets the runtime wrote itself: the shell's hand-over mustn't overwrite them (§5.2). */
   shellSecrets?: ShellSecrets;
+  /** Remote access: the account, the relay link and paired devices (§9, §10). */
+  remote?: RemoteService;
   /** secrets.verify (§7.2): ask the provider about a candidate key. */
   verifyKey: (key: string) => Promise<{ outcome: "valid" | "invalid" | "unreachable"; detail?: string }>;
 }
@@ -108,6 +111,10 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     surface: SURFACE_OF_ROLE[c.role!],
   });
   const notFound = (what: string) => new RpcFail(RPC_ERROR.NOT_FOUND, `${what} not found`);
+  const remoteOf = (): RemoteService => {
+    if (!d.remote) throw new RpcFail(RPC_ERROR.UNAVAILABLE, "Remote access isn't running.");
+    return d.remote;
+  };
 
   return {
     hello: (conn, p) => {
@@ -141,6 +148,16 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       return { ok: true as const };
     },
     "cli.tokens.list": () => ({ tokens: listCliTokens(store) }),
+
+    // ---- account and devices (§9.6, §10)
+    "account.status": () => ({ status: remoteOf().status() }),
+    "account.sign_in": () => {
+      const r = remoteOf();
+      if (!r.account.configured) throw new RpcFail(RPC_ERROR.UNAVAILABLE, "This build of Homerun has no account service.");
+      return { status: r.signIn() };
+    },
+    "account.cancel_sign_in": () => ({ status: remoteOf().cancelSignIn() }),
+    "account.sign_out": async () => ({ status: await remoteOf().signOut() }),
     "cli.tokens.revoke": (_c, p) => {
       if (!d.cliAccess.revoke(p.token_id)) throw notFound("CLI token");
       return { ok: true as const };
