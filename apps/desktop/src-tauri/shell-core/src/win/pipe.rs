@@ -21,8 +21,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
 };
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, WaitNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
-    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeServerProcessId, WaitNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+    PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, INFINITE};
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
@@ -213,15 +213,26 @@ impl PipeListener {
     }
 
     /// Wait for a client, and have the next instance ready for the one after.
+    ///
+    /// An instance is open to clients from its creation, before `accept` is called. A client that
+    /// connected and already hung up by then (a refused peer check does exactly that) leaves the
+    /// instance with no data: it is reset and waits again, keeping the name alive throughout.
     pub fn accept(&mut self) -> io::Result<PipeStream> {
         let p = match self.next.take() {
             Some(p) => p,
             None => instance(&self.name, false)?,
         };
-        match p.overlapped(INFINITE, |h, ov| unsafe { ConnectNamedPipe(h, ov) }) {
-            Ok(_) => {}
-            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32) => {}
-            Err(e) => return Err(e),
+        loop {
+            match p.overlapped(INFINITE, |h, ov| unsafe { ConnectNamedPipe(h, ov) }) {
+                Ok(_) => break,
+                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32) => break,
+                Err(e) if e.raw_os_error() == Some(ERROR_NO_DATA as i32) => {
+                    if unsafe { DisconnectNamedPipe(p.h) } == 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         }
         self.next = Some(instance(&self.name, false)?);
         Ok(PipeStream(p))
@@ -236,4 +247,44 @@ fn instance(name: &[u16], first: bool) -> io::Result<Arc<Pipe>> {
         return Err(io::Error::last_os_error());
     }
     Ok(Arc::new(Pipe::new(h)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn name(tag: &str) -> PathBuf {
+        PathBuf::from(format!(r"\\.\pipe\hr-pipe-{}-{tag}", std::process::id()))
+    }
+
+    /// A client that connects and hangs up before the server gets to `accept` (a refused peer
+    /// check) neither ends the listener nor leaves the name missing for the next client.
+    #[test]
+    fn a_client_gone_before_accept_does_not_end_the_listener() {
+        let n = name("gone");
+        let mut l = PipeListener::bind(&n).unwrap();
+        // Connect and hang up while nobody is accepting.
+        drop(PipeStream::connect(&n, std::process::id()).unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut s = l.accept().unwrap();
+            let mut b = [0u8; 5];
+            s.read_exact(&mut b).unwrap();
+            tx.send(b).unwrap();
+        });
+        let mut c = PipeStream::connect(&n, std::process::id()).unwrap();
+        c.write_all(b"hello").unwrap();
+        assert_eq!(&rx.recv_timeout(Duration::from_secs(10)).unwrap(), b"hello");
+    }
+
+    /// The peer check refuses a pipe another process serves, before anything is written, and the
+    /// error says so.
+    #[test]
+    fn the_wrong_server_pid_is_refused() {
+        let n = name("pid");
+        let _l = PipeListener::bind(&n).unwrap();
+        let e = PipeStream::connect(&n, std::process::id() + 4).err().expect("refused");
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied, "{e}");
+    }
 }
