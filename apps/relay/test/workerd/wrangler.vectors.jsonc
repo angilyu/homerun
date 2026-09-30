@@ -1,0 +1,6 @@
+// Test only: the protocol vectors, run inside workerd.
+{
+  "name": "homerun-vectors",
+  "main": "vectors-worker.ts",
+  "compatibility_date": "2026-09-01"
+}

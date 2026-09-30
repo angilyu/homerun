@@ -1,0 +1,31 @@
+{
+  "name": "@homerun/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Homerun's relay protocol (§9.4–§9.7): Noise KK, K, IKpsk1 and XX on audited primitives, live-session framing, sealed messages and their checks, QR pairing, code linking, link statements, the APNs payload, relay wire frames, and the plain-JSON test vectors every client must pass.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./vector-files": "./src/vectors/files.ts",
+    "./vectors/*": "./vectors/*"
+  },
+  "files": ["src", "vectors", "README.md"],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "bun test",
+    "vectors": "bun run scripts/gen-vectors.ts",
+    "vectors:check": "bun run scripts/gen-vectors.ts --check"
+  },
+  "dependencies": {
+    "@homerun/core": "workspace:*",
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "oauth4webapi": "3.8.8",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
+  }
+}

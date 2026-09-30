@@ -5,3 +5,7 @@ packages:
   - "spikes/homerund-m0"
 allowBuilds:
   bun: true
+  # The relay's dev tools find their binaries through optional platform packages; their
+  # postinstall scripts only re-check or download what is already there.
+  esbuild: false
+  workerd: false

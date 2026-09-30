@@ -25,9 +25,10 @@ and your data stays on your machine. Users bring their own Anthropic API key.
 | 5 | Scheduler and monitors | Done |
 | 6 | Approvals and questions | Done |
 | 7 | The desktop app ([`apps/desktop`](apps/desktop/README.md)) | Done |
-| 8 | Packaging: menu bar, login item, signed updater | **Next** |
+| 8 | Packaging: menu bar, login item, signed updater; CLI access (8a); Windows (8b) | Done |
+| 9 | Accounts, relay and push ([`apps/relay`](apps/relay/README.md)) | **In progress**: 9a (protocol, relay, reference client) done; 9b (desktop sign-in and pairing) next. The Cloudflare, WorkOS and Apple accounts are [manual steps](apps/relay/README.md#deploying) |
 
-Later milestones (Windows, relay, iOS and web, distribution) are listed in
+Later milestones (iOS and web, distribution) are listed in
 [design §16](docs/design.md#16-build-plan).
 
 ## Repository layout
@@ -40,6 +41,10 @@ Later milestones (Windows, relay, iOS and web, distribution) are listed in
 | [`packages/app-state`](packages/app-state/README.md) | The platform-neutral client state layer the app's views render (and, later, the web and iOS clients) |
 | [`packages/core`](packages/core/README.md) | Task spec, events and the IPC protocol as Zod schemas, plus JSON Schema and test vectors |
 | [`packages/client`](packages/client/README.md) | How a local process finds and talks to `homerund`: the runtime, the CLI and the test harnesses share it |
+| [`apps/relay`](apps/relay/README.md) | The relay: a Cloudflare Worker with one Durable Object per account, and a Bun adapter for tests |
+| [`packages/protocol`](packages/protocol/README.md) | The relay protocol: Noise live sessions, sealed messages, pairing and linking, and its JSON test vectors |
+| [`packages/remote`](packages/remote/README.md) | A headless reference client that plays the phone and the web against the relay |
+| [`packages/testkit`](packages/testkit/README.md) | Test doubles: a local OIDC issuer and a mock APNs |
 | `spikes/` | Milestone 0 experiments: SDK behaviour, signing, packaging, native MCP servers |
 | `scripts/` | Repository checks (`check-no-secrets.sh`, `check-registry.sh`) and the macOS build, signing and notarization scripts (`scripts/macos/`) |
 | [`docs`](docs/) | The design document and the milestone 0 results |

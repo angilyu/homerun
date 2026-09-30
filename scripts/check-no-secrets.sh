@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fails if the repository holds anything shaped like an Anthropic API key other than the known
-# dummy keys, a minisign/Tauri updater secret key (§11: it lives outside the repo), or if a replay
-# cassette holds credential headers or machine-specific paths.
+# dummy keys, a minisign/Tauri updater secret key (§11: it lives outside the repo), a PEM private
+# key or key file (the relay's APNs .p8, §9.7), wrangler's local secrets (.dev.vars), or if a
+# replay cassette holds credential headers or machine-specific paths.
 # Scans every tracked or committable file, or the files given as arguments.
 # Never prints a matched value: only file and line.
 set -uo pipefail
@@ -37,10 +38,23 @@ while IFS= read -r loc; do
   status=1
 done < <(grep -I -o -n -H -E "$plain|$b64" -- "${files[@]}" 2>/dev/null | cut -d: -f1,2)
 
+# A PEM private key of any kind (the APNs .p8 is a PKCS #8 "PRIVATE KEY"). Tests generate
+# theirs at run time. Built at run time so this script doesn't match itself.
+pem="-----BEGIN ([A-Z]+ )?$(printf 'PRIVATE %s' KEY)-----"
+while IFS= read -r loc; do
+  [ -z "$loc" ] && continue
+  echo "error: a PEM private key at $loc" >&2
+  status=1
+done < <(grep -I -o -n -H -E -e "$pem" -- "${files[@]}" 2>/dev/null | cut -d: -f1,2)
+
 for f in "${files[@]}"; do
   case "$f" in
-    *.key)
+    *.key | *.p8 | *.pem | *.p12)
       echo "error: $f looks like a key file" >&2
+      status=1
+      ;;
+    .dev.vars* | */.dev.vars*)
+      echo "error: $f holds wrangler's local secrets" >&2
       status=1
       ;;
   esac

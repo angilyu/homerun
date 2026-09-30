@@ -154,5 +154,7 @@ describe.skipIf(!WINDOWS || process.env.HOMERUN_WIN_CROSS_USER !== "1")("another
       open.stop(true);
       ps("Remove-LocalUser -Name $env:HR_TEST_USER", env);
     }
-  });
+    // Two PowerShell starts and New-LocalUser take several seconds on a cold runner; bun's
+    // default 5 s timed out on main (CI run 36761115697).
+  }, 60_000);
 });
