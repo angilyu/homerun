@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CONCURRENCY, type BuildChannel } from "@homerun/core";
-import { chooseRunDir, dataDir as resolveDataDir, isCompiledUrl, resolveBuildChannel } from "@homerun/client";
+import { chooseRunDir, dataDir as resolveDataDir, resolveBuildChannel, runningCompiled } from "@homerun/client";
 import { secureDir } from "./platform/secure";
 
 export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "@homerun/client";
@@ -11,7 +11,7 @@ export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "
 export const APP_ID = "com.angilyu.homerun";
 export const RUNTIME_VERSION: string = typeof HOMERUND_VERSION === "string" ? HOMERUND_VERSION : "0.2.0-dev";
 /** True when running as a `bun build --compile` executable. */
-export const isCompiled = isCompiledUrl(import.meta.url);
+export const isCompiled = runningCompiled(import.meta.url);
 
 /**
  * The build channel fails closed (`resolveBuildChannel`): a compiled executable is release unless

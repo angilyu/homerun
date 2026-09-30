@@ -17,6 +17,8 @@ import {
   readDevTokenFile,
   readEndpointFile,
   resolveBuildChannel,
+  isCompiledUrl,
+  runningCompiled,
   DevTokenError,
   type FilePrivacy,
 } from "../src";
@@ -190,5 +192,38 @@ describe("resolveBuildChannel", () => {
     expect(resolveBuildChannel("release", false)).toBe("release");
     expect(resolveBuildChannel("dev", true)).toBe("release");
     expect(resolveBuildChannel("", false)).toBe("release");
+  });
+});
+
+describe("isCompiledUrl", () => {
+  test("a compiled executable's module URL, on POSIX and Windows, raw or percent-encoded", () => {
+    for (const u of [
+      "file:///$bunfs/root/homerund",
+      "file:///%24bunfs/root/homerund",
+      "file:///B:/~BUN/root/homerund.exe",
+      "file:///B:/%7EBUN/root/homerund.exe",
+      "file:///B:/%7eBUN/root/homerund.exe",
+      "file:///B:/%7EBUN/root/100%.exe",
+    ])
+      expect([u, isCompiledUrl(u)]).toEqual([u, true]);
+  });
+  test("any one signal is enough: the module URL, Bun.main, argv[1], or an executable that isn't bun", () => {
+    const src = "file:///D:/a/homerun/src/config.ts";
+    const main = "D:\\a\\homerun\\src\\main.ts";
+    const bun = "C:\\Users\\r\\node_modules\\bun\\bin\\bun.exe";
+    expect(runningCompiled(src, main, main, bun)).toBe(false);
+    expect(runningCompiled(src, main, main, "/usr/local/bin/bun")).toBe(false);
+    expect(runningCompiled(src, main, main, "C:\\bin\\BUN.EXE")).toBe(false);
+    expect(runningCompiled(src, "B:\\~BUN\\root\\homerund.exe", "", bun)).toBe(true);
+    expect(runningCompiled(src, "", "/$bunfs/root/homerund", bun)).toBe(true);
+    // Every embedded-path signal missed: the executable itself still says compiled.
+    expect(runningCompiled(src, main, main, "C:\\Program Files\\Homerun\\homerund.exe")).toBe(true);
+    expect(runningCompiled(src, main, main, "/Applications/Homerun.app/Contents/MacOS/homerund-aarch64-apple-darwin")).toBe(true);
+    expect(runningCompiled(src, main, main, "/opt/bundle")).toBe(true);
+    expect(runningCompiled(import.meta.url)).toBe(false);
+  });
+  test("a source file is not", () => {
+    for (const u of ["file:///Users/x/homerun/apps/homerund/src/config.ts", "file:///C:/Users/RUNNER~1/homerun/src/config.ts", "file:///D:/a/homerun/src/config.ts"])
+      expect([u, isCompiledUrl(u)]).toEqual([u, false]);
   });
 });
