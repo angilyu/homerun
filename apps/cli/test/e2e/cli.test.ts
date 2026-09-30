@@ -69,9 +69,17 @@ describe("status and the connection", () => {
     srt = await runtime();
     const sock = srt.rt.config.socketPath;
     const elsewhere = mkdtempSync(join(tmpdir(), "hr-cli-else-"));
+    const ok = (r: { code: number; stderr: string }) => expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
     try {
-      expect((await cli(elsewhere, ["status", "--socket", sock])).code).toBe(0);
-      expect((await cli(elsewhere, ["status"], { env: { HOMERUN_SOCKET: sock } })).code).toBe(0);
+      // A socket's dev token is beside it; a Windows pipe has no folder, so its token must be named.
+      const token = WIN ? ["--dev-token-file", devToken(srt.dir)] : [];
+      if (WIN) {
+        const r = await cli(elsewhere, ["status", "--socket", sock]);
+        expect(r.code).toBe(77);
+        expect(r.stderr).toContain("pass --dev-token-file");
+      }
+      ok(await cli(elsewhere, ["status", "--socket", sock, ...token]));
+      ok(await cli(elsewhere, ["status", ...token], { env: { HOMERUN_SOCKET: sock } }));
     } finally {
       rmSync(elsewhere, { recursive: true, force: true });
     }

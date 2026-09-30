@@ -583,7 +583,11 @@ describe("the peer check on Windows (§5.2)", () => {
     const fails = (reason: "missing" | "insecure" | "malformed") => code(() => at(() => { throw new EndpointError("x", reason); }).socketPath);
     expect([fails("missing"), fails("insecure"), fails("malformed")]).toEqual([69, 77, 77]);
     const explicit = resolveTarget({ socket: "\\\\.\\pipe\\x", "dev-token-file": "C:\\t" }, {}, "win32", () => { throw new Error("not read"); });
-    expect([explicit.socketPath, explicit.tokenPath]).toEqual(["\\\\.\\pipe\\x", "C:\\t"]);
+    expect([explicit.socketPath, explicit.tokenPath, explicit.tokenHint]).toEqual(["\\\\.\\pipe\\x", "C:\\t", undefined]);
+    // A pipe has no folder: the token stays the data dir's, and a missing one says how to point at it.
+    const bare = resolveTarget({ socket: "\\\\.\\pipe\\x" }, { HOMERUN_DATA_DIR: "C:\\hr" }, "win32", () => { throw new Error("not read"); });
+    expect([bare.tokenPath, bare.tokenHint]).toEqual(["C:\\hr\\run\\dev-token", expect.stringContaining("--dev-token-file")]);
+    expect(resolveTarget({ socket: "/s/homerund.sock" }, {}, "darwin").tokenHint).toBeUndefined();
   });
 });
 

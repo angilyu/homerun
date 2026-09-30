@@ -102,7 +102,7 @@ Development-only switches:
 | Switch | Effect |
 |--------|--------|
 | `--socket PATH` / `HOMERUN_SOCKET` | Use this socket instead of the data dir's |
-| `--dev-token-file PATH` | Read the development token from here |
+| `--dev-token-file PATH` | Read the development token from here. By default it is next to the socket; on Windows, where a pipe has no folder, it is in the data dir's `run` folder, so `--socket` with another runtime's pipe needs this too |
 | `--dev-role cli` | Use the release role and token flow below instead of the development token |
 | `--dev-token-store PATH` / `HOMERUN_DEV_TOKEN_STORE` | With `--dev-role cli`: keep the token in a 0600 file, not the keychain |
 | `--dev-keychain PATH` | With `--dev-role cli`: use this keychain file instead of the login keychain |

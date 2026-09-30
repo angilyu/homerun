@@ -56,12 +56,18 @@ export const releaseQuestionsOnly = () =>
 export interface Target {
   socketPath: string;
   tokenPath: string;
+  /** Why the development token may be missing, when the default path is only a guess. */
+  tokenHint?: string;
 }
+
+const PIPE_TOKEN_HINT =
+  "a pipe name doesn't say where its runtime keeps the development token: pass --dev-token-file, or set HOMERUN_DATA_DIR to that runtime's data dir";
 
 /**
  * The socket from the shared data-dir rules (§5.2), and the dev token beside it. On Windows the
  * pipe name is the one the running runtime published, read when first needed, so a command that
- * can do without it (`logout`) still runs when homerund doesn't.
+ * can do without it (`logout`) still runs when homerund doesn't. A pipe has no folder, so the dev
+ * token is always the data dir's unless `--dev-token-file` says otherwise.
  */
 export function resolveTarget(
   values: Values,
@@ -77,7 +83,7 @@ export function resolveTarget(
   }
   const data = dataDir(env, undefined, "win32");
   const tokenPath = devToken ?? devTokenPath(win32.join(data, "run"), "win32");
-  if (explicit) return { socketPath: explicit, tokenPath };
+  if (explicit) return { socketPath: explicit, tokenPath, ...(devToken ? {} : { tokenHint: PIPE_TOKEN_HINT }) };
   let pipe: string | undefined;
   return {
     tokenPath,
@@ -118,7 +124,11 @@ export async function connectDev(channel: BuildChannel, target: Target): Promise
   } catch (e) {
     c.close();
     if (e instanceof DevTokenError)
-      throw new CliError(e.message, EXIT.NOPERM, e.reason === "missing" ? "only a development build of homerund writes a development token" : undefined);
+      throw new CliError(
+        e.message,
+        EXIT.NOPERM,
+        e.reason === "missing" ? (target.tokenHint ?? "only a development build of homerund writes a development token") : undefined,
+      );
     throw e;
   }
   try {

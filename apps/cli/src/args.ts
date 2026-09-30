@@ -323,7 +323,7 @@ export function helpText(name?: string): string {
     "  -h, --help             Help for a command",
     "Development builds only:",
     "  --socket PATH          homerund's socket (or HOMERUN_SOCKET); default from HOMERUN_DATA_DIR",
-    "  --dev-token-file PATH  The development token (default: dev-token next to the socket)",
+    "  --dev-token-file PATH  The development token (default: dev-token next to the socket; on Windows, in the data dir)",
     "  --dev-role cli         Use the release CLI's role and token flow instead of the development token",
     "  --dev-token-store PATH With --dev-role cli: keep the token in a 0600 file (or HOMERUN_DEV_TOKEN_STORE)",
     "  --dev-keychain PATH    With --dev-role cli: use this keychain file instead of the login keychain",
