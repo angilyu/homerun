@@ -56,6 +56,11 @@ export function privateDirSddl(user: string): string {
   return `D:P(A;OICI;FA;;;${requireSid(user)})(A;OICI;FA;;;${SID.SYSTEM})`;
 }
 
+/** A private file: protected, the user and SYSTEM. */
+export function privateFileSddl(user: string): string {
+  return `D:P(A;;FA;;;${requireSid(user)})(A;;FA;;;${SID.SYSTEM})`;
+}
+
 /**
  * Why `info` is not private to `user`, or [] when it is. Owners the user can't be protected from
  * anyway are accepted: the user, SYSTEM, and Administrators (an elevated process may own what it

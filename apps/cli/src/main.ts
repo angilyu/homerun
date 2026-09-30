@@ -26,7 +26,7 @@ import type { Ctx, Io } from "./context";
 import { CliError, EXIT, usageError } from "./exit";
 import { Output, colorWanted } from "./output";
 import { macosInspector, type PeerInspector, type WindowsPeerInspector } from "./peer";
-import { FileTokenStore, KeychainTokenStore, keychainAccount, type TokenStore } from "./token-store";
+import { CredentialManagerTokenStore, FileTokenStore, KeychainTokenStore, keychainAccount, type TokenStore } from "./token-store";
 
 type Handler = (x: Ctx, socketPath: string) => Promise<number>;
 
@@ -91,20 +91,23 @@ export interface MainDeps {
   graceMs?: number;
 }
 
-function tokenStore(channel: BuildChannel, values: Values, env: Env): TokenStore {
+function tokenStore(channel: BuildChannel, values: Values, env: Env, platform: string): TokenStore {
+  const keychain = values["dev-keychain"] as string | undefined;
   if (channel === "development") {
     const file = (values["dev-token-store"] as string | undefined) ?? env.HOMERUN_DEV_TOKEN_STORE;
     if (file) return new FileTokenStore(file);
-    return new KeychainTokenStore(keychainAccount(env), values["dev-keychain"] as string | undefined);
+    if (keychain !== undefined && platform === "win32") throw usageError("--dev-keychain is for macOS; Windows keeps the token in Credential Manager");
   }
-  return new KeychainTokenStore(keychainAccount(env));
+  const account = keychainAccount(env, platform);
+  if (platform === "win32") return new CredentialManagerTokenStore(account);
+  return new KeychainTokenStore(account, channel === "development" ? keychain : undefined);
 }
 
 export function cliAccess(io: Io, o: Output, values: Values, target: Target, deps: MainDeps): CliAccess {
   const dev = io.channel === "development";
   return new CliAccess(io, o, {
     target,
-    store: deps.store ?? tokenStore(io.channel, values, io.env),
+    store: deps.store ?? tokenStore(io.channel, values, io.env, deps.platform ?? process.platform),
     requirement: dev ? ((values["dev-peer-requirement"] as string | undefined) ?? PEER_REQUIREMENT) : PEER_REQUIREMENT,
     skipPeerCheck: dev && (values["dev-skip-peer-check"] === true || io.env.HOMERUN_DEV_SKIP_PEER_CHECK === "1"),
     inspector: deps.inspector ?? macosInspector,

@@ -11,6 +11,7 @@ import {
   pipeSddl,
   privacyProblems,
   privateDirSddl,
+  privateFileSddl,
   SID,
   sidToBytes,
   sidToString,
@@ -41,10 +42,14 @@ describe("SDDL the runtime applies (§5.2)", () => {
   test("a private directory: protected, inherited by files and subdirectories", () => {
     expect(privateDirSddl(ME)).toBe(`D:P(A;OICI;FA;;;${ME})(A;OICI;FA;;;S-1-5-18)`);
   });
+  test("a private file: protected, the user and SYSTEM", () => {
+    expect(privateFileSddl(ME)).toBe(`D:P(A;;FA;;;${ME})(A;;FA;;;S-1-5-18)`);
+  });
   test("anything but a SID is refused, so nothing can be spliced into the SDDL", () => {
     for (const bad of ["", "LA", "S-1-5", `${ME})(A;;GA;;;WD`, "S-1-5-21-x"]) {
       expect(() => pipeSddl(bad)).toThrow(/not a SID/);
       expect(() => privateDirSddl(bad)).toThrow(/not a SID/);
+      expect(() => privateFileSddl(bad)).toThrow(/not a SID/);
     }
   });
 });

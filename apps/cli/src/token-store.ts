@@ -1,12 +1,16 @@
 /**
  * Where the release CLI keeps its token (§5.2): a generic password in the user's login keychain,
- * created by this binary, so macOS asks before any other program reads it. Development builds
- * can use a `0600` file instead (`--dev-token-store`), which is how Linux CI runs the token flow.
+ * created by this binary, so macOS asks before any other program reads it. On Windows, a generic
+ * credential in Credential Manager, which any process of the user can read (§13). Development
+ * builds can use a private file instead (`--dev-token-store`), which is how Linux CI runs the
+ * token flow.
  */
 import { createHash } from "node:crypto";
 import { chmodSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { filePrivacy, type FilePrivacy } from "@homerun/client";
 import { CliToken } from "@homerun/core";
+import { credDelete, credRead, credWrite, currentUserSid, privateFileSddl, setPathProtectedDacl, Win32Error } from "@homerun/win32";
 import type { Env } from "./connect";
 import { CliError, EXIT } from "./exit";
 
@@ -28,7 +32,7 @@ export const KEYCHAIN_LABEL = "Homerun command-line tool";
  * One item per data directory: `default`, or `data:<sha256 of its real path>` when
  * HOMERUN_DATA_DIR is set, so a second runtime's token never replaces the first's.
  */
-export function keychainAccount(env: Env): string {
+export function keychainAccount(env: Env, platform: string = process.platform): string {
   const dir = env.HOMERUN_DATA_DIR;
   if (!dir) return "default";
   let real: string;
@@ -37,6 +41,8 @@ export function keychainAccount(env: Env): string {
   } catch {
     real = resolve(dir);
   }
+  // Windows paths are case-insensitive: one directory, however it is typed, is one item.
+  if (platform === "win32") real = real.toLowerCase();
   return `data:${createHash("sha256").update(real).digest("hex")}`;
 }
 
@@ -152,18 +158,73 @@ function macosModule(): Macos {
   return (macosMod ??= require("./macos") as Macos);
 }
 
-/** A `0600` file: development builds only. */
+const ERROR_NO_SUCH_LOGON_SESSION = 1312;
+
+/** A Credential Manager failure as a message and exit code. */
+export function credentialFailure(op: "read" | "save" | "delete", code: number): CliError {
+  if (code === ERROR_NO_SUCH_LOGON_SESSION)
+    return new CliError("Credential Manager isn't available in this logon session", EXIT.NOPERM, "run homerun from your own desktop session, not over a network logon");
+  return new CliError(`Credential Manager failed to ${op} the token (Win32 error ${code})`, EXIT.ERROR);
+}
+
+/** `com.angilyu.homerun.cli/<account>`: one generic credential per data directory. */
+export const credentialTarget = (account: string) => `${KEYCHAIN_SERVICE}/${account}`;
+
+/** Credential Manager (Windows): a generic credential, persisted on this machine only. */
+export class CredentialManagerTokenStore implements TokenStore {
+  readonly where = `Credential Manager ("${KEYCHAIN_LABEL}")`;
+
+  constructor(readonly account: string) {}
+
+  read(): string | null {
+    const b = this.call("read", () => credRead(credentialTarget(this.account)));
+    if (!b) return null;
+    const t = new TextDecoder().decode(b);
+    b.fill(0);
+    return valid(t);
+  }
+
+  write(token: string): void {
+    const b = new TextEncoder().encode(token);
+    try {
+      this.call("save", () => credWrite(credentialTarget(this.account), KEYCHAIN_LABEL, b));
+    } finally {
+      b.fill(0);
+    }
+  }
+
+  delete(): boolean {
+    return this.call("delete", () => credDelete(credentialTarget(this.account)));
+  }
+
+  private call<T>(op: "read" | "save" | "delete", f: () => T): T {
+    if (process.platform !== "win32") throw new CliError("Credential Manager is only available on Windows", EXIT.NOPERM);
+    try {
+      return f();
+    } catch (e) {
+      if (e instanceof Win32Error) throw credentialFailure(op, e.code);
+      throw e;
+    }
+  }
+}
+
+/** A private file (`0600`; on Windows, a protected DACL for the user and SYSTEM): development builds only. */
 export class FileTokenStore implements TokenStore {
   readonly where: string;
 
-  constructor(readonly path: string) {
+  constructor(
+    readonly path: string,
+    private platform: string = process.platform,
+    private privacy: FilePrivacy = filePrivacy,
+  ) {
     this.where = `the development token store (${path})`;
   }
 
   read(): string | null {
     let text: string;
     try {
-      if ((statSync(this.path).mode & 0o077) !== 0) throw new CliError(`${this.path} is readable by other users; it must be 0600`, EXIT.NOPERM);
+      const why = this.privacy(this.path, statSync(this.path), this.platform as NodeJS.Platform);
+      if (why) throw new CliError(`${this.path} ${why}; it must be private (0600)`, EXIT.NOPERM);
       text = readFileSync(this.path, "utf8").trim();
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -175,7 +236,8 @@ export class FileTokenStore implements TokenStore {
   write(token: string): void {
     const tmp = `${this.path}.${process.pid}.tmp`;
     writeFileSync(tmp, token + "\n", { mode: 0o600 });
-    chmodSync(tmp, 0o600);
+    if (this.platform === "win32") setPathProtectedDacl(tmp, privateFileSddl(currentUserSid()));
+    else chmodSync(tmp, 0o600);
     renameSync(tmp, this.path);
   }
 

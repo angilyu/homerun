@@ -15,7 +15,16 @@ import {
   type PeerVerdict,
   type WindowsPeerInspector,
 } from "../../src/peer";
-import { FileTokenStore, KeychainTokenStore, keychainAccount, keychainFailure, type TokenStore } from "../../src/token-store";
+import {
+  CredentialManagerTokenStore,
+  credentialFailure,
+  credentialTarget,
+  FileTokenStore,
+  KeychainTokenStore,
+  keychainAccount,
+  keychainFailure,
+  type TokenStore,
+} from "../../src/token-store";
 import { Waiting, mmss } from "../../src/waiting";
 import { CliError } from "../../src/exit";
 import { contentText, headLines, inputSummary, partialStdout, table, truncate } from "../../src/format";
@@ -29,10 +38,12 @@ import type { ApprovalPrompt, QuestionPrompt } from "@homerun/core";
 import { EndpointError, newPipeName } from "@homerun/client";
 import {
   closeHandle,
+  credWrite,
   currentUserSid,
   openPipe,
   pipeSddl,
   privateDirSddl,
+  privateFileSddl,
   READ_CONTROL,
   setPathProtectedDacl,
   setProtectedDacl,
@@ -600,26 +611,69 @@ describe("the peer check on Windows (§5.2)", () => {
 });
 
 describe("the token store", () => {
-  test("a 0600 file: round trip, replace, delete; readable by others or malformed is refused", () => {
+  test("a private file: round trip, replace, delete; readable by others or malformed is refused", () => {
     const dir = mkdtempSync(join(tmpdir(), "hr-cli-store-"));
+    const f = join(dir, "token");
+    const open = () => (WIN ? setPathProtectedDacl(f, `D:P(A;;FA;;;${currentUserSid()})(A;;FR;;;WD)`) : chmodSync(f, 0o644));
+    const close = () => (WIN ? setPathProtectedDacl(f, privateFileSddl(currentUserSid())) : chmodSync(f, 0o600));
     try {
-      const s = new FileTokenStore(join(dir, "token"));
+      const s = new FileTokenStore(f);
       expect(s.read()).toBeNull();
       s.write("A".repeat(43));
-      expect(statSync(join(dir, "token")).mode & 0o777).toBe(0o600);
+      if (!WIN) expect(statSync(f).mode & 0o777).toBe(0o600);
       expect(s.read()).toBe("A".repeat(43));
       s.write("B".repeat(43));
       expect(s.read()).toBe("B".repeat(43));
-      chmodSync(join(dir, "token"), 0o644);
+      open();
       expect(code(() => s.read())).toBe(77);
-      chmodSync(join(dir, "token"), 0o600);
-      writeFileSync(join(dir, "token"), "not a token", { mode: 0o600 });
+      close();
+      writeFileSync(f, "not a token");
       expect(s.read()).toBeNull();
       expect(s.delete()).toBe(true);
       expect(s.delete()).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("the file's privacy check is the shared one, per platform", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-cli-store-"));
+    try {
+      const f = join(dir, "token");
+      writeFileSync(f, "A".repeat(43));
+      const seen: string[] = [];
+      expect(new FileTokenStore(f, "win32", (_p, _st, platform) => (seen.push(platform), null)).read()).toBe("A".repeat(43));
+      const refused = new FileTokenStore(f, "win32", () => "is not private to this user (allows S-1-1-0 (0x120089))");
+      expect(code(() => refused.read())).toBe(77);
+      expect(seen).toEqual(["win32"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  (WIN ? test : test.skip)("Credential Manager (Windows): round trip, replace, delete; malformed is none", () => {
+    const s = new CredentialManagerTokenStore(`test:${process.pid}:${Date.now()}`);
+    try {
+      expect(s.read()).toBeNull();
+      s.write("A".repeat(43));
+      expect(s.read()).toBe("A".repeat(43));
+      s.write("B".repeat(43));
+      expect(s.read()).toBe("B".repeat(43));
+      credWrite(credentialTarget(s.account), "x", new TextEncoder().encode("not a token"));
+      expect(s.read()).toBeNull();
+      expect(s.delete()).toBe(true);
+      expect(s.delete()).toBe(false);
+    } finally {
+      s.delete();
+    }
+  });
+
+  test("Credential Manager errors: no logon session is 77 with a hint, anything else is 1; only on Windows", () => {
+    const none = credentialFailure("read", 1312);
+    expect([none.code, none.hint]).toEqual([77, "run homerun from your own desktop session, not over a network logon"]);
+    expect([credentialFailure("save", 5).code, credentialFailure("save", 5).message]).toEqual([1, "Credential Manager failed to save the token (Win32 error 5)"]);
+    if (!WIN) expect(code(() => new CredentialManagerTokenStore("default").read())).toBe(77);
+    expect(credentialTarget("default")).toBe("com.angilyu.homerun.cli/default");
   });
 
   test("one keychain item per data directory", () => {
@@ -630,6 +684,7 @@ describe("the token store", () => {
       expect(a).toMatch(/^data:[0-9a-f]{64}$/);
       expect(keychainAccount({ HOMERUN_DATA_DIR: join(dir, ".") })).toBe(a);
       expect(keychainAccount({ HOMERUN_DATA_DIR: join(dir, "other") })).not.toBe(a);
+      expect(keychainAccount({ HOMERUN_DATA_DIR: "C:\\Users\\X\\HR" }, "win32")).toBe(keychainAccount({ HOMERUN_DATA_DIR: "c:\\users\\x\\hr" }, "win32"));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

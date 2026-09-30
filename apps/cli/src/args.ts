@@ -225,13 +225,13 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "login",
     args: "",
-    summary: "Ask the Homerun app for access, and keep the token in your keychain (replaces any other)",
+    summary: "Ask the Homerun app for access, and keep the token in your keychain or Credential Manager (replaces any other)",
     options: {},
     positionals: [0, 0],
     runtime: true,
     json: true,
   },
-  { name: "logout", args: "", summary: "Revoke this tool's token in the Homerun app, and remove it from your keychain", options: {}, positionals: [0, 0], runtime: true, json: true },
+  { name: "logout", args: "", summary: "Revoke this tool's token in the Homerun app, and remove it from your keychain or Credential Manager", options: {}, positionals: [0, 0], runtime: true, json: true },
   { name: "version", args: "", summary: "Print the CLI version and build", options: {}, positionals: [0, 0], runtime: false, json: true },
   { name: "help", args: "[COMMAND]", summary: "Show help", options: {}, positionals: [0, 2], runtime: false, json: false },
 ];
