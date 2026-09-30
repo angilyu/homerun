@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, helpText, COMMANDS } from "../../src/args";
@@ -44,6 +44,7 @@ import {
   pipeSddl,
   privateDirSddl,
   privateFileSddl,
+  processImagePath,
   READ_CONTROL,
   setPathProtectedDacl,
   setProtectedDacl,
@@ -535,6 +536,25 @@ describe("the peer check on Windows (§5.2)", () => {
       ["is not signed", check({ authenticode: () => ({ status: 0x800b0100, subject: null }) }, "authenticode:Wenjing Yu")],
       ["failed the Authenticode check (0x80096010)", check({ authenticode: () => ({ status: 0x80096010 | 0, subject: null }) }, "authenticode:Wenjing Yu")],
       ["signed by Someone Else, not Homerun", check({ authenticode: () => ({ status: 0, subject: "Someone Else" }) }, "authenticode:Wenjing Yu")],
+      // The signer's name must equal the requirement's exactly: no prefix, suffix, case or space
+      // lookalikes, either way round.
+      ...(
+        [
+          ["Wenjing", "Wenjing Yu"],
+          ["Yu", "Wenjing Yu"],
+          ["Wenjing Yu", "Wenjing Yu Ltd"],
+          ["Wenjing Yu", "Evil Wenjing Yu"],
+          ["Wenjing Yu", "Wenjing"],
+          ["Wenjing Yu", "wenjing yu"],
+          ["Wenjing Yu", "Wenjing Yu "],
+          ["Wenjing Yu", "Wenjing  Yu"],
+          ["Wenjing Yu", "Wenjing Yu\0"],
+          ["Wenjing Yu", ""],
+        ] as const
+      ).map(([want, got]): [string, Promise<PeerVerdict>] => [
+        `signed by ${got || "an unnamed signer"}, not Homerun`,
+        check({ authenticode: () => ({ status: 0, subject: got || null }) }, `authenticode:${want}`),
+      ]),
       ["the check failed: CreateFileW failed (Win32 error 2)", check({ open: () => Promise.reject(new Error("CreateFileW failed (Win32 error 2)")) })],
       ["the check failed: OpenProcess failed (Win32 error 5)", check({ imagePath: () => { throw new Error("OpenProcess failed (Win32 error 5)"); } })],
     ];
@@ -596,6 +616,65 @@ describe("the peer check on Windows (§5.2)", () => {
       p.stop();
     }
   });
+
+  /**
+   * A real Authenticode signature: PowerShell 7 (signed by Microsoft Corporation) serves a private
+   * pipe. The check passes only for exactly its signer's name, and refuses any other signer and
+   * every lookalike of that name.
+   */
+  test("a pipe served by a Microsoft-signed program passes only a requirement naming exactly its signer", async () => {
+    const pwsh = join(process.env.ProgramFiles ?? "C:\\Program Files", "PowerShell", "7", "pwsh.exe");
+    if (!existsSync(pwsh)) {
+      if (process.env.CI) throw new Error(`CI runners have PowerShell 7, but ${pwsh} is missing`);
+      return void console.log(`no ${pwsh}; skipped`);
+    }
+    const name = newPipeName();
+    const dir = mkdtempSync(join(tmpdir(), "hr-cli-pwsh-"));
+    const script = join(dir, "serve.ps1");
+    // Enough listening instances for every connection below: each check connects once.
+    writeFileSync(
+      script,
+      [
+        "$n = $args[0]",
+        "$s = 1..16 | ForEach-Object { [System.IO.Pipes.NamedPipeServerStream]::new($n, 'InOut', -1, 'Byte', 'Asynchronous') }",
+        "$w = $s | ForEach-Object { $_.WaitForConnectionAsync() }",
+        "[Console]::Out.WriteLine('ready'); [Console]::Out.Flush()",
+        "[void][Console]::In.ReadLine()",
+      ].join("\r\n"),
+    );
+    const proc = Bun.spawn([pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", script, name.replace(/^\\\\\.\\pipe\\/, "")], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    try {
+      const reader = proc.stdout.getReader();
+      let out = "";
+      const deadline = Date.now() + 30_000;
+      while (!out.includes("ready")) {
+        const r = await Promise.race([reader.read(), Bun.sleep(Math.max(0, deadline - Date.now())).then(() => null)]);
+        if (!r || r.done) throw new Error(`PowerShell never served the pipe: ${JSON.stringify(out)}`);
+        out += new TextDecoder().decode(r.value);
+      }
+      const h = await openPipe(name, READ_CONTROL | WRITE_DAC);
+      try {
+        setProtectedDacl(h, pipeSddl(currentUserSid()));
+      } finally {
+        closeHandle(h);
+      }
+      const image = processImagePath(proc.pid);
+      const verdict = (subject: string) => verifyWindowsPeer(name, `authenticode:${subject}`, windowsInspector);
+      expect(await verdict("Microsoft Corporation")).toEqual({ ok: true, pid: proc.pid });
+      for (const other of ["Homerun", "Microsoft", "Corporation", "Microsoft Corp", "Microsoft Corporation Ltd", "Not Microsoft Corporation", "microsoft corporation", "MICROSOFT CORPORATION"]) {
+        const v = await verdict(other);
+        expect([other, v.ok ? "" : v.why]).toEqual([other, `process ${proc.pid} (${image}) is signed by Microsoft Corporation, not Homerun`]);
+      }
+    } finally {
+      proc.kill();
+      await proc.exited;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   test("a pipe with the default DACL is refused, and so is a name nobody serves", async () => {
     const p = await pipe(false);
