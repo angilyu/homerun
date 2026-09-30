@@ -108,6 +108,7 @@ function methodArea(m: MethodName): string {
       return "blobs";
     case "cli.tokens.list":
     case "cli.tokens.revoke":
+    case "cli.sign_out":
     case "cli.approve":
     case "cli.deny":
     case "secrets.set":
@@ -127,6 +128,7 @@ function notificationArea(n: NotificationName): string {
       return "threads";
     case "cli.access_decision":
     case "cli.access_requested":
+    case "cli.access_withdrawn":
       return "cli";
     case "health.digest_ready":
       return "health";

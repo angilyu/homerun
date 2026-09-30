@@ -396,6 +396,13 @@
         "token_id": {
           "type": "string",
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "denied",
+            "expired"
+          ]
         }
       },
       "required": [
@@ -420,13 +427,49 @@
         },
         "requested_at": {
           "$ref": "#/$defs/TimestampMs"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/TimestampMs"
         }
       },
       "required": [
         "request_id",
         "client",
         "hostname",
-        "requested_at"
+        "requested_at",
+        "expires_at"
+      ]
+    },
+    "CliAccessUnavailableData": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "const": "too_many_requests"
+        }
+      },
+      "required": [
+        "reason"
+      ]
+    },
+    "CliAccessWithdrawnNotification": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "expired",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "reason"
       ]
     },
     "CliApproveParams": {
@@ -451,6 +494,21 @@
       },
       "required": [
         "token_id"
+      ]
+    },
+    "CliAuthFailureData": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "revoked"
+          ]
+        }
+      },
+      "required": [
+        "reason"
       ]
     },
     "CliDenyParams": {
@@ -524,10 +582,30 @@
         "request_id": {
           "type": "string",
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/TimestampMs"
         }
       },
       "required": [
-        "request_id"
+        "request_id",
+        "expires_at"
+      ]
+    },
+    "CliSignOutParams": {
+      "type": "object",
+      "properties": {}
+    },
+    "CliSignOutResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
       ]
     },
     "CliToken": {
@@ -543,6 +621,11 @@
         },
         "client": {
           "$ref": "#/$defs/ClientInfo"
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
         },
         "created_at": {
           "$ref": "#/$defs/TimestampMs"
@@ -561,6 +644,7 @@
       "required": [
         "token_id",
         "client",
+        "hostname",
         "created_at",
         "last_used_at"
       ]

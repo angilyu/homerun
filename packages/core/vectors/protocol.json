@@ -526,6 +526,16 @@
       "name": "cli.request_access: pending",
       "valid": true,
       "value": {
+        "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
+        "expires_at": 1767225720000
+      }
+    },
+    {
+      "schema": "CliRequestAccessResult",
+      "name": "cli.request_access: no expiry",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
         "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01"
       }
     },
@@ -2491,6 +2501,26 @@
               "name": "homerun-cli",
               "version": "0.1.0"
             },
+            "hostname": "studio.local",
+            "created_at": 1767225600000,
+            "last_used_at": null
+          }
+        ]
+      }
+    },
+    {
+      "schema": "CliTokensListResult",
+      "name": "cli.tokens.list: no hostname",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "tokens": [
+          {
+            "token_id": "0f1a2b3c-4d5e-4f6a-9b8c-9d0e1f2a3b01",
+            "client": {
+              "name": "homerun-cli",
+              "version": "0.1.0"
+            },
             "created_at": 1767225600000,
             "last_used_at": null
           }
@@ -2517,6 +2547,27 @@
     {
       "schema": "CliTokensRevokeResult",
       "name": "cli.tokens.revoke: ok",
+      "valid": true,
+      "value": {
+        "ok": true
+      }
+    },
+    {
+      "schema": "CliSignOutParams",
+      "name": "cli.sign_out: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "CliSignOutParams",
+      "name": "cli.sign_out: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "CliSignOutResult",
+      "name": "cli.sign_out: ok",
       "valid": true,
       "value": {
         "ok": true
@@ -2831,7 +2882,18 @@
       "valid": true,
       "value": {
         "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
-        "approved": false
+        "approved": false,
+        "reason": "denied"
+      }
+    },
+    {
+      "schema": "CliAccessDecisionNotification",
+      "name": "cli.access_decision: expired",
+      "valid": true,
+      "value": {
+        "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
+        "approved": false,
+        "reason": "expired"
       }
     },
     {
@@ -2848,14 +2910,49 @@
     },
     {
       "schema": "CliAccessDecisionNotification",
+      "name": "cli.access_decision: unknown reason",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
+        "approved": false,
+        "reason": "revoked"
+      }
+    },
+    {
+      "schema": "CliAccessDecisionNotification",
       "name": "cli.access_decision: denied with token",
       "valid": false,
       "layer": "refinement",
       "value": {
         "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
         "approved": false,
+        "reason": "denied",
         "token": "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx",
         "token_id": "0f1a2b3c-4d5e-4f6a-9b8c-9d0e1f2a3b01"
+      }
+    },
+    {
+      "schema": "CliAccessDecisionNotification",
+      "name": "cli.access_decision: denied without a reason",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
+        "approved": false
+      }
+    },
+    {
+      "schema": "CliAccessDecisionNotification",
+      "name": "cli.access_decision: approved with a reason",
+      "valid": false,
+      "layer": "refinement",
+      "value": {
+        "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
+        "approved": true,
+        "token": "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx",
+        "token_id": "0f1a2b3c-4d5e-4f6a-9b8c-9d0e1f2a3b01",
+        "reason": "denied"
       }
     },
     {
@@ -2869,7 +2966,8 @@
           "version": "0.1.0"
         },
         "hostname": "studio.local",
-        "requested_at": 1767225600000
+        "requested_at": 1767225600000,
+        "expires_at": 1767225720000
       }
     },
     {
@@ -2883,7 +2981,36 @@
           "name": "homerun-cli",
           "version": "0.1.0"
         },
-        "requested_at": 1767225600000
+        "requested_at": 1767225600000,
+        "expires_at": 1767225720000
+      }
+    },
+    {
+      "schema": "CliAccessWithdrawnNotification",
+      "name": "cli.access_withdrawn: expired",
+      "valid": true,
+      "value": {
+        "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
+        "reason": "expired"
+      }
+    },
+    {
+      "schema": "CliAccessWithdrawnNotification",
+      "name": "cli.access_withdrawn: cancelled",
+      "valid": true,
+      "value": {
+        "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
+        "reason": "cancelled"
+      }
+    },
+    {
+      "schema": "CliAccessWithdrawnNotification",
+      "name": "cli.access_withdrawn: unknown reason",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "request_id": "9e0f1a2b-3c4d-4e5f-8a7b-8c9d0e1f2a01",
+        "reason": "denied"
       }
     },
     {

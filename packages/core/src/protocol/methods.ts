@@ -104,10 +104,17 @@ export const SecretName = named(
 );
 export type SecretName = z.infer<typeof SecretName>;
 
+const Hostname = z.string().min(1).max(255);
+
 export const CliTokenInfo = named(
   "CliTokenInfo",
-  z.object({ token_id: Uuid, client: ClientInfo, created_at: TimestampMs, last_used_at: TimestampMs.nullable() }),
+  z.object({ token_id: Uuid, client: ClientInfo, hostname: Hostname, created_at: TimestampMs, last_used_at: TimestampMs.nullable() }),
 );
+
+/** How long a `cli.request_access` waits for the user before it expires (§5.2). */
+export const CLI_ACCESS_REQUEST_TTL_MS = 2 * 60 * 1000;
+/** Pending `cli.request_access` requests across all connections; one more is UNAVAILABLE. */
+export const CLI_ACCESS_MAX_PENDING = 3;
 
 const Base64 = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
 /** Largest `blobs.get` page, before base64. */
@@ -125,12 +132,12 @@ export const METHODS = {
     description: "First request on every connection. Negotiates version and capabilities; authenticates.",
   }),
   "cli.request_access": def("cli.request_access", {
-    params: z.object({ client: ClientInfo, hostname: z.string().min(1).max(255) }),
-    result: z.object({ request_id: Uuid }),
+    params: z.object({ client: ClientInfo, hostname: Hostname }),
+    result: z.object({ request_id: Uuid, expires_at: TimestampMs }),
     callers: ["cli"],
     preauth: true,
     description:
-      "An unapproved CLI asks for a token. The app asks the user; the decision arrives as `cli.access_decision` on this connection.",
+      "An unapproved CLI asks for a token. The app asks the user; the decision arrives as `cli.access_decision` on this connection. One per connection; UNAVAILABLE (`CliAccessUnavailableData`) while too many are pending.",
   }),
   ping: def("ping", {
     params: Empty,
@@ -395,6 +402,12 @@ export const METHODS = {
     callers: LOCAL_UI,
     description: "Revoke a CLI token. Open connections using it are closed.",
   }),
+  "cli.sign_out": def("cli.sign_out", {
+    params: Empty,
+    result: Ok,
+    callers: ["cli"],
+    description: "Revoke the token this connection authenticated with (`homerun logout`). The connection is closed after the reply.",
+  }),
 
   // ---- shell only (§5.2)
   "cli.approve": def("cli.approve", {
@@ -523,16 +536,32 @@ export const NOTIFICATIONS = {
   "cli.access_decision": note("cli.access_decision", {
     direction: "runtime_to_client",
     params: z
-      .object({ request_id: Uuid, approved: z.boolean(), token: CliToken.optional(), token_id: Uuid.optional() })
-      .refine((p) => p.approved === (p.token !== undefined && p.token_id !== undefined), "a token is issued exactly when approved"),
+      .object({
+        request_id: Uuid,
+        approved: z.boolean(),
+        token: CliToken.optional(),
+        token_id: Uuid.optional(),
+        /** Why no token was issued: the user said no, or nobody answered in time. */
+        reason: z.enum(["denied", "expired"]).optional(),
+      })
+      .refine((p) => p.approved === (p.token !== undefined && p.token_id !== undefined), "a token is issued exactly when approved")
+      .refine((p) => p.approved === (p.reason === undefined), "a reason is given exactly when not approved"),
     recipients: ["cli"],
-    description: "Sent once to the connection that called `cli.request_access`. The CLI stores the token in its keychain item.",
+    description:
+      "Sent once to the connection that called `cli.request_access`, and to no other. The CLI stores the token in its keychain item, then says `hello` with it on the same connection.",
   }),
   "cli.access_requested": note("cli.access_requested", {
     direction: "runtime_to_shell",
-    params: z.object({ request_id: Uuid, client: ClientInfo, hostname: z.string().min(1).max(255), requested_at: TimestampMs }),
+    params: z.object({ request_id: Uuid, client: ClientInfo, hostname: Hostname, requested_at: TimestampMs, expires_at: TimestampMs }),
     recipients: SHELL,
-    description: "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`.",
+    description:
+      "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`. Replayed when the shell connects while the request is pending.",
+  }),
+  "cli.access_withdrawn": note("cli.access_withdrawn", {
+    direction: "runtime_to_shell",
+    params: z.object({ request_id: Uuid, reason: z.enum(["expired", "cancelled"]) }),
+    recipients: SHELL,
+    description: "Dismiss the prompt for this request: it expired, or the CLI went away before an answer.",
   }),
   "notification.requested": note("notification.requested", {
     direction: "runtime_to_shell",

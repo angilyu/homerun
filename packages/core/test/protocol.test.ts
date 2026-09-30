@@ -25,6 +25,11 @@ import {
   maySend,
   negotiateCapabilities,
   negotiateProtocol,
+  policyNeedsFullApp,
+  TaskSpec,
+  CLI_ACCESS_MAX_PENDING,
+  CLI_ACCESS_REQUEST_TTL_MS,
+  CliAuthFailureData,
   type MethodName,
 } from "../src/index";
 import * as F from "../scripts/vectors/fixtures";
@@ -49,7 +54,9 @@ describe("development-mode CLI (§16 M3, M6)", () => {
     expect(roleAllowedInBuild("cli_dev", "development")).toBe(true);
     for (const r of CALLER_ROLES) if (r !== "cli_dev") expect(roleAllowedInBuild(r, "release")).toBe(true);
     // Plus grants.create: grants need full authority, which the release CLI never has (§5.2, §5.6).
-    expect(ALLOWLISTS.cli_dev.filter((m) => m !== "cli.request_access" && m !== "grants.create") as string[]).toEqual(ALLOWLISTS.cli.filter((m) => m !== "cli.request_access"));
+    // Minus the token flow: a dev token is not issued by the runtime, so there is nothing to request or sign out of.
+    const tokenFlow = ["cli.request_access", "cli.sign_out"] as string[];
+    expect(ALLOWLISTS.cli_dev.filter((m) => m !== "grants.create") as string[]).toEqual(ALLOWLISTS.cli.filter((m) => !tokenFlow.includes(m)));
     expect(ALLOWLISTS.cli_dev).toContain("grants.create");
     expect(ALLOWLISTS.cli as readonly string[]).not.toContain("grants.create");
     expect(SURFACE_OF_ROLE.cli_dev).toBe("cli");
@@ -63,6 +70,32 @@ describe("development-mode CLI (§16 M3, M6)", () => {
     expect(ok("cli_dev", "cli_token")).toBe(false);
     expect(ok("cli", "dev_token")).toBe(false);
     expect(ok("shell", "dev_token")).toBe(false);
+  });
+});
+
+describe("what only the full app may add to a spec (§5.2)", () => {
+  const spec = (over: { tools?: Record<string, unknown>; policy?: Record<string, unknown> } = {}) =>
+    TaskSpec.parse(F.sessionSpec({ tools: F.tools({ builtin: ["Read", "Bash"], ...over.tools }), policy: F.policy({ roots: [], ...over.policy }) }));
+  const pattern = (cls: string, p = "git status") => ({ pattern: p, class: cls });
+  const server = { id: "github", transport: "http", url: "https://mcp.example.com/" };
+
+  test("a plain spec needs nothing", () => {
+    expect(policyNeedsFullApp(spec())).toEqual([]);
+  });
+  test("pre-approving Bash commands, MCP servers and open egress need the app", () => {
+    for (const cls of ["read", "write", "network"]) expect(policyNeedsFullApp(spec({ policy: { bash_patterns: [pattern(cls)] } }))).toHaveLength(1);
+    expect(policyNeedsFullApp(spec({ policy: { bash_patterns: [pattern("destructive")] } }))).toEqual([]);
+    expect(policyNeedsFullApp(spec({ tools: { mcp_servers: [server] } }))).toEqual(['the MCP server "github" is added or changed']);
+    expect(policyNeedsFullApp(spec({ policy: { egress: { mode: "open" } } }))).toEqual(["egress is open"]);
+  });
+  test("an edit may keep or remove them, but not add or change one", () => {
+    const wide = spec({ tools: { mcp_servers: [server] }, policy: { bash_patterns: [pattern("read")], egress: { mode: "open" } } });
+    expect(policyNeedsFullApp(wide, wide)).toEqual([]);
+    expect(policyNeedsFullApp(spec(), wide)).toEqual([]);
+    expect(policyNeedsFullApp(spec({ policy: { bash_patterns: [pattern("read"), pattern("read", "ls")] } }), wide)).toHaveLength(1);
+    expect(policyNeedsFullApp(spec({ policy: { bash_patterns: [pattern("write")] } }), wide)).toHaveLength(1);
+    expect(policyNeedsFullApp(spec({ tools: { mcp_servers: [{ ...server, url: "https://evil.example.com/" }] } }), wide)).toHaveLength(1);
+    expect(policyNeedsFullApp(spec({ policy: { egress: { mode: "open" } } }), spec())).toEqual(["egress is open"]);
   });
 });
 
@@ -101,6 +134,19 @@ describe("allowlists", () => {
 
   test("CLI tokens are managed only from the local app", () => {
     for (const m of ["cli.tokens.list", "cli.tokens.revoke"] as const) expect(only(m)).toEqual(["shell", "webview"]);
+  });
+
+  test("CLI access (§5.2): only the release CLI requests access or signs out; only the shell answers", () => {
+    expect(only("cli.request_access")).toEqual(["cli"]);
+    expect(only("cli.sign_out")).toEqual(["cli"]);
+    for (const m of ["cli.approve", "cli.deny"] as const) expect(only(m)).toEqual(["shell"]);
+    expect(CALLER_ROLES.filter((r) => mayReceive(r, "cli.access_withdrawn"))).toEqual(["shell"]);
+    expect(CALLER_ROLES.filter((r) => mayReceive(r, "cli.access_requested"))).toEqual(["shell"]);
+    expect(CALLER_ROLES.filter((r) => mayReceive(r, "cli.access_decision"))).toEqual(["cli"]);
+    expect(CLI_ACCESS_REQUEST_TTL_MS).toBe(120_000);
+    expect(CLI_ACCESS_MAX_PENDING).toBe(3);
+    expect(CliAuthFailureData.safeParse({ reason: "revoked" }).success).toBe(true);
+    expect(CliAuthFailureData.safeParse({ reason: "expired" }).success).toBe(false);
   });
 
   test("authorize", () => {

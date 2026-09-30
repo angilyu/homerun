@@ -70,7 +70,7 @@
       ],
       "params": "CliRequestAccessParams",
       "result": "CliRequestAccessResult",
-      "description": "An unapproved CLI asks for a token. The app asks the user; the decision arrives as `cli.access_decision` on this connection."
+      "description": "An unapproved CLI asks for a token. The app asks the user; the decision arrives as `cli.access_decision` on this connection. One per connection; UNAVAILABLE (`CliAccessUnavailableData`) while too many are pending."
     },
     "ping": {
       "direction": "to_runtime",
@@ -595,6 +595,16 @@
       "result": "CliTokensRevokeResult",
       "description": "Revoke a CLI token. Open connections using it are closed."
     },
+    "cli.sign_out": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "cli"
+      ],
+      "params": "CliSignOutParams",
+      "result": "CliSignOutResult",
+      "description": "Revoke the token this connection authenticated with (`homerun logout`). The connection is closed after the reply."
+    },
     "cli.approve": {
       "direction": "to_runtime",
       "preauth": false,
@@ -687,7 +697,7 @@
         "cli"
       ],
       "params": "CliAccessDecisionNotification",
-      "description": "Sent once to the connection that called `cli.request_access`. The CLI stores the token in its keychain item."
+      "description": "Sent once to the connection that called `cli.request_access`, and to no other. The CLI stores the token in its keychain item, then says `hello` with it on the same connection."
     },
     "cli.access_requested": {
       "direction": "runtime_to_shell",
@@ -695,7 +705,15 @@
         "shell"
       ],
       "params": "CliAccessRequestedNotification",
-      "description": "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`."
+      "description": "Show 'Allow the Homerun CLI to control your agents?'. Answer with `cli.approve` or `cli.deny`. Replayed when the shell connects while the request is pending."
+    },
+    "cli.access_withdrawn": {
+      "direction": "runtime_to_shell",
+      "recipients": [
+        "shell"
+      ],
+      "params": "CliAccessWithdrawnNotification",
+      "description": "Dismiss the prompt for this request: it expired, or the CLI went away before an answer."
     },
     "notification.requested": {
       "direction": "runtime_to_shell",
