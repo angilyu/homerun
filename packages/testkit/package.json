@@ -1,0 +1,22 @@
+{
+  "name": "@homerun/testkit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Test-only servers for milestone 9: a local OpenID Connect issuer (discovery, JWKS, authorize, token with PKCE and refresh rotation, revocation) and a mock APNs provider API. Keys are generated per run.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
+  },
+  "devDependencies": {
+    "@homerun/protocol": "workspace:*",
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
+  }
+}
