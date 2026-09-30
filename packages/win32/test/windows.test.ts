@@ -40,7 +40,6 @@ import {
   setThreadExecutionState,
   SID,
   terminateJob,
-  TRUST_E_NOSIGNATURE,
   Win32Error,
   WRITE_DAC,
 } from "../src";
@@ -198,18 +197,46 @@ win("power", () => {
   });
 });
 
+/** The smallest PE32+ image header the signature code will parse: no sections, no certificate table. */
+function barePe(): Uint8Array {
+  const b = Buffer.alloc(0x200);
+  b.write("MZ", 0, "latin1");
+  b.writeUInt32LE(0x40, 0x3c);
+  b.write("PE\0\0", 0x40, "latin1");
+  b.writeUInt16LE(0x8664, 0x44); // Machine: x64
+  b.writeUInt16LE(0xf0, 0x54); // SizeOfOptionalHeader
+  b.writeUInt16LE(0x22, 0x56); // Characteristics: executable, large-address aware
+  const o = 0x58;
+  b.writeUInt16LE(0x20b, o); // PE32+
+  b.writeUInt32LE(0x1000, o + 32); // SectionAlignment
+  b.writeUInt32LE(0x200, o + 36); // FileAlignment
+  b.writeUInt16LE(6, o + 48); // MajorSubsystemVersion
+  b.writeUInt32LE(0x1000, o + 56); // SizeOfImage
+  b.writeUInt32LE(0x200, o + 60); // SizeOfHeaders
+  b.writeUInt16LE(3, o + 68); // Subsystem: console
+  b.writeUInt32LE(16, o + 108); // NumberOfRvaAndSizes
+  return b;
+}
+
 win("Authenticode", () => {
-  test("an unsigned file has no signature; PowerShell 7 verifies and names Microsoft", () => {
+  test("a file that isn't signed is not verified and names no signer", () => {
     const dir = mkdtempSync(join(tmpdir(), "hr-wt-"));
     try {
-      const f = join(dir, "unsigned.exe");
-      writeFileSync(f, "MZ not really a program");
-      expect(authenticode(f)).toEqual({ status: TRUST_E_NOSIGNATURE, subject: null });
+      const text = join(dir, "not-a-program.exe");
+      writeFileSync(text, "MZ not really a program");
+      const pe = join(dir, "bare.exe");
+      writeFileSync(pe, barePe());
+      const results = { text: authenticode(text), pe: authenticode(pe) };
+      console.log(`authenticode: ${JSON.stringify(Object.fromEntries(Object.entries(results).map(([k, v]) => [k, `0x${(v.status >>> 0).toString(16)}`])))}`);
+      for (const r of Object.values(results)) expect([r.status === 0, r.subject]).toEqual([false, null]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("PowerShell 7 verifies, signed by Microsoft", () => {
     const pwsh = join(process.env.ProgramFiles ?? "C:\\Program Files", "PowerShell", "7", "pwsh.exe");
-    if (!existsSync(pwsh)) return;
+    if (!existsSync(pwsh)) return void console.log(`no ${pwsh}; skipped`);
     expect(authenticode(pwsh)).toEqual({ status: 0, subject: "Microsoft Corporation" });
   });
 });

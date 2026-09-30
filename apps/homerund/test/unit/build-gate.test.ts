@@ -40,7 +40,8 @@ beforeAll(() => {
   compile(bins.plain);
   compile(bins.dev, `HOMERUND_BUILD="development"`);
 }, 120_000);
-afterAll(() => rmSync(work, { recursive: true, force: true }));
+// Windows can't remove an executable until the process running it is gone.
+afterAll(() => rmSync(work, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }));
 
 function envFor(dataDir: string, extra: Record<string, string> = {}): Record<string, string> {
   // Windows can't start much of Win32 (sockets among it) without SystemRoot.

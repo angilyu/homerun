@@ -396,7 +396,7 @@ describe("single instance", () => {
 
   test("a live pid in the lock refuses", async () => {
     srt = await socketRuntime();
-    const child = Bun.spawn(["/bin/sleep", "5"]);
+    const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(5000)"]);
     await Bun.write(`${srt.rt.config.runDir}/homerund.lock`, String(child.pid));
     const config = loadConfig({ env: { HOMERUN_DATA_DIR: srt.dir, HOMERUN_CLAUDE_PATH: "/usr/bin/false", HOME: srt.dir } });
     await expect(startRuntime({ config, launchToken: null, setTmpdir: false })).rejects.toBeInstanceOf(AlreadyRunningLockError);
