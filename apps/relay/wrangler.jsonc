@@ -4,6 +4,11 @@
   "name": "homerun-relay",
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-01",
+  // No permessage-deflate: frames are mostly ciphertext, which doesn't compress, and a reauth
+  // frame's bearer token shouldn't share a compression context with other data. Bun's client
+  // also misreads some of workerd's compressed frames, so the clients don't offer it either
+  // (packages/remote/src/relay-connection.ts); wrangler's local proxy negotiates it regardless.
+  "compatibility_flags": ["no_web_socket_compression"],
   "workers_dev": true,
   "durable_objects": {
     "bindings": [{ "name": "ACCOUNTS", "class_name": "AccountDurableObject" }]
