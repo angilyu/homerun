@@ -34,6 +34,7 @@ import { Store } from "./store/store";
 import { verifyAnthropicKey, type KeyCheck } from "./secrets/verify";
 import { ThreadChanges } from "./threads/changes";
 import { Notifier } from "./notify/notifier";
+import { ShellSecrets } from "./shell-secrets";
 
 export interface RuntimeOptions {
   config: Config;
@@ -74,6 +75,7 @@ export interface Runtime {
   store: Store;
   device: Device;
   secrets: SecretStore;
+  shellSecrets: ShellSecrets;
   scheduler: Scheduler;
   manager: RunManager;
   server: RpcServer;
@@ -205,6 +207,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       toShell: (m, p) => server?.broadcast(m, p),
       closeTokenConnections: (tokenId) => server?.closeTokenConnections(tokenId),
     });
+    const shellSecrets = new ShellSecrets(secrets, () => server?.shell() ?? null);
     const changes = new ThreadChanges(store, device.device_id, (summary) => server?.broadcast("threads.changed", { summary }));
     server = new RpcServer({
       socketPath: config.socketPath,
@@ -217,9 +220,11 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         changes,
         settingsChanged: () => fires.run(),
         cliAccess,
+        shellSecrets,
         shellConnected: (conn) => {
           notifier.replayPending((m, p) => conn.notify(m, p));
           cliAccess.replay((m, p) => conn.notify(m, p));
+          void shellSecrets.flush();
         },
         verifyKey: o.verifyKey ?? ((key) => verifyAnthropicKey(key, config.anthropicBaseUrl)),
       }),
@@ -249,6 +254,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       store,
       device,
       secrets,
+      shellSecrets,
       scheduler,
       manager,
       server: srv,

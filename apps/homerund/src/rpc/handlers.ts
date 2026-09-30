@@ -28,6 +28,8 @@ import { computeDigest, type DigestScheduler } from "../monitors/digest";
 import type { ThreadChanges } from "../threads/changes";
 import { listCliTokens } from "../store/cli-tokens";
 import type { Authenticator } from "./auth";
+import type { RemotePeer } from "./server";
+import type { ShellSecrets } from "../shell-secrets";
 import type { AccessRequester, CliAccess } from "./cli-access";
 
 /** A JSON-RPC error a handler wants to send as is. */
@@ -52,6 +54,8 @@ export interface Conn extends AccessRequester {
   /** Send a notification on this connection. */
   notify(method: string, params: unknown): void;
   subscriptions: Map<string, () => void>;
+  /** The paired device behind a live session (§9.4); null on the local socket. */
+  readonly remote: RemotePeer | null;
 }
 
 export interface HandlerDeps {
@@ -67,6 +71,8 @@ export interface HandlerDeps {
   shellConnected?: (conn: Conn) => void;
   /** Command-line access requests and token revocation (§5.2). */
   cliAccess: CliAccess;
+  /** Secrets the runtime wrote itself: the shell's hand-over mustn't overwrite them (§5.2). */
+  shellSecrets?: ShellSecrets;
   /** secrets.verify (§7.2): ask the provider about a candidate key. */
   verifyKey: (key: string) => Promise<{ outcome: "valid" | "invalid" | "unreachable"; detail?: string }>;
 }
@@ -81,8 +87,11 @@ export type Handlers = { [M in MethodName]?: Handler<M> };
 
 /**
  * The release CLI may edit tasks but never pre-approve calls (§5.2): anything running as the user
- * can invoke it. `policyNeedsFullApp` says what only the app may add.
+ * can invoke it. Nor may a paired phone or browser (§13): a stolen, unlocked phone must not be able
+ * to widen what a task may do unattended. `policyNeedsFullApp` says what only the app may add.
  */
+const CANNOT_WIDEN: ReadonlySet<CallerRole> = new Set(["cli", "ios", "web"]);
+
 function refuseWidening(reasons: string[]): void {
   if (reasons.length) throw new RpcFail(RPC_ERROR.AUTHORITY_INSUFFICIENT, `Change this in the Homerun app: ${reasons.join("; ")}.`);
 }
@@ -94,7 +103,10 @@ const THREADS_DEFAULT = 50;
 export function makeHandlers(d: HandlerDeps): Handlers {
   const { ctx, manager } = d;
   const store = ctx.store;
-  const originOf = (c: Conn): Origin => ({ device_id: ctx.device.device_id, surface: SURFACE_OF_ROLE[c.role!] });
+  const originOf = (c: Conn): Origin => ({
+    device_id: c.remote ? (c.remote.deviceId as Origin["device_id"]) : ctx.device.device_id,
+    surface: SURFACE_OF_ROLE[c.role!],
+  });
   const notFound = (what: string) => new RpcFail(RPC_ERROR.NOT_FOUND, `${what} not found`);
 
   return {
@@ -105,7 +117,7 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       }
       // A connection that says hello while its access request waits no longer wants the answer.
       d.cliAccess.cancel(conn);
-      const ok = d.auth.check(p);
+      const ok = d.auth.check(p, conn.remote);
       if (!ok.ok) throw new RpcFail(RPC_ERROR.UNAUTHENTICATED, ok.message, ok.data, true);
       conn.setRole(p.role);
       if (ok.cliTokenId) conn.cliTokenId = ok.cliTokenId;
@@ -141,10 +153,12 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     },
 
     "secrets.set": (_c, p) => {
+      if (d.shellSecrets && !d.shellSecrets.accepts(p.name)) return { ok: true as const };
       ctx.secrets.set(p.name, p.value);
       return { ok: true as const };
     },
     "secrets.clear": (_c, p) => {
+      if (d.shellSecrets && !d.shellSecrets.accepts(p.name)) return { ok: true as const };
       ctx.secrets.clear(p.name);
       return { ok: true as const };
     },
@@ -227,7 +241,7 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     "runs.stop": (conn, p) => ({ state: manager.stop(p.run_id, originOf(conn)) }),
 
     "tasks.create": (conn, p) => {
-      if (conn.role === "cli") refuseWidening(policyNeedsFullApp(p.spec));
+      if (CANNOT_WIDEN.has(conn.role!)) refuseWidening(policyNeedsFullApp(p.spec));
       const { task, thread } = manager.createTask(p.spec, p.from_thread_id);
       d.changes?.touch(thread.thread_id);
       return { task, thread_id: thread.thread_id };
@@ -239,7 +253,7 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     },
     "tasks.list": (_c, p) => ({ tasks: listTasks(store, p.kind, p.include_archived ?? false) }),
     "tasks.update": (conn, p) => {
-      if (conn.role === "cli") {
+      if (CANNOT_WIDEN.has(conn.role!)) {
         const current = getTask(store, p.task_id);
         if (!current) throw notFound("task");
         refuseWidening(policyNeedsFullApp(p.spec, current.spec));
