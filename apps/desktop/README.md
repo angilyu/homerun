@@ -314,6 +314,8 @@ keep the key in memory and don't offer Open at login.
    (`Get-FileHash`). The task dialog names the client and this PC; Return denies. Run it again,
    press Tab and Enter: the CLI is approved, and Credential Manager lists
    `com.angilyu.homerun.cli/default`. A wrong hash refuses before anything is sent.
+   Ctrl+C in `homerun watch THREAD` exits 130, and in `homerun send` leaves the run going
+   (CI can't send a Windows process Ctrl+C, §17 item 8).
 
 ## Releasing an update
 

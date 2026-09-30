@@ -2435,8 +2435,9 @@ upgrades.
 **Windows** (milestone 8b). Every pull request runs the runtime's unit suite,
 the client's, the CLI's and the Win32 bindings' on `windows-latest`, including
 a test that creates a second local user and is denied the pipe, and
-`shell-core`'s tests there; the Tauri crate builds nightly. Replay and the crash
-sweep run on Linux only (§18 row 69).
+`shell-core`'s tests there. Nightly, the CLI's end-to-end suite and a sampled
+crash sweep run on Windows too, homerund killed with `TerminateProcess`, and
+the Tauri crate builds. Replay runs on Linux and macOS only (§18 row 69).
 
 **SDK upgrade gate (eval suite).** Because the SDK tracks Claude Code, an
 upgrade can change agent behaviour without any change to our code.
@@ -2497,12 +2498,22 @@ upgrade can change agent behaviour without any change to our code.
    which is rarely bash. Deferred: those profiles belong to the Git install, not
    the user, and the classifier fails closed on anything that isn't bash
    (§18 row 57).
-8. **Windows wording and suites** (milestone 8b). The desktop UI still says
-   *Mac*, *System Settings* and *keychain* on Windows, and the CLI's
-   end-to-end suite and the crash sweep don't run there (§18 row 69).
-   Recommended: platform wording in `@homerun/app-state` and the desktop
-   views, and the CLI suite on Windows, with milestone 11's installer, when
-   Windows first ships.
+8. **Windows wording and gaps in the Windows suites** (milestone 8b).
+   - The desktop UI still says *Mac*, *System Settings* and *keychain* on
+     Windows. Recommended: platform wording in `@homerun/app-state` and the
+     desktop views, with milestone 11's installer, when Windows first ships.
+   - Four CLI end-to-end tests skip on Windows, each saying why: Ctrl-C
+     detaching `send`, `--stop-on-interrupt`, Ctrl-C ending `watch`, and Ctrl-C
+     withdrawing a `login` prompt. Windows can't send one child process Ctrl-C:
+     `kill` terminates it, and `GenerateConsoleCtrlEvent` reaches every process
+     on the console, the test runner included. The handler is the same code as
+     on macOS and Linux; it is a manual check on Windows. Recommended: a test
+     that starts the CLI in a console of its own, with milestone 11.
+   - `homerun blob -o` creates its file with mode 0600, which Windows ignores:
+     the file takes its folder's permissions. Recommended: a private DACL on a
+     file the CLI creates, as for its token file, before Windows ships.
+   - Replay doesn't run on Windows, where `claude.exe` offers two more tools
+     (§18 row 69).
 
 ---
 
@@ -2580,5 +2591,5 @@ One line per major decision: what was chosen, and why.
 | 66 | **On Windows the access prompt is a task dialog, and *Allow* is reachable from the keyboard** (§5.2, §13) | Return still means *Don't Allow*, the default. *Allow* needs Tab first rather than a click: any process of the user can send input to a window at its integrity level, so click-only would add nothing on Windows. A system without the task dialog denies |
 | 67 | **The app doesn't install the command-line tool on Windows** (§5.2, §11) | There is no bundled release CLI until the installer (milestone 11) puts one on `PATH`, so Settings shows the tool as unavailable. The Windows peer check and token store are built and tested now |
 | 68 | **On Windows the data dir is `%LOCALAPPDATA%\Homerun`** (§6, §11) | Not `%APPDATA%`, which roams: the database, the workspaces and the pipe endpoint belong to one machine, as the runtime does |
-| 69 | **Windows CI: two jobs per pull request; replay and the crash sweep stay on Linux** (§16.2) | `windows-runtime` (the runtime, client, CLI and Win32 unit suites) and `windows-shell` (`shell-core`) each take about 2 minutes; the Tauri crate builds nightly. `claude.exe` offers `Glob` and `Grep` too, which changes the cassettes' tool fingerprints, and the crash harness drives a simulated `claude` with POSIX signals; the logic both cover is the same on every platform |
+| 69 | **Windows CI: two jobs per pull request; the CLI's end-to-end suite and a crash sweep nightly; replay stays on Linux and macOS** (§16.2) | `windows-runtime` (the runtime, client, CLI and Win32 unit suites, each run even after another fails) and `windows-shell` (`shell-core`) each take about 2 minutes. Nightly, `windows-full` runs the CLI's end-to-end suite and the sampled crash sweep, where a life dies by `TerminateProcess` on itself (exit code 137) instead of SIGKILL, and the Tauri crate builds. Tests that can't run on Windows skip one by one, with their reasons (§17 item 8). `claude.exe` offers `Glob` and `Grep` too, which changes the cassettes' tool fingerprints, so replay stays off Windows |
 | 70 | **Windows signing, installer and updater are milestone 11** (§11) | They need a certificate (Azure Trusted Signing or EV) and an installer, and change neither the runtime nor the shell. Milestone 8b ships nothing to users, so the Windows app is built unsigned and unbundled; the updater is compiled in and reports itself unavailable, as on Intel Macs |

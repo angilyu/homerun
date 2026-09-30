@@ -405,7 +405,9 @@ Job `windows-runtime` runs the unit tests on `windows-latest` (milestone 8b). Th
 the pipe (`pipe-windows.test.ts`: private, published, one server per data dir) and job objects
 (`processes-windows.test.ts`), and with `HOMERUN_WIN_CROSS_USER=1` a throwaway local user is
 denied the pipe, the endpoint and the dev token. Tests that need POSIX signals, `ps` or
-`/bin/bash` skip there. Replay and the crash sweep run on Linux only (§18 row 69).
+`/bin/bash` skip there. Nightly, job `windows-full` runs the sampled crash sweep on Windows, where
+a life kills itself with `TerminateProcess` (`test/crash/die.ts`); replay runs on Linux and macOS
+only (§18 row 69).
 
 ### Fake-clock suite (§16 row 5)
 

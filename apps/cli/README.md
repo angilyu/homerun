@@ -170,10 +170,12 @@ pnpm --filter @homerun/cli test:replay   # the CLI driving real claude against r
 pnpm --filter @homerun/cli test:macos    # macOS: the real keychain and peer-check calls (nightly)
 ```
 
-On Windows, CI runs `test:unit`, which there includes the peer check against a real pipe
-(one served by the test itself, one with the default ACL, and a name nobody serves) and
-the Credential Manager errors. The end-to-end and replay suites run on Linux and macOS
-(§17 item 8).
+On Windows, CI runs `test:unit` on every pull request, which there includes the peer check
+against real pipes: one served by the test itself, one with the default ACL, a name nobody
+serves, and one served by PowerShell 7, whose Microsoft signature passes only a requirement
+naming exactly its signer (no prefix, suffix or case lookalike). It also covers the Credential
+Manager errors. `test:e2e` runs on Windows nightly, without the four Ctrl-C tests, which
+Windows can't drive; replay runs on Linux and macOS (§17 item 8).
 
 None of them need an API key. The e2e tests start homerund in-process on a temporary
 data dir, play the shell to set a mock key, and spawn the CLI from source.
