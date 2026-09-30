@@ -3,7 +3,8 @@
   "compilerOptions": {
     "types": [],
     "lib": [
-      "ES2023"
+      "ES2023",
+      "DOM"
     ],
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

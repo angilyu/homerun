@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Homerun's relay protocol (§9.4–§9.7): Noise KK, K, IKpsk2 and XX on audited primitives, live-session framing, sealed messages and their checks, QR pairing, code linking, link statements, the APNs payload, relay wire frames, and the plain-JSON test vectors every client must pass.",
+  "description": "Homerun's relay protocol (§9.4–§9.7): Noise KK, K, IKpsk1 and XX on audited primitives, live-session framing, sealed messages and their checks, QR pairing, code linking, link statements, the APNs payload, relay wire frames, and the plain-JSON test vectors every client must pass.",
   "exports": {
     ".": "./src/index.ts",
+    "./vector-files": "./src/vectors/files.ts",
     "./vectors/*": "./vectors/*"
   },
   "files": ["src", "vectors", "README.md"],
