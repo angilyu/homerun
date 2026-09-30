@@ -18,7 +18,9 @@ import {
   type RpcNotification,
   type RpcRequest,
 } from "@homerun/core";
+import { endpointPath, EndpointError, readEndpointFile } from "@homerun/client";
 import { log, scrub } from "../log";
+import { lockPipe, publishEndpoint, unpublishEndpoint } from "../platform/secure";
 import { BudgetCapError, InvalidRequestError, NotFoundError, VersionConflictError } from "../runs/manager";
 import { StateConflictError } from "../store/schedule-rows";
 import { RpcFail, type Conn, type Handlers } from "./handlers";
@@ -28,7 +30,10 @@ export const HELLO_TIMEOUT_MS = 2_000;
 export const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 
 export interface ServerOptions {
+  /** A unix socket path, or on Windows a pipe name (`\\.\pipe\homerun-…`). */
   socketPath: string;
+  /** Where the pipe name is published for clients (Windows; `<data>\run`). */
+  runDir?: string;
   handlers: Handlers;
   /** Parse every result with its core schema before sending (tests and development). */
   checkResults?: boolean;
@@ -49,6 +54,7 @@ export class RpcServer {
   constructor(private opts: ServerOptions) {}
 
   async start(): Promise<void> {
+    if (process.platform === "win32") return this.startPipe();
     const path = this.opts.socketPath;
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     chmodSync(dirname(path), 0o700);
@@ -56,6 +62,41 @@ export class RpcServer {
       if (await socketAnswers(path)) throw new AlreadyRunningError(path);
       unlinkSync(path);
     }
+    this.listen(path);
+    chmodSync(path, 0o600);
+    log.info("listening", { socket: path });
+  }
+
+  /**
+   * Windows (§5.2): listen on the pipe, lock its DACL to the user before serving anyone, drop
+   * whatever connected before that, then publish the name. A pipe that can't be locked is not
+   * served.
+   */
+  private async startPipe(): Promise<void> {
+    const name = this.opts.socketPath;
+    const runDir = this.opts.runDir;
+    if (!runDir) throw new Error("a pipe server needs a run dir to publish its name in");
+    try {
+      const previous = readEndpointFile(endpointPath(runDir));
+      if (await socketAnswers(previous)) throw new AlreadyRunningError(previous);
+    } catch (e) {
+      if (!(e instanceof EndpointError)) throw e;
+    }
+    this.listen(name);
+    try {
+      await lockPipe(name);
+    } catch (e) {
+      this.stop();
+      throw e;
+    }
+    // Only the lock's own handle can have connected yet, but anything accepted under the default
+    // DACL goes.
+    for (const c of [...this.connections]) c.close();
+    publishEndpoint(runDir, name);
+    log.info("listening", { socket: name });
+  }
+
+  private listen(path: string): void {
     this.listener = Bun.listen<Data>({
       unix: path,
       socket: {
@@ -73,8 +114,6 @@ export class RpcServer {
         error: (s, err) => log.warn("socket error", { err: err.message, role: s.data?.conn.role }),
       },
     });
-    chmodSync(path, 0o600);
-    log.info("listening", { socket: path });
   }
 
   /** Send a notification to every connection whose role may receive it. */
@@ -93,6 +132,10 @@ export class RpcServer {
     this.listener = null;
     for (const c of this.connections) c.close();
     this.connections.clear();
+    if (process.platform === "win32") {
+      if (this.opts.runDir) unpublishEndpoint(this.opts.runDir, this.opts.socketPath);
+      return;
+    }
     try {
       unlinkSync(this.opts.socketPath);
     } catch {}

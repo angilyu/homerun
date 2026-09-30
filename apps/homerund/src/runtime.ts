@@ -204,6 +204,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     const changes = new ThreadChanges(store, device.device_id, (summary) => server?.broadcast("threads.changed", { summary }));
     server = new RpcServer({
       socketPath: config.socketPath,
+      runDir: config.runDir,
       handlers: makeHandlers({
         ctx,
         manager,

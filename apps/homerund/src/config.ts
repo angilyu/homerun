@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CONCURRENCY, type BuildChannel } from "@homerun/core";
 import { chooseRunDir, dataDir as resolveDataDir, isCompiledUrl, resolveBuildChannel } from "@homerun/client";
+import { secureDir } from "./platform/secure";
 
 export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "@homerun/client";
 
@@ -103,7 +104,15 @@ function option(argv: string[], name: string): string | undefined {
   return eq?.slice(name.length + 3);
 }
 
+/**
+ * A directory under the data dir. POSIX: 0700. Windows: created, inheriting the data dir's
+ * private DACL (`secureDir` sets that on the data and run dirs).
+ */
 function ensureDir(d: string): string {
+  if (process.platform === "win32") {
+    mkdirSync(d, { recursive: true });
+    return d;
+  }
   mkdirSync(d, { recursive: true, mode: 0o700 });
   chmodSync(d, 0o700);
   return d;
@@ -136,9 +145,9 @@ export function loadConfig(input: ConfigInput = {}): Config {
   const argv = input.argv ?? [];
   const build = BUILD_CHANNEL;
   const dev = build === "development";
-  const dataDir = ensureDir(resolveDataDir(env));
+  const dataDir = secureDir(resolveDataDir(env));
   const { runDir, socketPath } = chooseRunDir(dataDir);
-  ensureDir(runDir);
+  secureDir(runDir);
 
   const devOnly = (what: string, v: unknown) => {
     if (!dev && v) throw new DevOnlyError(what);

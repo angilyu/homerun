@@ -15,12 +15,20 @@ const OPEN_EXISTING = 3;
 export async function openPipe(name: string, access: number, busyMs = 2000): Promise<bigint> {
   const deadline = Date.now() + busyMs;
   for (;;) {
-    const h = kernel32().CreateFileW(wide(name), access, 0, null, OPEN_EXISTING, 0, 0n);
-    if (h !== INVALID_HANDLE) return h;
-    const code = kernel32().GetLastError();
-    if (code !== ERROR_PIPE_BUSY || Date.now() >= deadline) throw new Win32Error(`CreateFileW(${name})`, code);
+    try {
+      return openExisting(name, access);
+    } catch (e) {
+      if (!(e instanceof Win32Error) || e.code !== ERROR_PIPE_BUSY || Date.now() >= deadline) throw e;
+    }
     await Bun.sleep(20);
   }
+}
+
+/** Open an existing pipe or file once, synchronously (usable under impersonation). */
+export function openExisting(name: string, access: number): bigint {
+  const h = kernel32().CreateFileW(wide(name), access, 0, null, OPEN_EXISTING, 0, 0n);
+  if (h === INVALID_HANDLE) throw new Win32Error(`CreateFileW(${name})`, kernel32().GetLastError());
+  return h;
 }
 
 /** The pid of the process that created the pipe instance `h` is connected to. */

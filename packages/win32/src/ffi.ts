@@ -53,6 +53,9 @@ function loadAdvapi32() {
     CredWriteW: { args: [P, u32], returns: i32 },
     CredDeleteW: { args: [P, u32, u32], returns: i32 },
     CredFree: { args: [P], returns: FFIType.void },
+    LogonUserW: { args: [P, P, P, u32, u32, P], returns: i32 },
+    ImpersonateLoggedOnUser: { args: [u64], returns: i32 },
+    RevertToSelf: { args: [], returns: i32 },
   }).symbols;
 }
 

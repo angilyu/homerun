@@ -40,14 +40,19 @@ export function processHandleUserSid(h: bigint): string {
   const tok = new BigUint64Array(1);
   check(advapi32().OpenProcessToken(h, TOKEN_QUERY, tok), "OpenProcessToken");
   try {
-    const buf = new BigUint64Array(64);
-    const len = new Uint32Array(1);
-    check(advapi32().GetTokenInformation(tok[0]!, TokenUser, buf, buf.byteLength, len), "GetTokenInformation(TokenUser)");
-    // TOKEN_USER: a pointer to the SID (into this buffer), then its attributes.
-    return sidAt(buf[0]!);
+    return tokenUserSid(tok[0]!);
   } finally {
     closeHandle(tok[0]!);
   }
+}
+
+/** The user SID of access token `tok`. */
+export function tokenUserSid(tok: bigint): string {
+  const buf = new BigUint64Array(64);
+  const len = new Uint32Array(1);
+  check(advapi32().GetTokenInformation(tok, TokenUser, buf, buf.byteLength, len), "GetTokenInformation(TokenUser)");
+  // TOKEN_USER: a pointer to the SID (into this buffer), then its attributes.
+  return sidAt(buf[0]!);
 }
 
 /** This process's user SID. */

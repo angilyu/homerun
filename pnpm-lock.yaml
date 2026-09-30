@@ -100,6 +100,9 @@ importers:
       '@homerun/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@homerun/win32':
+        specifier: workspace:*
+        version: link:../../packages/win32
       zod:
         specifier: 4.6.5
         version: 4.6.5
