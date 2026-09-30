@@ -63,10 +63,13 @@ fn main() {
             let handle = app.handle().clone();
             // Read before anything else runs: the launch's Apple Event is current only now.
             let at_login = macos::launched_at_login();
-            let shell = Arc::new(shell::start(&app.package_info().version.to_string()));
+            let test = updater::is_test_build(&handle);
+            let shell = Arc::new(shell::start(&app.package_info().version.to_string(), test));
             app.manage(shell.clone());
 
             let (s1, s2, s3) = (shell.clone(), shell.clone(), shell.clone());
+            let restart_when_ready = test && std::env::var_os("HOMERUN_TEST_RESTART_WHEN_READY").is_some();
+            let h1 = handle.clone();
             let auto = shell.prefs.lock().unwrap().auto_download_updates;
             let up = updater::Updater::new(
                 &handle,
@@ -76,6 +79,10 @@ fn main() {
                     changed: Box::new(move |st| {
                         s1.host.event(json!({"type": "update", "state": st}));
                         s1.host.mark_dirty();
+                        // update-test.sh: the same path as Restart now.
+                        if restart_when_ready && matches!(st, homerun_shell_core::update::UpdateState::Ready { .. }) {
+                            lifecycle::request_quit(&h1, homerun_shell_core::quit::Why::Update);
+                        }
                     }),
                     log: Box::new(move |m, f| s2.rt.log_event(m, f)),
                     protocol: Box::new(move || match s3.rt.status() {
@@ -106,7 +113,7 @@ fn main() {
             // At login Homerun starts in the menu bar with no window and no Dock icon (§5.1),
             // unless onboarding isn't finished.
             let onboarded = keys::status(shell.host.keys_ref()).is_ok_and(|k| k.present);
-            shell.rt.log_event("launch", json!({"at_login": at_login, "onboarded": onboarded}));
+            shell.rt.log_event("launch", json!({"version": app.package_info().version.to_string(), "at_login": at_login, "onboarded": onboarded}));
             if at_login && onboarded {
                 #[cfg(target_os = "macos")]
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);

@@ -207,6 +207,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_webview_gets_no_updater_or_shell_plugin_permissions() {
+        // §11, §13: the page asks the shell (update_*), which decides; it never drives the plugin.
+        let caps: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let perms: Vec<&str> = caps["permissions"].as_array().unwrap().iter().filter_map(|p| p.as_str()).collect();
+        assert!(perms.iter().all(|p| !p.starts_with("updater:") && !p.starts_with("shell:")), "{perms:?}");
+        for c in ["allow-update-restart", "allow-login-item-set", "allow-notifications-request"] {
+            assert!(perms.contains(&c), "{c}");
+        }
+    }
+
+    #[test]
     fn only_web_and_mail_links_open() {
         for ok in ["https://example.com/a?b=c", "http://localhost:3000", "mailto:a@b.c", "HTTPS://X.COM"] {
             assert!(external_ok(ok), "{ok}");

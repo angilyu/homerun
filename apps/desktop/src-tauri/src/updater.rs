@@ -50,11 +50,18 @@ fn short(e: impl std::fmt::Display) -> String {
     homerun_shell_core::notify::clean(&e.to_string(), 200)
 }
 
+/// A build made by scripts/macos/update-test.sh: its endpoint is plain http on localhost. Only
+/// such builds honour the HOMERUN_TEST_* and HOMERUN_UPDATE_CHECK_NOW switches; the flag is
+/// compiled into the bundle's config, so a release build can't be talked into them.
+pub fn is_test_build(app: &AppHandle) -> bool {
+    plugin_config(app).get("dangerousInsecureTransportProtocol").and_then(Value::as_bool).unwrap_or(false)
+}
+
 impl Updater {
     pub fn new(app: &AppHandle, data_dir: &std::path::Path, auto: bool, hooks: Hooks) -> Arc<Updater> {
         let cfg = plugin_config(app);
         let pubkey = cfg.get("pubkey").and_then(Value::as_str).unwrap_or("").to_string();
-        let test_build = cfg.get("dangerousInsecureTransportProtocol").and_then(Value::as_bool).unwrap_or(false);
+        let test_build = is_test_build(app);
         let state = if cfg!(debug_assertions) {
             UpdateState::Unavailable { message: "Updates are off in development builds.".into() }
         } else if !pubkey_configured(&pubkey) {
@@ -229,4 +236,23 @@ pub fn verify(pubkey: &str, signature: &str, data: &[u8]) -> Result<(), String> 
 
 pub fn get(app: &AppHandle) -> Option<Arc<Updater>> {
     app.try_state::<Arc<Updater>>().map(|s| s.inner().clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify;
+
+    // An ephemeral key from `tauri signer generate`; its secret half was never kept (§11).
+    const PUB: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxQzc0OEY1MkE1MkQxNTgKUldSWTBWSXE5VWpIVWYzdjhqeVo3Tkl4QU90NGJSa0VaZUdyTHFuckptc1dWalBORUVqdWhnb0QK";
+    // `tauri signer sign --app-version 0.9.0` over PAYLOAD.
+    const SIG: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSWTBWSXE5VWpIVWU3UUprb1pLa3d0cDV4dXROaGV5QUFVNHVuaG9PTjFGTHZ2RnNIckVxSG13ZzM2bmxSbGZlNEt5eHc2S3lRcEh0STlIbW01UnllZndsVlVFelllVmdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwNzQwNDU4CWZpbGU6cGF5bG9hZAl2ZXJzaW9uOjAuOS4wCmpWL1lnZ3RmTnNLdjY2S0hTRlJyL3FsRzh3MkUrNGYrZkRaSkt4U3JWL2JzSWFPcWJCQ0QwVTJkR2FFL2FwM0pVSjEwZXU2RHRvNXQ1TGQreCtIMkJBPT0K";
+    const PAYLOAD: &[u8] = b"homerun update payload";
+
+    #[test]
+    fn a_staged_update_is_verified_again_before_it_installs() {
+        assert_eq!(verify(PUB, SIG, PAYLOAD), Ok(()));
+        assert!(verify(PUB, SIG, b"homerun update payloaD").is_err(), "tampered payload");
+        assert!(verify(PUB, "not base64!", PAYLOAD).is_err());
+        assert!(verify(homerun_shell_core::update::PLACEHOLDER_PUBKEY, SIG, PAYLOAD).is_err(), "the placeholder never verifies");
+    }
 }

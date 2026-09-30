@@ -4,7 +4,7 @@
 
 use crate::keychain::Keychain;
 use crate::notifications;
-use homerun_shell_core::keys::{KeyStore, MemoryKeyStore, API_KEY};
+use homerun_shell_core::keys::{KeyStore, MemoryKeyStore, Remembered, API_KEY};
 use homerun_shell_core::notify::{Notices, Op};
 use homerun_shell_core::prefs::{self, Prefs};
 use homerun_shell_core::runtime::{Config, Host, Runtime};
@@ -194,10 +194,27 @@ fn runtime_program() -> PathBuf {
 /// Release builds use the keychain. Debug builds default to memory, because every rebuild of an
 /// unsigned shell is a new code identity and the legacy keychain would prompt each time; a key
 /// in the shell's `ANTHROPIC_API_KEY` seeds it. `HOMERUN_KEYSTORE=keychain` opts in (plan §5).
-fn key_store() -> Box<dyn KeyStore> {
-    let memory = cfg!(debug_assertions) && std::env::var("HOMERUN_KEYSTORE").as_deref() != Ok("keychain");
+///
+/// Update-test builds (`test`, see updater.rs) also take `HOMERUN_KEYSTORE=memory`, or
+/// `HOMERUN_TEST_KEYCHAIN_SERVICE`: a keychain item of its own, seeded once from
+/// `ANTHROPIC_API_KEY`, so the test proves an updated shell reads it without a prompt (§11).
+fn key_store(test: bool) -> Box<dyn KeyStore> {
+    let env = std::env::var("HOMERUN_KEYSTORE");
+    let memory = if cfg!(debug_assertions) { env.as_deref() != Ok("keychain") } else { test && env.as_deref() == Ok("memory") };
     if !memory && cfg!(target_os = "macos") {
-        return Box::new(Keychain::new());
+        let kc = Keychain::new();
+        if let (true, Some(svc)) = (test, std::env::var_os("HOMERUN_TEST_KEYCHAIN_SERVICE")) {
+            crate::keychain::use_test_service(&svc.to_string_lossy());
+            if let (Ok(None), Ok(k)) = (kc.get(API_KEY), std::env::var("ANTHROPIC_API_KEY")) {
+                if let Ok(k) = homerun_shell_core::keys::check_format(&k) {
+                    // The error names the keychain call only, never the value.
+                    if let Err(e) = kc.set(API_KEY, &k) {
+                        eprintln!("homerun: test keychain seed failed: {e}");
+                    }
+                }
+            }
+        }
+        return Box::new(Remembered::new(kc));
     }
     let m = MemoryKeyStore::default();
     if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
@@ -208,13 +225,13 @@ fn key_store() -> Box<dyn KeyStore> {
     Box::new(m)
 }
 
-pub fn start(version: &str) -> Shell {
+pub fn start(version: &str, test: bool) -> Shell {
     let data_dir = data_dir();
     let mut cfg = Config::new(runtime_program(), data_dir.join("logs").join("homerund.log"), version);
     // Secrets travel over the launch-token connection only, never the environment (§5.2).
     cfg.env_remove = vec!["ANTHROPIC_API_KEY".into(), "ANTHROPIC_AUTH_TOKEN".into()];
     let host = Arc::new(AppHost {
-        keys: key_store(),
+        keys: key_store(test),
         channel: Mutex::new(None),
         status: Mutex::new(RuntimeStatus::Starting),
         events: Mutex::new(Events::default()),
