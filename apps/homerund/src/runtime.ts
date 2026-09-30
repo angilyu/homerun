@@ -24,7 +24,7 @@ import { SecretStore } from "./secrets";
 import { useCliToken } from "./store/cli-tokens";
 import { openDb } from "./store/db";
 import { migrate, type MigrateOutcome } from "./store/migrate";
-import { ensureDevice, getRunRow, runsInState, setRunState, updateRun, type RunRow } from "./store/rows";
+import { ensureDevice, getInputRequest, getRunRow, runsInState, setRunState, updateRun, type RunRow } from "./store/rows";
 import { DigestScheduler } from "./monitors/digest";
 import { platformAssertions, type PowerAssertions } from "./power/power";
 import { deviceTimezone, systemClock, type Clock } from "./schedule/clock";
@@ -182,7 +182,16 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     const timeouts = new InputTimeouts(ctx, clock, manager.gateResolver, scheduler);
     let server: RpcServer | null = null;
     // Local notifications go to the shell connection only: `notification.*` lists no other recipient (§8.2, §9.7).
-    const notifier = new Notifier(store, (m, p) => server?.broadcast(m, p), o.notifyCoalesceMs);
+    // …and, as sealed pushes, to paired iPhones (§9.7).
+    let pushRemote: RemoteService["push"] | null = null;
+    const notifier = new Notifier(
+      store,
+      (m, p) => {
+        server?.broadcast(m, p);
+        if (m === "notification.requested") pushRemote?.(p as Parameters<RemoteService["push"]>[0]);
+      },
+      o.notifyCoalesceMs,
+    );
     const digest = new DigestScheduler(store, deviceZone, (d) => {
       server?.broadcast("health.digest_ready", { digest: d });
       notifier.digestReady(d);
@@ -212,6 +221,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       closeTokenConnections: (tokenId) => server?.closeTokenConnections(tokenId),
     });
     const shellSecrets = new ShellSecrets(secrets, () => server?.shell() ?? null);
+    const changes = new ThreadChanges(store, device.device_id, (summary) => server?.broadcast("threads.changed", { summary }));
     const remote = new RemoteService({
       config: config.remote,
       store,
@@ -224,9 +234,19 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         return server.adopt(sink, peer);
       },
       hostname: device.hostname,
+      effects: {
+        sendMessage: (p, origin) => manager.sendMessage(p, origin),
+        createThread: (title, taskId) => manager.createThread(title, taskId),
+        answer: (requestId, a) => {
+          const r = getInputRequest(store, requestId);
+          if (!r) throw new Error("no such input request");
+          return r.prompt.type === "ambiguous_tool_call" ? manager.answerAmbiguous(requestId, a) : manager.answerInput(requestId, a);
+        },
+        touch: (threadId) => changes.touch(threadId),
+      },
       ...o.remote,
     });
-    const changes = new ThreadChanges(store, device.device_id, (summary) => server?.broadcast("threads.changed", { summary }));
+    pushRemote = (n) => remote.push(n);
     server = new RpcServer({
       socketPath: config.socketPath,
       runDir: config.runDir,

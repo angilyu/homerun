@@ -7,7 +7,7 @@ import { decodePairingUrl } from "@homerun/protocol";
 import { LinkDeclinedError, LiveClosedError, RpcCallError } from "@homerun/remote";
 import { RpcCallError as LocalCallError } from "../../src/rpc/client";
 import { socketRuntime, until } from "../helpers";
-import { connected, desktop, envFor, helloLive, newUser, phone, relayState, settled, shellFor, startWorld, type World } from "./harness";
+import { connected, desktop, envFor, pairByQr as pairWith, helloLive, newUser, phone, relayState, settled, shellFor, startWorld, type World } from "./harness";
 
 let w: World;
 beforeAll(async () => {
@@ -37,12 +37,7 @@ async function aPhone(o: Parameters<typeof phone>[1] = {}) {
 
 type Desk = Awaited<ReturnType<typeof signedInDesktop>>;
 
-async function pairByQr(d: Desk, p: Awaited<ReturnType<typeof aPhone>>) {
-  const offer = await d.sh.c.call("devices.pairing.start", {});
-  const desk = await p.client.pair(offer.qr_url);
-  await until(() => d.sh.notes.some((n) => n.method === "devices.pairing_completed"), 5000, "pairing_completed");
-  return { offer, desk };
-}
+const pairByQr = (d: Desk, p: Awaited<ReturnType<typeof aPhone>>) => pairWith(d.sh, p.client);
 
 const list = async (d: Desk): Promise<PairedDevice[]> => (await d.sh.c.call("devices.list", {})).devices;
 
@@ -84,6 +79,29 @@ describe("the relay link (§9.2, §9.4)", () => {
     const d2 = await signedInDesktop({ dir, keychain, signIn: false });
     expect((await d2.sh.status()).state).toBe("signed_in");
     expect(JSON.parse(keychain.get("device_static_key")!).device_id).toBe(id);
+  });
+
+  test("a crashed runtime comes back as the same desktop: the phone's live session ends, and a new one works", async () => {
+    newUser(w);
+    const dir = mkdtempSync(join(tmpdir(), "hr-remote-"));
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    const keychain = new Map<string, string>();
+    const d1 = await desktop(w, { dir, keychain });
+    cleanup.push(() => d1.srt.close());
+    await connected(d1.sh);
+    const p = await aPhone();
+    const { desk } = await pairByQr(d1, p);
+    const live = await p.client.openLive(desk.device_id);
+    await helloLive(live, p.client.deviceId);
+    d1.srt.crash();
+    await expect(live.request("threads.list", {})).rejects.toBeDefined();
+    await live.closed;
+
+    const d2 = await signedInDesktop({ dir, keychain, signIn: false });
+    expect((await list(d2)).map((x) => x.device_id)).toEqual([p.client.deviceId]);
+    const again = await p.client.openLive(desk.device_id);
+    expect(await helloLive(again, p.client.deviceId)).toMatchObject({ role: "ios" });
+    expect(await again.request("threads.list", {})).toMatchObject({ threads: [] });
   });
 
   test("keys arriving after the token are waited for; keys gone from the keychain start afresh", async () => {

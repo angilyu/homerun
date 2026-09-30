@@ -8,6 +8,7 @@ import { forgetIdentity, loadIdentity, newIdentity } from "./keys";
 import { RelayLink, type RelayLinkDeps } from "./link";
 import { Linking } from "./linking";
 import { Pairing } from "./pairing";
+import { SealedMessages, type SealedEffects } from "./sealed";
 import { LiveSessions, type SessionConnection } from "./sessions";
 
 /**
@@ -36,6 +37,8 @@ export interface RemoteDeps extends Omit<AccountDeps, "openBrowser" | "accountSw
   wakePingMs?: number;
   pairingTtlMs?: number;
   linkRequestTtlMs?: number;
+  /** What sealed instructions and lock-screen answers do (the run manager). */
+  effects?: SealedEffects;
 }
 
 /** What tests may shorten or replace. */
@@ -59,6 +62,7 @@ export class RemoteService {
   readonly sessions: LiveSessions;
   private readonly pairing: Pairing;
   private readonly linking: Linking;
+  private readonly sealed: SealedMessages;
   private readonly name: string;
   /** Devices we asked the relay to link and haven't seen in its list yet. */
   private pendingLinks = new Set<string>();
@@ -111,6 +115,15 @@ export class RemoteService {
         if (!d.adopt) throw new Error("no RPC server to serve live sessions");
         return d.adopt(sink, peer);
       },
+    });
+    this.sealed = new SealedMessages({
+      store: d.store,
+      devices: this.devices,
+      me,
+      now: d.now,
+      ...(d.effects ? { effects: d.effects } : {}),
+      ack: (id) => void send({ type: "ack", id }),
+      post: (env) => (this.link ? this.link.call("POST", RELAY_PATHS.sealed, { envelope: env }) : Promise.reject(new Error("no relay"))),
     });
     this.link = d.config
       ? new RelayLink({
@@ -226,6 +239,16 @@ export class RemoteService {
     this.account.shellConnected();
   }
 
+  /** A local notification was shown: paired iPhones get it as a sealed push (§9.7). */
+  push(n: Parameters<SealedMessages["push"]>[0]): void {
+    if (!this.link || !this.account.usable || this.stopped) return;
+    try {
+      this.sealed.push(n);
+    } catch (e) {
+      log.info("push not sent", { error: (e as Error).message });
+    }
+  }
+
   /** The machine woke from sleep (`power.did_wake`). */
   wake(): void {
     this.link?.wake();
@@ -307,6 +330,8 @@ export class RemoteService {
         return this.linking.onRendezvous(f);
       case "rendezvous_close":
         return this.linking.onClose(f.from, f.session);
+      case "sealed":
+        return this.sealed.receive(f.id, f.envelope);
       case "error":
         log.info("relay error", { code: f.code, message: f.message });
         return;

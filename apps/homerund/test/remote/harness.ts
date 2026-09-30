@@ -2,7 +2,9 @@ import { type AccountStatus, type PairedDevice, PROTOCOL_VERSION } from "@homeru
 import { Account, MemoryStore, RemoteClient, type RemoteLive } from "@homerun/remote";
 import { startLocalRelay, type LocalRelay } from "@homerun/relay/local";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
+import type { FakeScript } from "../../src/agent/fake-engine";
 import { RpcClient } from "../../src/rpc/client";
+import type { RuntimeOptions } from "../../src/runtime";
 import { LAUNCH_TOKEN, socketRuntime, until, type SocketRuntime } from "../helpers";
 
 /**
@@ -109,13 +111,20 @@ export const relayState = (sh: Shell, state: AccountStatus["relay"]["state"], ti
   until(() => sh.statuses.at(-1)?.relay.state === state, timeoutMs, `relay ${state}`);
 
 /** A desktop: the runtime with its shell, signed in and connected to the relay. */
-export async function desktop(w: World, o: { dir?: string; keychain?: Map<string, string>; signIn?: boolean; remote?: NonNullable<Parameters<typeof socketRuntime>[0]>["remote"] } = {}) {
+export async function desktop(
+  w: World,
+  o: { dir?: string; keychain?: Map<string, string>; signIn?: boolean; remote?: RuntimeOptions["remote"]; script?: FakeScript; env?: Record<string, string> } = {},
+) {
   const srt = await socketRuntime({
-    env: envFor(w),
+    env: { ...envFor(w), ...o.env },
     ...(o.dir ? { dir: o.dir } : {}),
+    ...(o.script ? { script: o.script } : {}),
     remote: { linkBackoff: { initialMs: 50, maxMs: 500 }, ...o.remote },
   });
-  const sh = await shellFor(srt, w.issuer, { keychain: o.keychain });
+  const keychain = o.keychain ?? new Map<string, string>();
+  // A stand-in key, so runs start (the fake engine never calls Anthropic).
+  if (!keychain.has("anthropic_api_key")) keychain.set("anthropic_api_key", "sk-ant-mock-not-a-real-key");
+  const sh = await shellFor(srt, w.issuer, { keychain });
   if (o.signIn !== false && (await sh.status()).state !== "signed_in") {
     await sh.c.call("account.sign_in", {});
     await settled(sh, "signed_in");
@@ -165,4 +174,22 @@ export async function helloLive(live: RemoteLive, deviceId: string, role: "ios" 
     client: { name: "reference-client", version: "0" },
     capabilities: [],
   });
+}
+
+/** Pairs a phone by scanning the desktop's QR code (§9.6). */
+export async function pairByQr(sh: Shell, client: RemoteClient) {
+  const offer = await sh.c.call("devices.pairing.start", {});
+  const desk = await client.pair(offer.qr_url);
+  await until(() => sh.notes.some((n) => n.method === "devices.pairing_completed" && (n.params as { offer_id: string }).offer_id === offer.offer_id), 5000, "pairing_completed");
+  return { offer, desk };
+}
+
+/** Links a browser (or phone) by matching codes, approved on the desktop (§10.5). */
+export async function linkByCode(sh: Shell, client: RemoteClient) {
+  const deskId = (await client.accountDevices()).find((x) => x.kind === "desktop")!.device_id;
+  const before = sh.prompts.length;
+  const linked = client.linkByCode(deskId, () => {});
+  await until(() => sh.prompts.length > before, 5000, "link prompt");
+  await sh.c.call("devices.link.decide", { request_id: sh.prompts.at(-1)!.request_id, approve: true });
+  return linked;
 }
