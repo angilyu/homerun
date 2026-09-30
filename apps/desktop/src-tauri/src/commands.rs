@@ -13,6 +13,7 @@ use homerun_shell_core::quit::Why;
 use homerun_shell_core::update::UpdateState;
 use homerun_shell_core::RuntimeStatus;
 use serde_json::{json, Value};
+#[cfg(not(windows))]
 use std::process::Command;
 use std::sync::Arc;
 use tauri::ipc::Channel;
@@ -86,7 +87,7 @@ pub fn open_external(url: String) -> Res<()> {
     if !external_ok(&url) {
         return Err(ShellError::shell("Homerun only opens web and email links."));
     }
-    open(&[&url])
+    open(&url)
 }
 
 pub fn external_ok(url: &str) -> bool {
@@ -96,18 +97,41 @@ pub fn external_ok(url: &str) -> bool {
         && !url.chars().any(|c| c.is_control() || c.is_whitespace())
 }
 
-/// Settings → *Show logs*: the runtime's log in Finder.
+/// Settings → *Show logs*: the runtime's log in Finder (Explorer on Windows).
 #[tauri::command]
 pub fn reveal_logs(shell: State<'_, Arc<Shell>>) -> Res<()> {
     let p = shell.rt.log_path();
     let p = if p.exists() { p } else { shell.data_dir.join("logs") };
-    open(&["-R", &p.display().to_string()])
+    reveal(&p)
 }
 
-fn open(args: &[&str]) -> Res<()> {
+fn couldnt(e: impl std::fmt::Display) -> ShellError {
+    ShellError::shell(format!("Couldn't open it: {e}"))
+}
+
+/// A link or a settings page in its default handler.
+#[cfg(not(windows))]
+fn open(target: &str) -> Res<()> {
     let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    let args: Vec<&str> = if cfg!(target_os = "macos") { args.to_vec() } else { args.iter().filter(|a| **a != "-R").copied().collect() };
-    Command::new(program).args(args).spawn().map(|_| ()).map_err(|e| ShellError::shell(format!("Couldn't open it: {e}")))
+    Command::new(program).arg(target).spawn().map(|_| ()).map_err(couldnt)
+}
+
+#[cfg(windows)]
+fn open(target: &str) -> Res<()> {
+    crate::win::shell_open(target).map_err(couldnt)
+}
+
+#[cfg(not(windows))]
+fn reveal(p: &std::path::Path) -> Res<()> {
+    let p = p.display().to_string();
+    let args: &[&str] = if cfg!(target_os = "macos") { &["-R", &p] } else { &[&p] };
+    let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    Command::new(program).args(args).spawn().map(|_| ()).map_err(couldnt)
+}
+
+#[cfg(windows)]
+fn reveal(p: &std::path::Path) -> Res<()> {
+    crate::win::reveal(p).map_err(couldnt)
 }
 
 #[tauri::command]
@@ -174,7 +198,7 @@ pub async fn notifications_request() -> Res<Permission> {
 
 #[tauri::command]
 pub fn open_notification_settings() -> Res<()> {
-    open(&[notifications::SETTINGS_URL])
+    open(notifications::SETTINGS_URL)
 }
 
 #[tauri::command]
@@ -205,9 +229,9 @@ pub fn update_set_auto(app: AppHandle, shell: State<'_, Arc<Shell>>, on: bool) {
 
 /// Where the app runs from, for *Install command-line tool* (§5.2).
 fn cli_place() -> Res<Place> {
-    let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).ok_or_else(|| ShellError::shell("HOME isn't set."))?;
+    let home = homerun_shell_core::dirs::home(cfg!(windows), |k| std::env::var_os(k)).ok_or_else(|| ShellError::shell("HOME isn't set."))?;
     let exe = std::env::current_exe().map_err(|e| ShellError::shell(e.to_string()))?;
-    Ok(Place { home: home.into(), exe })
+    Ok(Place { home, exe })
 }
 
 #[tauri::command]

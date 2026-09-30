@@ -10,6 +10,17 @@ use tauri::{AppHandle, Wry};
 
 const ID: &str = "homerun";
 
+/// Windows has no template images, and its taskbar may be light or dark: coloured icons there.
+#[cfg(windows)]
+fn icon(i: Icon) -> Image<'static> {
+    match i {
+        Icon::Normal => tauri::include_image!("icons/tray-normal-win.png"),
+        Icon::Attention => tauri::include_image!("icons/tray-attention-win.png"),
+        Icon::Trouble => tauri::include_image!("icons/tray-trouble-win.png"),
+    }
+}
+
+#[cfg(not(windows))]
 fn icon(i: Icon) -> Image<'static> {
     match i {
         Icon::Normal => tauri::include_image!("icons/tray-normal.png"),

@@ -121,7 +121,31 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows: toasts (win.rs). Windows doesn't ask first, so `request` only reports.
+#[cfg(windows)]
+mod imp {
+    use super::*;
+    use crate::win;
+    pub fn init(on_click: impl Fn(Target) + Send + Sync + 'static) {
+        win::toasts_init(on_click);
+    }
+    pub fn post(p: &Post) {
+        if !FOCUSED.load(Ordering::SeqCst) {
+            win::toast_post(p);
+        }
+    }
+    pub fn withdraw(key: &str) {
+        win::toast_withdraw(key);
+    }
+    pub fn status() -> Permission {
+        win::toast_status()
+    }
+    pub fn request() -> Permission {
+        win::toast_status()
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 mod imp {
     use super::*;
     pub fn init(_on_click: impl Fn(Target) + Send + Sync + 'static) {}
@@ -138,4 +162,8 @@ mod imp {
 pub use imp::*;
 
 /// System Settings → Notifications → Homerun.
+#[cfg(not(windows))]
 pub const SETTINGS_URL: &str = "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.angilyu.homerun";
+/// Settings → System → Notifications.
+#[cfg(windows)]
+pub const SETTINGS_URL: &str = crate::win::NOTIFICATION_SETTINGS;

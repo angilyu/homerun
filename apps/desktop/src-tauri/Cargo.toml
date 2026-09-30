@@ -30,6 +30,26 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
 block2 = "0.6"
 security-framework = { version = "3.7", features = ["OSX_10_15"] }
 
+# The Windows shell (§5.1, §18 row @winshell): Credential Manager, the Run key, the session and
+# power notifications, task dialogs and toasts. `windows` is already in the tree through Tauri
+# (tao, wry, webview2-com); these are features of the same version, not new crates.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Data_Xml_Dom",
+  "Foundation",
+  "UI_Notifications",
+  "Win32_Foundation",
+  "Win32_Security_Credentials",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Power",
+  "Win32_System_Registry",
+  "Win32_System_Shutdown",
+  "Win32_UI_Controls",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [profile.release]
 strip = true
 lto = true

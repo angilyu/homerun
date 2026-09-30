@@ -38,13 +38,28 @@ pub fn open_settings() {
     unsafe { objc2_service_management::SMAppService::openSystemSettingsLoginItems() };
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows: the per-user `Run` value, with Task Manager's switch (win.rs, `shell-core::login`).
+#[cfg(windows)]
+pub fn status() -> LoginItem {
+    crate::win::login_status()
+}
+#[cfg(windows)]
+pub fn set(on: bool) -> Result<LoginItem, String> {
+    crate::win::login_set(on)
+}
+/// Settings → Apps → Startup.
+#[cfg(windows)]
+pub fn open_settings() {
+    let _ = crate::win::shell_open(crate::win::STARTUP_SETTINGS);
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn status() -> LoginItem {
     LoginItem::Unavailable
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn set(_on: bool) -> Result<LoginItem, String> {
-    Err("Open at login is macOS-only for now.".into())
+    Err("Open at login isn't available here yet.".into())
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn open_settings() {}

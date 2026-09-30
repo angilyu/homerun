@@ -11,7 +11,9 @@ use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
-use tauri::{ActivationPolicy, AppHandle, Manager, Url, WebviewWindowBuilder};
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
+use tauri::{AppHandle, Manager, Url, WebviewWindowBuilder};
 
 /// The app's own pages only; anything else is refused (links go through `open_external`).
 pub fn navigation_allowed(url: &Url) -> bool {
@@ -51,6 +53,8 @@ pub fn window_closed(app: &AppHandle) {
     notifications::set_focused(false);
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// A notification click or a menu row: open the window at that screen.
@@ -135,7 +139,9 @@ pub fn should_terminate(app: &AppHandle) -> bool {
 
 /// If the quit hook can't be installed (a future tao with its own `applicationShouldTerminate:`),
 /// ⌘Q at least goes through the confirmation: the app menu's Quit becomes our item. Dock → Quit
-/// and AppleScript then quit without asking, which the log records.
+/// and AppleScript then quit without asking, which the log records. Windows has no app menu:
+/// there the tray's Quit is the only way to quit, and it always asks.
+#[cfg(not(windows))]
 pub fn fallback_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem as P, Submenu};
     let quit = MenuItem::with_id(app, Action::Quit.id(), "Quit Homerun", true, Some("CmdOrCtrl+Q"))?;

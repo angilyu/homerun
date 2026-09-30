@@ -6,6 +6,9 @@
 //! errSecMissingEntitlement, and falls back to the legacy file keychain for the rest of the
 //! session (§11). Every call runs on its own thread with a timeout, because the legacy
 //! keychain can block on an "allow access" prompt; a timeout is reported as NeedsApproval.
+//!
+//! On Windows the same store is Credential Manager (win.rs `cred`): no entitlement and no
+//! prompt, so `legacy` never changes there.
 
 use homerun_shell_core::keys::{KeyError, KeyStore};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,8 +27,10 @@ pub fn use_test_service(name: &str) {
     let _ = SERVICE.set(name.to_string());
 }
 const TIMEOUT: Duration = Duration::from_secs(5);
+const STORE: &str = if cfg!(windows) { "Credential Manager" } else { "The keychain" };
 
 const ERR_MISSING_ENTITLEMENT: i32 = -34018;
+#[cfg(target_os = "macos")]
 const ERR_ITEM_NOT_FOUND: i32 = -25300;
 const ERR_INTERACTION_NOT_ALLOWED: i32 = -25308;
 const ERR_AUTH_FAILED: i32 = -25293;
@@ -56,7 +61,7 @@ impl Keychain {
         match rx.recv_timeout(TIMEOUT) {
             Ok(Ok(v)) => Ok(v),
             Ok(Err(ERR_INTERACTION_NOT_ALLOWED | ERR_AUTH_FAILED | ERR_USER_CANCELED)) | Err(_) => Err(KeyError::NeedsApproval),
-            Ok(Err(code)) => Err(KeyError::Other(format!("The keychain refused ({code})."))),
+            Ok(Err(code)) => Err(KeyError::Other(format!("{STORE} refused ({code})."))),
         }
     }
 }
@@ -95,9 +100,24 @@ mod ops {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 mod ops {
-    // Windows and Linux shells are a later milestone (§17 Q1); debug builds use the memory store.
+    use crate::win::cred;
+
+    pub fn get(account: &str, _legacy: bool) -> Result<Option<String>, i32> {
+        cred::get(super::service(), account)
+    }
+    pub fn delete(account: &str, _legacy: bool) -> Result<(), i32> {
+        cred::delete(super::service(), account)
+    }
+    pub fn set(account: &str, value: &str, _legacy: bool) -> Result<(), i32> {
+        cred::set(super::service(), account, value)
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+mod ops {
+    // A Linux shell is a later milestone (§17 Q1); debug builds use the memory store.
     pub fn get(_: &str, _: bool) -> Result<Option<String>, i32> {
         Err(-4)
     }
@@ -123,6 +143,9 @@ impl KeyStore for Keychain {
         self.run(move |legacy| ops::delete(&name, legacy))
     }
     fn kind(&self) -> &'static str {
+        if cfg!(windows) {
+            return "credential manager";
+        }
         if self.legacy.load(Ordering::Relaxed) {
             "keychain (legacy)"
         } else {

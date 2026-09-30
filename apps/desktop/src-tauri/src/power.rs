@@ -1,8 +1,9 @@
 // Sleep and wake (design §8.1, §8.4): the shell observes NSWorkspace's will-sleep and did-wake
-// notifications and forwards them to the runtime as `power.will_sleep` and `power.did_wake` on
+// notifications (Windows: suspend and resume, win.rs) and forwards them to the runtime as `power.will_sleep` and `power.did_wake` on
 // its persistent shell connection, so fires missed while asleep are attributed to sleep with
 // exact times. The runtime does not depend on them: it also detects sleep from gaps in its own
-// ticks. Power assertions are held by the runtime itself (caffeinate), not here.
+// ticks. Power assertions are held by the runtime itself (caffeinate, or SetThreadExecutionState
+// on Windows), not here.
 
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -62,7 +63,15 @@ pub fn observe(on_event: impl Fn(PowerEvent) + 'static) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows: `PowerRegisterSuspendResumeNotification`, on a system thread (win.rs).
+#[cfg(windows)]
+pub fn observe(on_event: impl Fn(PowerEvent) + Send + Sync + 'static) {
+    if !crate::win::observe_power(on_event) {
+        eprintln!("homerun: sleep and wake notifications are unavailable");
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn observe(_on_event: impl Fn(PowerEvent) + 'static) {}
 
 #[cfg(test)]

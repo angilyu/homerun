@@ -177,14 +177,10 @@ impl Shell {
     }
 }
 
-/// `HOMERUN_DATA_DIR`, or `~/Library/Application Support/Homerun`, as `@homerun/client`'s
-/// `dataDir` resolves it, so the shell's log lands next to the runtime's data.
+/// `HOMERUN_DATA_DIR`, `~/Library/Application Support/Homerun` or `%LOCALAPPDATA%\Homerun`, as
+/// `@homerun/client`'s `dataDir` resolves it, so the shell's log lands next to the runtime's data.
 pub fn data_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("HOMERUN_DATA_DIR") {
-        return PathBuf::from(d);
-    }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    home.join("Library").join("Application Support").join("Homerun")
+    homerun_shell_core::dirs::this_data_dir()
 }
 
 /// `homerund` sits next to the shell's executable, in the bundle and in `tauri dev` alike
@@ -196,10 +192,11 @@ fn runtime_program() -> PathBuf {
         }
     }
     let exe = std::env::current_exe().unwrap_or_default();
-    exe.parent().map(|d| d.join("homerund")).unwrap_or_else(|| PathBuf::from("homerund"))
+    let name = format!("homerund{}", std::env::consts::EXE_SUFFIX);
+    exe.parent().map(|d| d.join(&name)).unwrap_or_else(|| PathBuf::from(&name))
 }
 
-/// Release builds use the keychain. Debug builds default to memory, because every rebuild of an
+/// Release builds use the keychain (Credential Manager on Windows). Debug builds default to memory, because every rebuild of an
 /// unsigned shell is a new code identity and the legacy keychain would prompt each time; a key
 /// in the shell's `ANTHROPIC_API_KEY` seeds it. `HOMERUN_KEYSTORE=keychain` opts in (plan §5).
 ///
@@ -209,7 +206,7 @@ fn runtime_program() -> PathBuf {
 fn key_store(test: bool) -> Box<dyn KeyStore> {
     let env = std::env::var("HOMERUN_KEYSTORE");
     let memory = if cfg!(debug_assertions) { env.as_deref() != Ok("keychain") } else { test && env.as_deref() == Ok("memory") };
-    if !memory && cfg!(target_os = "macos") {
+    if !memory && (cfg!(target_os = "macos") || cfg!(windows)) {
         let kc = Keychain::new();
         if let (true, Some(svc)) = (test, std::env::var_os("HOMERUN_TEST_KEYCHAIN_SERVICE")) {
             crate::keychain::use_test_service(&svc.to_string_lossy());

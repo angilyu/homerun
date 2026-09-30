@@ -16,6 +16,8 @@ mod power;
 mod shell;
 mod tray;
 mod updater;
+#[cfg(windows)]
+mod win;
 
 use homerun_shell_core::keys;
 use homerun_shell_core::tray::Action;
@@ -107,9 +109,19 @@ fn main() {
             let hook = handle.clone();
             if !macos::install_quit_hook(move || lifecycle::should_terminate(&hook)) {
                 shell.rt.log_event("quit.hook_unavailable", json!({}));
+                #[cfg(not(windows))]
                 app.set_menu(lifecycle::fallback_menu(&handle)?)?;
             }
             macos::observe_power_off();
+            // Windows: the session is ending and this process ends with it, so stop the runtime
+            // now (RunEvent::Exit won't come).
+            #[cfg(windows)]
+            {
+                let s = shell.clone();
+                win::on_session_end(move || {
+                    s.rt.stop(Duration::from_secs(4));
+                });
+            }
 
             tray::create(&handle)?;
             lifecycle::spawn_refresher(&handle, shell.clone());

@@ -1,8 +1,10 @@
 //! AppKit glue for the process model (§5.1): how the app was launched, the quit hook, the
 //! power-off signal and native alerts, including the CLI access prompt (§5.2). Everything that
-//! decides lives in `shell-core`.
+//! decides lives in `shell-core`. On Windows the same functions come from win.rs.
 
+#[cfg(not(windows))]
 use homerun_shell_core::cli_access::{Answer, Prompt};
+#[cfg(not(windows))]
 use homerun_shell_core::quit::Dialog;
 
 /// Polled by the CLI access prompt; true closes it with no answer.
@@ -10,6 +12,7 @@ pub type Gone = Box<dyn Fn() -> bool + Send + Sync>;
 
 /// A real `.app` launch, as opposed to `tauri dev`'s bare binary: `SMAppService` and
 /// `UNUserNotificationCenter` need a bundle.
+#[cfg(target_os = "macos")]
 pub fn in_app_bundle() -> bool {
     std::env::current_exe().ok().is_some_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"))
 }
@@ -150,7 +153,12 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+mod imp {
+    pub use crate::win::{ask_cli_access, confirm, install_quit_hook, launched_at_login, observe_power_off, powering_off};
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 mod imp {
     use super::{Answer, Dialog, Gone, Prompt};
     pub fn launched_at_login() -> bool {
