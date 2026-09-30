@@ -18,6 +18,8 @@ export interface ClaudeEnvInput {
   platform?: NodeJS.Platform;
   /** Windows: `%SystemRoot%`, without which much of Win32 (sockets, crypto) fails to load. */
   systemRoot?: string;
+  /** Windows: the Git Bash homerund found for the Bash tool (`shell.ts`), or none. */
+  gitBash?: string | null;
 }
 
 /**
@@ -59,6 +61,12 @@ export function claudeEnv(i: ClaudeEnvInput): Record<string, string> {
  * Windows has no /bin: the same environment with the system directories on PATH, the variables
  * Win32 itself needs, TEMP and TMP beside TMPDIR, and USERPROFILE beside HOME. The user's
  * APPDATA and LOCALAPPDATA are left out, as the rest of homerund's environment is.
+ *
+ * The Bash tool runs the Git Bash homerund found, pinned so claude can't pick another, and
+ * claude's PowerShell tool is off: its commands are a dialect the classifier doesn't read (§18).
+ * With no Git Bash claude has no Bash tool, and it refuses to start if the PowerShell tool is
+ * off too, so then the variable is left unset; the PowerShell tool is still never in the
+ * `tools` list and policy denies it.
  */
 function windowsEnv(env: Record<string, string>, i: ClaudeEnvInput): Record<string, string> {
   const root = i.systemRoot ?? process.env.SystemRoot ?? "C:\\Windows";
@@ -74,10 +82,12 @@ function windowsEnv(env: Record<string, string>, i: ClaudeEnvInput): Record<stri
     TEMP: i.tmpDir,
     USERPROFILE: env.HOME!,
   };
-  // /bin/bash and its BASH_ENV don't exist here; a shell is passed on only if the user chose theirs.
+  // claude sets SHELL to the Git Bash it runs; the user's own shell isn't bash on Windows.
   delete out.SHELL;
-  delete out.BASH_ENV;
-  if (i.useShellEnvironment && i.userShell) out.SHELL = i.userShell;
+  if (i.gitBash) {
+    out.CLAUDE_CODE_GIT_BASH_PATH = i.gitBash;
+    out.CLAUDE_CODE_USE_POWERSHELL_TOOL = "0";
+  } else delete out.BASH_ENV;
   return out;
 }
 

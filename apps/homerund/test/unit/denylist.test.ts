@@ -178,6 +178,7 @@ function ctx(over: Partial<PolicyContext> = {}): PolicyContext {
     grantsAllowed: true,
     denylist: cfg(),
     sessionId: null,
+    shellDialect: "bash",
     ...over,
   };
 }

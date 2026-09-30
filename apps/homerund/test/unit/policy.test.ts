@@ -41,6 +41,7 @@ function ctx(over: Partial<PolicyContext> = {}): PolicyContext {
     grantsAllowed: true,
     denylist: { homes: [join(dir, "home")], dataDir: join(dir, "data"), workspacesDir: join(dir, "data", "workspaces"), claudeConfigDir: join(dir, "data", "claude-config"), tmpDir: join(dir, "data", "tmp"), caseInsensitive: false },
     sessionId: null,
+    shellDialect: "bash",
     ...over,
   };
 }
@@ -101,6 +102,29 @@ describe("tool policy (§5.5, §5.6)", () => {
     // A declared destructive pattern wins over a grant.
     const rm = grant({ tool: "Bash", pattern: "rm *", class: "write" });
     expect(decide(ctx({ grants: [rm] }), "Bash", { command: "rm x" }).approval?.reason).toBe("destructive");
+  });
+
+  test("Bash in a shell dialect the classifier doesn't read: always destructive, no pattern, grant or 'Always'", () => {
+    const g = grant({ tool: "Bash", pattern: "npm install *", class: "write" });
+    const u = ctx({ shellDialect: "unknown", grants: [g] });
+    // Bash-syntax patterns and grants would read these PowerShell and cmd commands as harmless.
+    for (const command of ["git status (Remove-Item -Recurse C:\\x)", "git status $(ri x)", "npm install @(rd /s /q x)", "npm install left-pad", "git status %COMSPEC%", "git status"]) {
+      const d = decide(u, "Bash", { command });
+      expect(d).toMatchObject({ policy: "needs_approval", allow: false, toolClass: "destructive", approval: { reason: "destructive", offerAlways: false } });
+      expect(d.approval?.suggestedGrant).toBeUndefined();
+      expect(d.grantId).toBeUndefined();
+    }
+    // The same calls in bash are classified as before.
+    expect(decide(ctx({ grants: [g] }), "Bash", { command: "npm install left-pad" }).policy).toBe("granted");
+    expect(decide(ctx(), "Bash", { command: "git status" }).policy).toBe("allowed");
+  });
+
+  test("claude's Windows PowerShell tool is never a task's tool: denied, whatever the grants", () => {
+    const g = grant({ tool: "Bash", pattern: "git status*", class: "read" });
+    for (const dialect of ["bash", "unknown"] as const) {
+      const d = decide(ctx({ shellDialect: dialect, grants: [g] }), "PowerShell", { command: "git status" });
+      expect(d).toMatchObject({ policy: "denied", allow: false, toolClass: "destructive" });
+    }
   });
 
   test("MCP: untrusted until 'Trust this tool'; its output taints", () => {

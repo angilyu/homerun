@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CONCURRENCY, type BuildChannel } from "@homerun/core";
 import { chooseRunDir, dataDir as resolveDataDir, resolveBuildChannel, runningCompiled } from "@homerun/client";
+import { resolveClaudeShell, type ClaudeShell } from "./agent/claude/shell";
 import { secureDir } from "./platform/secure";
 
 export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "@homerun/client";
@@ -57,6 +58,8 @@ export interface Config {
   tmpDir: string;
   logsDir: string;
   claudePath: string;
+  /** The shell behind claude's Bash tool, and so the dialect its commands are in (`shell.ts`). */
+  claudeShell: ClaudeShell;
   limits: Limits;
   /** The user's real home, passed to tools as HOMERUN_USER_HOME. */
   userHome: string;
@@ -177,6 +180,7 @@ export function loadConfig(input: ConfigInput = {}): Config {
     tmpDir: ensureDir(join(dataDir, "tmp")),
     logsDir: ensureDir(join(dataDir, "logs")),
     claudePath: findClaude(env),
+    claudeShell: resolveClaudeShell(process.platform, env),
     limits: {
       session: num(env.HOMERUN_MAX_SESSIONS, DEFAULT_CONCURRENCY.session),
       monitor: num(env.HOMERUN_MAX_MONITORS, DEFAULT_CONCURRENCY.monitor),
