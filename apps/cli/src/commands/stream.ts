@@ -24,8 +24,10 @@ function printer(x: Ctx, own: Set<string>, transcript: boolean) {
 
 const invalid = (x: Ctx) => (why: string) => x.o.note(x.o.ce.yellow(`homerun: skipped an event homerund sent that does not parse: ${why}`));
 
-function closedError(): CliError {
-  return new CliError("homerund stopped while the CLI was following the thread", EXIT.UNAVAILABLE);
+function closedError(x: Ctx): CliError {
+  // The release role's connection also closes when its token is revoked in the app (§5.2).
+  const hint = x.role === "cli" ? "if this tool's access was revoked in the Homerun app, run `homerun login`" : undefined;
+  return new CliError("homerund closed the connection while the CLI was following the thread", EXIT.UNAVAILABLE, hint);
 }
 
 // ---------------------------------------------------------------- send
@@ -99,7 +101,7 @@ async function follow(x: Ctx, thread_id: string, client_msg_id: string, text: st
     o.note(o.ce.dim(`detached; the run continues. Follow it: homerun watch ${shortId(thread_id)} · stop it: homerun stop ${shortId(runId)}`));
     exit.resolve(EXIT.INTERRUPTED);
   });
-  void c.closed.then(() => exit.reject(closedError()));
+  void c.closed.then(() => exit.reject(closedError(x)));
 
   try {
     const r = await c.call("messages.send", { thread_id, client_msg_id, text });
@@ -136,7 +138,7 @@ export async function watch(x: Ctx): Promise<number> {
   const exit = Promise.withResolvers<number>();
   const sub = await subscribe(c, thread_id, after, (r) => p.show(r), invalid(x));
   const off = io.onInterrupt(() => exit.resolve(EXIT.INTERRUPTED));
-  void c.closed.then(() => exit.reject(closedError()));
+  void c.closed.then(() => exit.reject(closedError(x)));
   try {
     return await exit.promise;
   } finally {
@@ -283,7 +285,7 @@ export async function chat(x: Ctx): Promise<number> {
   };
   rl.on("SIGINT", interrupt);
   const off = io.onInterrupt(interrupt);
-  void c.closed.then(() => exit.reject(closedError()));
+  void c.closed.then(() => exit.reject(closedError(x)));
 
   if (thread_id) {
     await (sub ??= start());

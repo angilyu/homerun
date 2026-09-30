@@ -17,6 +17,8 @@
 #                       build, which honours the HOMERUN_TEST_* switches; never ship one.
 #      RUNTIME_CHANNEL=development  a dev-channel homerund (update-test builds only), so the mock
 #                       API can stand in for the model.
+# The release CLI (design §5.2) is compiled here, with homerund's designated requirement from
+# sign.sh --runtime-requirement, and ships as Contents/MacOS/homerun-cli.
 # Output: $OUT/{Homerun.app,Homerun.dmg[,Homerun.app.tar.gz,Homerun.app.tar.gz.sig,latest.json]}
 #
 # Tauri's bundler cannot give each helper its own entitlements, so it builds an
@@ -44,18 +46,33 @@ else
   HOMERUND_VERSION="$VERSION" "$ROOT/scripts/macos/fetch-toolchain.sh" >/dev/null
 fi
 
+# The release CLI. It presents its token only to a homerund satisfying REQ (design §5.2), so REQ
+# is what sign.sh will give the bundled homerund, which is checked again once it is signed.
+BIN="$ROOT/apps/desktop/src-tauri/binaries"
+case "$(uname -m)" in arm64) TRIPLE=aarch64-apple-darwin ;; x86_64) TRIPLE=x86_64-apple-darwin ;; *) echo "unsupported arch" >&2; exit 1 ;; esac
+REQ="$("$ROOT/scripts/macos/sign.sh" --runtime-requirement "$BIN/homerund-$TRIPLE")"
+"$BUN" build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --minify \
+  --define "HOMERUN_CLI_VERSION=\"$VERSION\"" --define "HOMERUN_CLI_PEER_REQUIREMENT=$(REQ="$REQ" "$BUN" -e 'console.log(JSON.stringify(process.env.REQ))')" \
+  "$ROOT/apps/cli/src/main.ts" --outfile "$BIN/homerun-cli-$TRIPLE" >/dev/null
+chmod 755 "$BIN/homerun-cli-$TRIPLE"
+
 CONFIG="$(VERSION="$VERSION" PUBKEY="$PUBKEY" ENDPOINT="${UPDATER_ENDPOINT:-}" "$BUN" -e '
 const e = process.env;
 const updater = {};
 if (e.PUBKEY) updater.pubkey = e.PUBKEY;
 if (e.ENDPOINT) Object.assign(updater, { endpoints: [e.ENDPOINT], dangerousInsecureTransportProtocol: true });
-console.log(JSON.stringify({ version: e.VERSION, ...(Object.keys(updater).length ? { plugins: { updater } } : {}) }));
+// The CLI only in a packaged build: tauri dev and the nightly unsigned .app stay as they are.
+const bundle = { externalBin: ["binaries/homerund", "binaries/claude", "binaries/homerun-cli"] };
+console.log(JSON.stringify({ version: e.VERSION, bundle, ...(Object.keys(updater).length ? { plugins: { updater } } : {}) }));
 ')"
 "${TAURI[@]}" build --bundles app --no-sign --config "$CONFIG" >/dev/null
 
 rm -rf "$OUT" && mkdir -p "$OUT"
 ditto "$ROOT/apps/desktop/src-tauri/target/release/bundle/macos/Homerun.app" "$OUT/Homerun.app"
 "$ROOT/scripts/macos/sign.sh" "$OUT/Homerun.app"
+# The CLI's own peer check, against the homerund it ships with.
+codesign --verify -R "=$REQ" "$OUT/Homerun.app/Contents/MacOS/homerund" \
+  || { echo "the bundled homerund doesn't satisfy the CLI's requirement: $REQ" >&2; exit 1; }
 
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then "$ROOT/scripts/macos/notarize.sh" "$OUT/Homerun.app"; fi
 

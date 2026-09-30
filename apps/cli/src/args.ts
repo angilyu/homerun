@@ -12,7 +12,7 @@ export interface CommandSpec {
   options: Record<string, Opt>;
   /** Positional arguments after the command words. */
   positionals: [min: number, max: number];
-  /** Talks to homerund. The release CLI refuses these (exit 77) until the app can approve it. */
+  /** Talks to homerund. */
   runtime: boolean;
   /** Accepts --json. */
   json: boolean;
@@ -27,6 +27,11 @@ export const GLOBAL_OPTIONS: Record<string, Opt> = {
   /** Development builds only. */
   socket: { type: "string" },
   "dev-token-file": { type: "string" },
+  "dev-role": { type: "string" },
+  "dev-token-store": { type: "string" },
+  "dev-skip-peer-check": { type: "boolean" },
+  "dev-peer-requirement": { type: "string" },
+  "dev-keychain": { type: "string" },
 };
 
 const LIMIT: Record<string, Opt> = { limit: { type: "string", short: "n" } };
@@ -217,6 +222,16 @@ export const COMMANDS: CommandSpec[] = [
     runtime: true,
     json: false,
   },
+  {
+    name: "login",
+    args: "",
+    summary: "Ask the Homerun app for access, and keep the token in your keychain (replaces any other)",
+    options: {},
+    positionals: [0, 0],
+    runtime: true,
+    json: true,
+  },
+  { name: "logout", args: "", summary: "Revoke this tool's token in the Homerun app, and remove it from your keychain", options: {}, positionals: [0, 0], runtime: true, json: true },
   { name: "version", args: "", summary: "Print the CLI version and build", options: {}, positionals: [0, 0], runtime: false, json: true },
   { name: "help", args: "[COMMAND]", summary: "Show help", options: {}, positionals: [0, 2], runtime: false, json: false },
 ];
@@ -309,6 +324,13 @@ export function helpText(name?: string): string {
     "Development builds only:",
     "  --socket PATH          homerund's socket (or HOMERUN_SOCKET); default from HOMERUN_DATA_DIR",
     "  --dev-token-file PATH  The development token (default: dev-token next to the socket)",
+    "  --dev-role cli         Use the release CLI's role and token flow instead of the development token",
+    "  --dev-token-store PATH With --dev-role cli: keep the token in a 0600 file (or HOMERUN_DEV_TOKEN_STORE)",
+    "  --dev-keychain PATH    With --dev-role cli: use this keychain file instead of the login keychain",
+    "  --dev-peer-requirement REQ  With --dev-role cli: the code requirement homerund must satisfy",
+    "  --dev-skip-peer-check  With --dev-role cli: don't check who is listening (or HOMERUN_DEV_SKIP_PEER_CHECK=1)",
+    "",
+    "The first command on a terminal asks the Homerun app for access; elsewhere, run `homerun login` first.",
     "",
     "IDs can be shortened to any unique prefix of at least 4 characters.",
     "Exit codes: 0 ok, 1 error or failed run, 64 usage, 69 homerund not running,",

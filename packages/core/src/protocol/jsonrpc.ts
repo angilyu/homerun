@@ -47,7 +47,7 @@ export const RPC_ERROR = {
   METHOD_NOT_FOUND: -32601,
   INVALID_PARAMS: -32602,
   INTERNAL_ERROR: -32603,
-  /** Bad or missing credentials in `hello`. The connection is closed after the reply. */
+  /** Bad or missing credentials in `hello`. The connection is closed after the reply. A `cli_token` failure carries `CliAuthFailureData`. */
   UNAUTHENTICATED: -32001,
   /** The method exists but this caller's role may not call it (see `callers.ts`). */
   FORBIDDEN: -32002,
@@ -62,7 +62,7 @@ export const RPC_ERROR = {
   AUTHORITY_INSUFFICIENT: -32007,
   /** A method other than `hello` / `cli.request_access` before the handshake. */
   HANDSHAKE_REQUIRED: -32008,
-  /** Temporarily unable, e.g. the shell has not sent the API key yet. Retry later. */
+  /** Temporarily unable, e.g. the shell has not sent the API key yet. Retry later. `cli.request_access` adds `CliAccessUnavailableData`. */
   UNAVAILABLE: -32009,
   /** A budget cap blocks the action (§7.4). */
   BUDGET_EXCEEDED: -32010,
@@ -89,6 +89,12 @@ export const IncompatibleProtocolData = named(
   z.object({ supported: z.object({ min: z.int().min(1), max: z.int().min(1) }) }),
 );
 export const ConflictData = named("ConflictData", z.object({ current_version: z.int().min(1) }));
+/** UNAUTHENTICATED for a `cli_token` hello: the token was never issued here, or was revoked (§5.2). */
+export const CliAuthFailureData = named("CliAuthFailureData", z.object({ reason: z.enum(["unknown", "revoked"]) }));
+export type CliAuthFailureData = z.infer<typeof CliAuthFailureData>;
+/** UNAVAILABLE for `cli.request_access`: too many requests are already waiting for the user. */
+export const CliAccessUnavailableData = named("CliAccessUnavailableData", z.object({ reason: z.literal("too_many_requests") }));
+export type CliAccessUnavailableData = z.infer<typeof CliAccessUnavailableData>;
 
 export const RpcSuccess = named(
   "RpcSuccess",

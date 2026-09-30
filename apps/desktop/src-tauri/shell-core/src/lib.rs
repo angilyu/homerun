@@ -3,6 +3,8 @@
 //! notifications and the updater; every decision lives here and tests on any OS with std alone.
 
 pub mod allowlist;
+pub mod cli_access;
+pub mod cli_tool;
 pub mod keys;
 pub mod logfile;
 pub mod login;

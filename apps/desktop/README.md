@@ -56,7 +56,8 @@ switches, which `scripts/macos/update-test.sh` sets. A release build ignores the
 test flag is compiled into the bundle's config, not read from the environment.
 
 **A local `.app`.** `scripts/macos/package.sh` stages a release-channel `homerund` and `claude`
-(`scripts/macos/fetch-toolchain.sh`), builds the app, and signs it inside out. By default it
+(`scripts/macos/fetch-toolchain.sh`), compiles the release CLI (below), builds the app, and signs
+it inside out. By default it
 signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
 `dist/macos/<version>/`. It has been tried on Apple silicon only. Notarized distribution is milestone 11 (§11).
 
@@ -87,6 +88,10 @@ signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
     - `notify.rs`: notification posting, withdrawal and dedupe;
     - `update.rs`: the check schedule, the version gate and install on quit;
     - `prefs.rs`: the shell's own settings.
+  - Milestone 8a's (§5.2):
+    - `cli_access.rs`: the access prompt's text (client, version and hostname are sanitised and
+      shortened) and the queue that shows one prompt at a time;
+    - `cli_tool.rs`: the `~/.local/bin/homerun` link, its status, install and remove.
   - `tests/supervisor.rs` drives all of it against `fake_homerund`: spawn, forward, crash and
     backoff, crash loop, blocking exits, hang, stop.
 - `src/`: the Tauri app.
@@ -99,6 +104,7 @@ signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
     Dock icon reopens it; quitting stops the runtime cleanly.
   - `tray.rs`, `lifecycle.rs`, `login_item.rs`, `notifications.rs`, `updater.rs`, `macos.rs`:
     milestone 8's AppKit wiring, described below.
+  - `cli_prompts.rs`: the command-line access prompt (milestone 8a), described below.
 
 **The UI** (`src/`) is React DOM over `@homerun/app-state`, which holds all client logic (§9.8).
 
@@ -175,6 +181,55 @@ newer versions install, and the manifest's `homerun` extension can hold two gate
 - `min_update_from` sends older installs to the download page;
 - `protocol.min` above the running protocol adds a note that older command-line tools need
   updating.
+
+## Command-line access (milestone 8a)
+
+The `homerun` command-line tool is signed in from the app (§5.2). `homerun login` asks the
+runtime for access with `cli.request_access`; the runtime tells the shell connection
+(`cli.access_requested`), and `cli_prompts.rs` shows a native alert:
+
+- *Allow the Homerun CLI to control your agents?*, naming the client, its version and the Mac's
+  hostname;
+- **Don't Allow** is the default button (Return), and **Allow** needs a click;
+- one prompt at a time; others wait in order;
+- the alert closes by itself when the request expires (2 minutes), when the CLI gives up
+  (`cli.access_withdrawn`), or when the runtime goes away. None of these approves.
+
+The answer goes back on the shell connection as `cli.approve` or `cli.deny`; the webview can't
+call either. Settings → *Command-line access* lists the approved tools with their hostname and
+when each was last used; **Revoke** signs one out and closes anything it has open.
+
+**Install command-line tool** (Settings). The release CLI lives inside the app, at
+`Homerun.app/Contents/MacOS/homerun-cli`. Installing makes the symlink
+`~/.local/bin/homerun` to it, with no admin rights. The shell:
+
+- offers nothing in a development build, or while the app runs from a disk image or App
+  Translocation (move it to Applications first);
+- repoints a link to another copy of Homerun, or to one that has been moved or deleted;
+- never touches a file or link at that path that isn't Homerun's;
+- replaces its own link atomically.
+
+If `~/.local/bin` isn't on your `PATH`, Settings shows the line to add to `~/.zshrc`.
+
+**How the CLI is built and signed.** `package.sh` asks `sign.sh --runtime-requirement` for the
+designated requirement `homerund` will have once signed: a throwaway copy is signed exactly as
+step 3 signs it. Ad hoc that is a `cdhash`; with Developer ID it is the team's requirement for
+`com.angilyu.homerun.homerund`. It compiles `apps/cli` with that requirement and the app's
+version compiled in, with no `bunfig.toml` or `.env` autoload, and adds it to `externalBin` for
+this build only (`tauri dev` doesn't have it). `sign.sh` step 3b then signs it hardened as
+`com.angilyu.homerun.cli`, with `allow-jit` only (`entitlements/cli.plist`). After signing,
+`package.sh` checks the bundled `homerund` against the same requirement (the CLI's own peer check)
+and fails the build if it doesn't pass. The CLI adds about 62 MB to the app (25 MB compressed),
+since it is a second Bun executable.
+
+`scripts/macos/cli-test.sh [Homerun.app]` (nightly) packages an ad-hoc app if none is given, then
+runs `apps/cli`'s macOS tests against it:
+- its signature and entitlements;
+- every development switch refused;
+- approvals refused (questions only);
+- the peer check passing for the bundled `homerund` and failing for any other listener before a
+  byte is sent;
+- the keychain calls, against a throwaway keychain.
 
 ## Releasing an update
 
@@ -287,14 +342,19 @@ cd src-tauri && cargo test -p homerun-shell-core
   - approvals, including an edited Always allow;
   - questions and *Did this happen?*;
   - the task editor, monitors and grants;
-  - runtime banners.
+  - runtime banners;
+  - command-line access: tokens with hostname and last use, Revoke, and each state of the
+    command-line tool (`cli-access.test.tsx`).
 - **End to end** (`test/e2e/`). Playwright drives the production views in Chrome through
   `bridge-server.ts`, a Bun stand-in for the Rust shell. It does the shell and webview hellos
   with the launch token, forwards only the `webview` allowlist, and verifies and hands over the
   key. It runs against a real `homerund` in two modes:
   - The fake engine (`fake-script.ts`) covers onboarding, a steered and stopped stream, a task
     made in the editor, an edited Always allow and its revocation, a question, a message left
-    undelivered, and a monitor with pause, resume and a reply.
+    undelivered, and a monitor with pause, resume and a reply. `cli-access.spec.ts` runs
+    `homerun login` from source (a file token store and no peer check). The bridge plays the
+    access prompt: Don't Allow, then Allow. The token shows in Settings, Revoke signs it
+    out, and the CLI is then refused.
   - Replay runs homerund's cassettes with the real bundled `claude`: no key, no network and no
     spend.
   - `HOMERUN_E2E_CHANNEL=chrome` uses an installed Chrome instead of Playwright's Chromium, which
@@ -316,7 +376,8 @@ cd src-tauri && cargo test -p homerun-shell-core
   $0.10), and `HOMERUN_E2E_LIVE_LEDGER` appends each run's spend to a file. One run costs about
   $0.04. Traces and videos are off, because they would record the key.
 - **CI.** The `desktop`, `desktop-e2e` and `shell` jobs run on every pull request. The Tauri crate
-  and an unsigned `.app` build nightly on macOS, followed by `update-test.sh adhoc`.
+  and an unsigned `.app` build nightly on macOS, followed by `cli-test.sh` (the bundled CLI,
+  below) and `update-test.sh adhoc`.
 
 ## Manual checks
 
@@ -406,3 +467,25 @@ step says otherwise, installed in `/Applications`.
     - choose *App Store & Known Developers* in Privacy & Security;
     - install the DMG again with quarantine;
     - open Homerun and click **Open** on the first-launch prompt.
+
+**Command-line access (milestone 8a)** (a signed build in `/Applications`; keep the Mac
+unlocked, since a locked screen locks the keychain)
+21. Settings → *Command-line access* → **Install command-line tool**. `ls -l ~/.local/bin/homerun`
+    points into `/Applications/Homerun.app/Contents/MacOS/homerun-cli`. Removing it deletes
+    only that link.
+22. `homerun login` in Terminal:
+    - the alert appears, naming `homerun-cli`, its version and this Mac;
+    - Return denies, and the CLI exits 77;
+    - run it again and click **Allow**: the CLI prints that it is approved.
+23. The token is in the login keychain: Keychain Access shows a `com.angilyu.homerun.cli` item
+    that `homerun` reads without a prompt. `security find-generic-password -s com.angilyu.homerun.cli`
+    finds it (don't add `-w`, which would print the token).
+24. `homerun status` works; Settings shows the tool as *used just now*. **Revoke** there, and a
+    running `homerun watch` stops at once; the next command says access was revoked.
+25. `homerun login`, then quit Homerun while the alert is up: the CLI stops waiting and the
+    alert closes. Leave one up for two minutes: it closes by itself, and the CLI says the
+    request expired.
+26. The peer check: run `homerun status` while a copy of Homerun signed by someone else (or an
+    ad-hoc build) is running. It refuses to send the token and exits 77.
+27. With the screen locked (over ssh), `homerun status` fails with a message about the locked
+    keychain rather than asking for access again.

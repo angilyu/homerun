@@ -1,7 +1,12 @@
 //! AppKit glue for the process model (§5.1): how the app was launched, the quit hook, the
-//! power-off signal and native alerts. Everything that decides lives in `shell-core`.
+//! power-off signal and native alerts, including the CLI access prompt (§5.2). Everything that
+//! decides lives in `shell-core`.
 
+use homerun_shell_core::cli_access::{Answer, Prompt};
 use homerun_shell_core::quit::Dialog;
+
+/// Polled by the CLI access prompt; true closes it with no answer.
+pub type Gone = Box<dyn Fn() -> bool + Send + Sync>;
 
 /// A real `.app` launch, as opposed to `tauri dev`'s bare binary: `SMAppService` and
 /// `UNUserNotificationCenter` need a bundle.
@@ -11,13 +16,13 @@ pub fn in_app_bundle() -> bool {
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use super::Dialog;
+    use super::{Answer, Dialog, Gone, Prompt};
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
     use objc2::{ffi, msg_send, sel, MainThreadMarker};
-    use objc2_app_kit::{NSAlert, NSApplication, NSWorkspace, NSWorkspaceWillPowerOffNotification};
-    use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSString};
+    use objc2_app_kit::{NSAlert, NSAlertStyle, NSApplication, NSWorkspace, NSWorkspaceWillPowerOffNotification};
+    use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer};
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
@@ -110,11 +115,44 @@ mod imp {
         a.addButtonWithTitle(&NSString::from_str("Cancel"));
         a.runModal() == 1000
     }
+
+    /// The CLI access prompt (§5.2): app-modal, so it shows with no window open. **Don't Allow**
+    /// is the first button and gets Return; **Allow** has no key equivalent and needs a click. A
+    /// timer in the common run-loop modes, which run inside `runModal`, closes it with no answer
+    /// once `gone` says so: the request was withdrawn, expired, or its runtime went away.
+    pub fn ask_cli_access(p: &Prompt, gone: Gone) -> Answer {
+        let Some(mtm) = MainThreadMarker::new() else { return Answer::Dismissed };
+        activate(mtm);
+        let a = NSAlert::new(mtm);
+        a.setAlertStyle(NSAlertStyle::Warning);
+        a.setMessageText(&NSString::from_str(&p.title));
+        a.setInformativeText(&NSString::from_str(&p.message));
+        a.addButtonWithTitle(&NSString::from_str(&p.deny));
+        let allow = a.addButtonWithTitle(&NSString::from_str(&p.allow));
+        allow.setKeyEquivalent(&NSString::from_str(""));
+        let tick = RcBlock::new(move |_: std::ptr::NonNull<NSTimer>| {
+            if gone() {
+                if let Some(mtm) = MainThreadMarker::new() {
+                    NSApplication::sharedApplication(mtm).abortModal();
+                }
+            }
+        });
+        // The block is Send + Sync, as the method requires.
+        let timer = unsafe { NSTimer::timerWithTimeInterval_repeats_block(0.25, true, &tick) };
+        unsafe { NSRunLoop::currentRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+        let r = a.runModal();
+        timer.invalidate();
+        match r {
+            1000 => Answer::DontAllow,
+            1001 => Answer::Allow,
+            _ => Answer::Dismissed,
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod imp {
-    use super::Dialog;
+    use super::{Answer, Dialog, Gone, Prompt};
     pub fn launched_at_login() -> bool {
         false
     }
@@ -127,6 +165,10 @@ mod imp {
     }
     pub fn confirm(_d: &Dialog) -> bool {
         true
+    }
+    /// No prompt: the request expires unanswered.
+    pub fn ask_cli_access(_p: &Prompt, _gone: Gone) -> Answer {
+        Answer::Dismissed
     }
 }
 

@@ -34,6 +34,21 @@ describe("RpcClient", () => {
     expect(e).toBeInstanceOf(RuntimeUnavailableError);
   });
 
+  test("the socket's fd is there before anything is sent, and gone after close (the CLI's peer check)", async () => {
+    let received = 0;
+    const s = fakeServer(() => {
+      received++;
+      return [];
+    });
+    const c = await RpcClient.connect(s.path);
+    expect(typeof c.fd).toBe("number");
+    await Bun.sleep(20);
+    expect(received).toBe(0);
+    c.close();
+    expect(c.fd).toBeNull();
+    s.stop();
+  });
+
   test("results, errors and notifications", async () => {
     const s = fakeServer((r) => [
       JSON.stringify({ jsonrpc: "2.0", method: "thread.event", params: { x: 1 } }),

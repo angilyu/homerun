@@ -95,6 +95,15 @@ export class RpcClient {
     return c;
   }
 
+  /**
+   * The connected socket's file descriptor, for checking who is listening before anything is sent
+   * (the CLI's peer check, §5.2). Null once closed. Bun has it but doesn't declare it.
+   */
+  get fd(): number | null {
+    const fd = (this.socket as { fd?: unknown } | null)?.fd;
+    return typeof fd === "number" && fd >= 0 ? fd : null;
+  }
+
   /** Connect and complete `hello`. */
   static async open(socketPath: string, role: CallerRole, auth: HelloAuth, o: OpenOptions = {}): Promise<RpcClient> {
     const c = await RpcClient.connect(socketPath);

@@ -43,7 +43,8 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
   "cli.request_access": {
     params: [["first run", { client: { name: "homerun-cli", version: "0.1.0" }, hostname: "studio.local" }]],
     badParams: [["no client", { hostname: "studio.local" }]],
-    results: [["pending", { request_id: F.CLI_REQUEST }]],
+    results: [["pending", { request_id: F.CLI_REQUEST, expires_at: F.T0 + 120_000 }]],
+    badResults: [["no expiry", { request_id: F.CLI_REQUEST }]],
   },
   ping: {
     params: [["empty", {}]],
@@ -235,11 +236,17 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
   "cli.tokens.list": {
     params: [["empty", {}]],
     badParams: [["null", null]],
-    results: [["one", { tokens: [{ token_id: F.CLI_TOKEN_ID, client: { name: "homerun-cli", version: "0.1.0" }, created_at: F.T0, last_used_at: null }] }]],
+    results: [["one", { tokens: [{ token_id: F.CLI_TOKEN_ID, client: { name: "homerun-cli", version: "0.1.0" }, hostname: "studio.local", created_at: F.T0, last_used_at: null }] }]],
+    badResults: [["no hostname", { tokens: [{ token_id: F.CLI_TOKEN_ID, client: { name: "homerun-cli", version: "0.1.0" }, created_at: F.T0, last_used_at: null }] }]],
   },
   "cli.tokens.revoke": {
     params: [["by id", { token_id: F.CLI_TOKEN_ID }]],
     badParams: [["the token itself", { token_id: F.CLI_TOKEN }]],
+    results: [["ok", { ok: true }]],
+  },
+  "cli.sign_out": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
     results: [["ok", { ok: true }]],
   },
   "cli.approve": {
@@ -291,14 +298,26 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
   "cli.access_decision": {
     valid: [
       ["approved", { request_id: F.CLI_REQUEST, approved: true, token: F.CLI_TOKEN, token_id: F.CLI_TOKEN_ID }],
-      ["denied", { request_id: F.CLI_REQUEST, approved: false }],
+      ["denied", { request_id: F.CLI_REQUEST, approved: false, reason: "denied" }],
+      ["expired", { request_id: F.CLI_REQUEST, approved: false, reason: "expired" }],
     ],
-    invalid: [["short token", { request_id: F.CLI_REQUEST, approved: true, token: "abc", token_id: F.CLI_TOKEN_ID }]],
-    invalidRule: [["denied with token", { request_id: F.CLI_REQUEST, approved: false, token: F.CLI_TOKEN, token_id: F.CLI_TOKEN_ID }]],
+    invalid: [
+      ["short token", { request_id: F.CLI_REQUEST, approved: true, token: "abc", token_id: F.CLI_TOKEN_ID }],
+      ["unknown reason", { request_id: F.CLI_REQUEST, approved: false, reason: "revoked" }],
+    ],
+    invalidRule: [
+      ["denied with token", { request_id: F.CLI_REQUEST, approved: false, reason: "denied", token: F.CLI_TOKEN, token_id: F.CLI_TOKEN_ID }],
+      ["denied without a reason", { request_id: F.CLI_REQUEST, approved: false }],
+      ["approved with a reason", { request_id: F.CLI_REQUEST, approved: true, token: F.CLI_TOKEN, token_id: F.CLI_TOKEN_ID, reason: "denied" }],
+    ],
   },
   "cli.access_requested": {
-    valid: [["request", { request_id: F.CLI_REQUEST, client: { name: "homerun-cli", version: "0.1.0" }, hostname: "studio.local", requested_at: F.T0 }]],
-    invalid: [["missing hostname", { request_id: F.CLI_REQUEST, client: { name: "homerun-cli", version: "0.1.0" }, requested_at: F.T0 }]],
+    valid: [["request", { request_id: F.CLI_REQUEST, client: { name: "homerun-cli", version: "0.1.0" }, hostname: "studio.local", requested_at: F.T0, expires_at: F.T0 + 120_000 }]],
+    invalid: [["missing hostname", { request_id: F.CLI_REQUEST, client: { name: "homerun-cli", version: "0.1.0" }, requested_at: F.T0, expires_at: F.T0 + 120_000 }]],
+  },
+  "cli.access_withdrawn": {
+    valid: [["expired", { request_id: F.CLI_REQUEST, reason: "expired" }], ["cancelled", { request_id: F.CLI_REQUEST, reason: "cancelled" }]],
+    invalid: [["unknown reason", { request_id: F.CLI_REQUEST, reason: "denied" }]],
   },
   "notification.requested": {
     valid: [

@@ -22,6 +22,8 @@ export interface Ctx {
   values: Values;
   positionals: string[];
   role: CallerRole;
+  /** The release role: where its token is kept. */
+  tokenStore?: string;
 }
 
 export async function readAll(stdin: Io["stdin"]): Promise<string> {

@@ -411,12 +411,52 @@ do not stop same-user processes. Every local connection therefore authenticates.
   checks the same allowlist again (`callers.json` in `@homerun/core`). A
   compromised webview can do only what the UI can do, and approvals are still
   enforced by the runtime.
-- **The CLI is approved once.** On first use, `homerun` asks the app for
-  access. The app shows *"Allow the Homerun CLI to control your agents?"*. On
-  approval, the runtime issues a CLI token. The **CLI** stores it in its own
-  keychain item, where macOS ties access to the CLI's code signature. The
-  runtime keeps only what it needs to check the token, and never touches the
-  keychain. The token can be revoked in settings.
+- **The CLI is approved once** (milestone 8a). On first use in a terminal, or
+  with `homerun login`, the CLI asks the app for access:
+  - **The request.** Before `hello`, the CLI calls `cli.request_access` with
+    its name, version and hostname. Each connection may make one request, at
+    most three wait at once, and each expires after 2 minutes. The runtime
+    tells the shell's connection (`cli.access_requested`), and withdraws the
+    request (`cli.access_withdrawn`) when it expires or the CLI disconnects.
+  - **The prompt.** The shell shows a native alert: *"Allow the Homerun CLI to
+    control your agents?"*, naming the client and the Mac, and saying to allow
+    it only if you just ran `homerun`. *Don't Allow* is the default button.
+    The shell answers with `cli.approve` or `cli.deny`, which are shell-only
+    like `secrets.verify`. A withdrawn or expired request closes the alert
+    unanswered. Outside a terminal the CLI never asks: it exits 77 and says to
+    run `homerun login`, so a script can't make a dialog appear.
+  - **The token.** On approval the runtime issues 256 random bits, sent only in
+    `cli.access_decision` on the requesting connection. The shell learns only
+    its `token_id`. The `cli_tokens` table keeps its SHA-256, never the token,
+    with the client, hostname, `created_at`, `last_used_at` and `revoked_at`.
+    `hello` with `cli_token` checks the hash and `revoked_at` every time and
+    updates `last_used_at`. An unknown or revoked token is refused, with the
+    reason, and the connection closed.
+  - **Where the CLI keeps it.** In its own item in the login keychain, one per
+    data directory, created through Security.framework (`bun:ffi`). macOS ties
+    access to the CLI's code signature, so another binary gets a visible
+    prompt. The runtime never touches the keychain, and the token is never in
+    argv, the environment, logs or the database.
+  - **The peer check.** Before it reads the token, or sends anything at all,
+    the CLI checks who is listening on the socket. It takes the peer's pid
+    (`LOCAL_PEERPID`) and audit token (`LOCAL_PEERTOKEN`), which must agree,
+    and checks the code behind the audit token against a code-signing
+    requirement compiled into the release CLI: the one `homerund` has once
+    signed (§11). A spoofed socket gets no token and no request. Development
+    builds have no compiled-in requirement; they can pass one, or skip the
+    check with a warning on every run, through switches that release builds
+    refuse with exit 64.
+  - **Revocation.** Settings → *Command-line access* lists the tokens with
+    their hostname and last use. Revoking one closes that token's live
+    connections at once. `homerun logout` revokes its own token
+    (`cli.sign_out`) and deletes the item.
+- **The CLI can't widen a task's reach.** Creating or editing a task from the
+  release CLI is refused if the edit adds what only the full app may grant: a
+  `Bash` pattern classed below `destructive`, open egress (which lifts the
+  taint rule), or an added or changed MCP server, whose process starts without
+  a prompt (`policyNeedsFullApp` in `@homerun/core`). These would otherwise
+  pre-approve calls silently, the same as a grant. Keeping or removing them is
+  always allowed.
 - **The release CLI answers questions only.** Anything running as the user can
   invoke the CLI binary, so approvals and *"Did this happen?"* (§5.4) are never
   answered from it. A development-mode CLI (caller role `cli_dev`, with a
@@ -1948,20 +1988,33 @@ accounts.**
   - The Node and `uv` components (§5.5) are re-signed with our Developer ID.
     Node's vendor signature carries `get-task-allow`, which blocks
     notarization.
-- **Three signed executables in the bundle** (shell, runtime, `claude`) and two
-  in on-demand components (Node, `uv`), all under the hardened runtime, each
-  with the fewest entitlements that work:
+- **Four signed executables in the bundle** (shell, runtime, `claude`, the
+  release CLI) and two in on-demand components (Node, `uv`), all under the
+  hardened runtime, each with the fewest entitlements that work:
 
   | Binary | Entitlements |
   |---|---|
   | Shell | `keychain-access-groups` only (below) |
   | Runtime (Bun) | `allow-jit` |
+  | Release CLI (Bun), `Contents/MacOS/homerun-cli` | `allow-jit`, which `bun:ffi` also needs |
   | `claude` (Bun) | Anthropic's, which include `allow-jit`. Without it every turn fails |
   | Node | `allow-jit`, `disable-library-validation` (native add-ons from npm) |
   | `uv` | none |
 
   `allow-unsigned-executable-memory` is not needed by Bun 1.4.2 or later, or by
   Node 24.
+- **The release CLI ships in the bundle** (milestone 8a, §5.2). It is signed
+  as `com.angilyu.homerun.cli`, its own identity, so its keychain item is its
+  own. Before the build compiles it, the signing script works out the
+  designated requirement the runtime will have once signed: a `cdhash` for an
+  ad-hoc build, the team's requirement for `com.angilyu.homerun.homerund` with
+  Developer ID. That requirement is compiled into the CLI for its peer check,
+  and the build fails if the signed runtime doesn't satisfy it. Neither Bun
+  executable reads `bunfig.toml` or `.env` from its working directory.
+  Settings → *Install command-line tool* links `~/.local/bin/homerun` to it,
+  with no admin rights. It refuses while the app runs from a disk image or App
+  Translocation, repoints a link to another copy of Homerun, and never replaces
+  a file that isn't Homerun's.
 - **The shell owns the keychain.** `keychain-access-groups` is restricted under
   Developer ID and needs an embedded provisioning profile, which a bare Mach-O
   such as the runtime cannot carry.
@@ -2134,6 +2187,26 @@ true sandbox**):
   channel. Links open in the default browser, never in the webview, and the
   webview's content security policy admits no remote origin.
 
+**Local threat: other programs running as the user** (§5.2). They can reach
+the socket, run any binary and read the user's files, so the goal is narrow:
+they must not silently gain CLI authority or approve anything.
+
+- **Every local connection authenticates**, and the release CLI's token is
+  approved in a native prompt whose default is *Don't Allow*. At most three
+  requests wait, each for 2 minutes.
+- **The token only goes to Homerun's runtime.** The CLI checks the socket's
+  peer against `homerund`'s code-signing requirement before it reads the token
+  or sends a byte, so a program that binds a fake socket learns nothing.
+- **The token is kept where only the CLI reads it silently**: its own login
+  keychain item. The database holds a SHA-256, and the token is never logged.
+- **The CLI's authority is bounded.** It answers questions but not approvals,
+  can't grant, and can't widen a task's policy (§5.2). Running the release CLI
+  binary is equivalent to holding its token, by design.
+- **Revocation is immediate**: it closes the token's live connections, and
+  every `hello` re-checks it.
+- Out of scope: a process that runs as root, has Accessibility access (it can
+  click *Allow*), or controls the kernel.
+
 **Secondary threat: the remote access path.** Internet reachability means a
 compromised relay or a stolen phone becomes a path to a machine that can run
 shell commands. Countermeasures:
@@ -2238,8 +2311,8 @@ UI last: the runtime is the risky part.
 | 6 | Approvals + questions | Destructive tool pauses a run; `AskUserQuestion` pauses for an answer; long waits `defer` and resume; answer from CLI; first answer wins | **Done** |
 | 7 | [Desktop app](../apps/desktop/README.md) | Tauri shell spawns and supervises the runtime; chat, history, questions, approvals | **Done** |
 | 8 | [Packaging](../apps/desktop/README.md#in-the-background-milestone-8) | Menu-bar / tray residency, login item, signed updater, quit confirmation, local notifications | **Done**; launch at login and the clean-VM Gatekeeper click need a person (§16.1) |
-| 8a | CLI access | `cli.request_access` with a native prompt in the shell; `cli_tokens`, listed and revoked in Settings; the CLI keeps its token in its own keychain item and checks the socket's peer; the release CLI ships in the bundle and answers questions (§5.2) | Next |
-| 8b | Windows | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | Next, after 8a |
+| 8a | CLI access | `cli.request_access` with a native prompt in the shell; `cli_tokens`, listed and revoked in Settings; the CLI keeps its token in its own keychain item and checks the socket's peer; the release CLI ships in the bundle and answers questions (§5.2) | **Done**; the real login keychain and the native prompt need a person ([manual checks](../apps/desktop/README.md#manual-checks)) |
+| 8b | Windows | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | Next |
 | 9 | Accounts + relay + push | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | — |
 | 10 | iOS + web | Sign-in and device linking; history sync, live chat, steering, questions, approvals, rich push; web client with reduced authority | — |
 | 11 | Distribution | Signed and notarized builds, installers, crash reporting, version gate | — |
@@ -2354,6 +2427,12 @@ upgrade can change agent behaviour without any change to our code.
    money. Options: a paid desktop licence, a subscription for remote access, or
    managed model credits (§10.11). Not a v1 blocker, but decide before public
    launch.
+6. **Checking who asks for CLI access** (milestone 8a). The runtime could
+   check the code signature of the process calling `cli.request_access`, as the
+   CLI checks the runtime's, and refuse a request that isn't from the signed
+   CLI. Deferred: the runtime would need the socket's peer audit token, which
+   Bun's server sockets don't expose, and the prompt already names the client
+   and says to allow only if you just ran `homerun`.
 
 ---
 
@@ -2408,3 +2487,14 @@ One line per major decision: what was chosen, and why.
 | 43 | **The runtime composes local notifications; they carry no buttons** (§8.2, §9.7) | What a notification may say is decided in one tested place, which push reuses in milestone 9: fixed templates, no tool input, secrets redacted, sent after commit and at most once per key. Answering from a notification waits for push, and destructive approvals never are |
 | 44 | **The updater: native TLS, GitHub Releases, install on quit, an offline key** (§11, §14) | The plugin's defaults add rustls and proxy crates we don't need. Installing on quit never interrupts a run, and the placeholder public key fails closed |
 | 45 | **Command-line access is its own milestone, 8a** (§5.2, §16) | Runtime tokens, the CLI's keychain item and peer check, and shipping a signed release CLI share nothing with packaging, and each is security-sensitive |
+| 46 | **The CLI checks the peer's audit token, not only its pid** (§5.2) | `LOCAL_PEERPID` alone can name a reused pid. The CLI also takes `LOCAL_PEERTOKEN`, requires the two pids to agree, and checks the code behind the audit token against the compiled-in requirement, all before the token is read or anything is sent |
+| 47 | **The release CLI can't widen a task's policy** (§5.2) | A `Bash` pattern below `destructive`, open egress or a new MCP server pre-approves calls silently, like a grant. `policyNeedsFullApp` in core names them, and the runtime refuses them from the `cli` role |
+| 48 | **The release CLI is a separate executable in the bundle** (§5.2, §11) | Its own code identity (`com.angilyu.homerun.cli`) owns its keychain item, and the runtime stays free of Security.framework. The cost is a second Bun executable: +62 MB in the app, 25 MB compressed |
+| 49 | **The CLI's token is in the login keychain, one item per data directory** (§5.2) | The data-protection keychain needs a provisioning profile, which a bare executable can't carry. The legacy item's access is tied to the CLI's signature, so another program gets a visible prompt |
+| 50 | **`cli.sign_out` revokes the caller's own token** (§5.2) | `homerun logout` must revoke, not only delete the item, and `cli.tokens.revoke` is for the app. The method takes no argument, so a token can revoke nothing but itself |
+| 51 | **The CLI asks for access only in a terminal** (§5.2) | A script or cron job must never make a dialog appear. Outside a terminal it exits 77 and says to run `homerun login` |
+| 52 | **Compiled Bun executables never read `bunfig.toml` or `.env`, and the shell clears Bun's environment switches for the runtime** (§5.2, §11) | A compiled Bun executable loads both from its working directory by default, which would let a directory choose code for it. `BUN_OPTIONS`, `BUN_BE_BUN` and `NODE_OPTIONS` are removed from the runtime's environment. They still apply to the CLI, but whatever can set its environment can already run it, which holds the same authority (§13) |
+| 53 | **The CLI carries Core Foundation references as 64-bit integers** (§5.2) | Short `CFString`s are tagged pointers. As a JavaScript double, Bun FFI's pointer type rounds them, and the keychain call crashes in about one run in four |
+| 54 | **The keychain calls are synchronous** (§5.2) | The plan ran them in a Worker so the CLI could print *"Waiting for keychain access…"*. The only call that blocks is one waiting on macOS's own keychain dialog, which the user already sees |
+| 55 | **In the access prompt, Return means *Don't Allow*; Escape does nothing, and *Allow* needs a click** (§5.2) | A stray keypress must never approve. An alert button takes one key, and Return is the key pressed without reading, so it denies; the plan's Escape would have needed a second deny button. *Allow* has its key cleared, so no key approves |
+| 56 | **Revoking a token closes its connections without a reason** (§5.2) | The runtime closes the socket; the CLI says Homerun closed the connection, and its next command says access was revoked. A reason frame sent just before closing adds a path for no gain |

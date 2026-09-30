@@ -78,11 +78,14 @@ last persisted `seq` they follow) instead of `seq`.
 |---|---|
 | `user.message` `message.final` `tool.call` `tool.result` `input.requested` `input.resolved` `run.started` `run.resumed` `run.cancelled` `run.end` `schedule.missed` `schedule.paused` | `message.delta` `run.status` |
 
-**IPC methods.** `schema/manifest.json` lists all 44 methods and 7 notifications with their
+**IPC methods.** `schema/manifest.json` lists all 45 methods and 10 notifications with their
 callers. Shell-only: `secrets.set`, `secrets.clear`, `secrets.verify`, `cli.approve`, `cli.deny`.
 Runtime → shell: `secrets.persist`. Allowed before `hello` (preauth): `hello`,
 `cli.request_access`. The surface was provisional until milestone 7 (D8), which added
-`threads.create` with a `task_id` and `secrets.verify`.
+`threads.create` with a `task_id` and `secrets.verify`. Milestone 8a added `cli.sign_out` (the
+release CLI revokes its own token) and `cli.access_withdrawn` (runtime → shell: dismiss the
+prompt), put `hostname` on `CliTokenInfo`, `expires_at` on a request, and a `reason` on a refused
+decision. `CliAuthFailureData` and `CliAccessUnavailableData` type their errors' `data`.
 
 ## Versioning
 
@@ -156,7 +159,7 @@ has `layer: "refinement"` vectors.
   - `run.end`: `state` is terminal, plus the same outcome and error rules as `Run`.
   - `HelloParams`: the auth kind matches the role (`launch_token`: shell or webview;
     `cli_token`: cli; `dev_token`: cli_dev; `paired_device`: ios or web).
-  - `cli.access_decision`: `token` ⇔ `approved`.
+  - `cli.access_decision`: `token` ⇔ `approved` ⇔ no `reason`.
   - `ProtocolRange`: `min ≤ max`.
   - `SealedInner`: `expires_at > created_at`.
 - **Spec policy:**
@@ -215,6 +218,12 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
   - `checkResponse` takes the answering role, not a surface. Both CLI roles record
     `surface: "cli"` (`SURFACE_OF_ROLE`).
   - The CLI can't grant itself access: `cli.approve` and `cli.deny` are shell-only.
+  - **Nor can it pre-approve calls through a task spec** (milestone 8a). `policyNeedsFullApp`
+    lists what a spec adds that only the full app may: a `Bash` pattern classed below
+    `destructive`, an MCP server (its process starts without a prompt), or open egress. For an
+    edit it compares with the previous spec, so keeping or removing them is fine. The runtime
+    refuses a release `cli` caller's `tasks.create` or `tasks.update` with
+    `AUTHORITY_INSUFFICIENT` when the list isn't empty.
 - **"Did this happen?" needs full authority unless the call was `read`.** After "not run" the
   model re-issues the call, and an existing grant in a full-authority run would let it through
   with no new approval. So `requiredAuthority` follows the call's class, as for approvals:

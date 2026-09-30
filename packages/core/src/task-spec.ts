@@ -267,3 +267,26 @@ export function upgradeSpec(stored: unknown): TaskSpec {
       throw new Error(`unsupported task spec format ${JSON.stringify(format)}`);
   }
 }
+
+/**
+ * What a spec lets the agent do without asking that only the full app may add (§5.2, §5.6).
+ * The release CLI can be invoked by anything running as the user, so it may create and edit
+ * tasks but never pre-approve calls: a `Bash` pattern classed below destructive, open egress
+ * (which lifts the taint rule), or an MCP server (whose process starts without a prompt).
+ * With `previous`, only what the edit adds counts; keeping or removing is always fine.
+ * Returns why the full app is needed, empty when the CLI may save the spec.
+ */
+export function policyNeedsFullApp(spec: TaskSpec, previous?: TaskSpec): string[] {
+  const key = (v: unknown) => JSON.stringify(v);
+  const had = {
+    bash: new Set((previous?.policy.bash_patterns ?? []).map(key)),
+    mcp: new Set((previous?.tools.mcp_servers ?? []).map(key)),
+    open: previous?.policy.egress.mode === "open",
+  };
+  const reasons: string[] = [];
+  for (const p of spec.policy.bash_patterns)
+    if (p.class !== "destructive" && !had.bash.has(key(p))) reasons.push(`the Bash pattern "${p.pattern}" is classed ${p.class}`);
+  for (const s of spec.tools.mcp_servers) if (!had.mcp.has(key(s))) reasons.push(`the MCP server "${s.id}" is added or changed`);
+  if (spec.policy.egress.mode === "open" && !had.open) reasons.push("egress is open");
+  return reasons;
+}

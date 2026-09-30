@@ -5,22 +5,28 @@
  *
  * A development build (running from source, or compiled with
  * `--define HOMERUN_CLI_BUILD='"development"'`) authenticates as `cli_dev` with the development
- * token homerund writes at each start. A release build (any other compiled binary) has no
- * credential until the desktop app can approve it (M7): it runs `version` and `help`, refuses
- * everything that needs the runtime with exit 77, and refuses the development switches with
- * exit 64 before any socket I/O.
+ * token homerund writes at each start. A release build (any other compiled binary) is the `cli`
+ * role (§5.2): it checks who is listening on the socket, then says hello with its token from the
+ * keychain, asking the Homerun app for one the first time. It answers questions only, and
+ * refuses the development switches with exit 64 before any socket I/O. `--dev-role cli` runs the
+ * release flow from a development build.
  */
+import type { RpcClient } from "@homerun/client";
 import { PROTOCOL_VERSION, type BuildChannel, type CallerRole } from "@homerun/core";
-import { helpText, parse, type Parsed } from "./args";
-import { BUILD_CHANNEL, CLI_VERSION } from "./build";
+import { CliAccess } from "./access";
+import { helpText, parse, type Parsed, type Values } from "./args";
+import { BUILD_CHANNEL, CLI_VERSION, PEER_REQUIREMENT } from "./build";
+import * as access from "./commands/access";
 import * as input from "./commands/input";
 import * as records from "./commands/records";
 import * as scheduling from "./commands/scheduling";
 import * as streaming from "./commands/stream";
-import { connect, fullAuthorityOnly, refuseDevSwitches, releaseQuestionsOnly, releaseRefusal, resolveTarget, toCliError } from "./connect";
+import { connectDev, fullAuthorityOnly, refuseDevSwitches, releaseQuestionsOnly, resolveTarget, toCliError, type Env, type Target } from "./connect";
 import type { Ctx, Io } from "./context";
-import { CliError, EXIT } from "./exit";
+import { CliError, EXIT, usageError } from "./exit";
 import { Output, colorWanted } from "./output";
+import { macosInspector, type PeerInspector } from "./peer";
+import { FileTokenStore, KeychainTokenStore, keychainAccount, type TokenStore } from "./token-store";
 
 type Handler = (x: Ctx, socketPath: string) => Promise<number>;
 
@@ -62,9 +68,51 @@ const HANDLERS: Record<string, Handler> = {
   blob: records.blob,
 };
 
-export const roleFor = (channel: BuildChannel): CallerRole => (channel === "development" ? "cli_dev" : "cli");
+const RELEASE_FLOW_SWITCHES = ["dev-token-store", "dev-skip-peer-check", "dev-peer-requirement", "dev-keychain"];
 
-export async function main(io: Io): Promise<number> {
+/** `cli_dev` for a development build, unless `--dev-role cli` asks for the release flow. */
+export function roleFor(channel: BuildChannel, values: Values = {}): CallerRole {
+  if (channel !== "development") return "cli";
+  const want = values["dev-role"];
+  if (want !== undefined && want !== "cli" && want !== "cli_dev") throw usageError(`--dev-role must be cli or cli_dev, not ${String(want)}`);
+  if (want === "cli") return "cli";
+  const stray = RELEASE_FLOW_SWITCHES.find((f) => values[f] !== undefined);
+  if (stray) throw usageError(`--${stray} applies to --dev-role cli`);
+  return "cli_dev";
+}
+
+/** Seams for tests: the system calls behind the peer check, and where the token lives. */
+export interface MainDeps {
+  inspector?: () => PeerInspector | Promise<PeerInspector>;
+  store?: TokenStore;
+  platform?: string;
+  /** How long past the runtime's expiry to wait for its word (default 10 s). */
+  graceMs?: number;
+}
+
+function tokenStore(channel: BuildChannel, values: Values, env: Env): TokenStore {
+  if (channel === "development") {
+    const file = (values["dev-token-store"] as string | undefined) ?? env.HOMERUN_DEV_TOKEN_STORE;
+    if (file) return new FileTokenStore(file);
+    return new KeychainTokenStore(keychainAccount(env), values["dev-keychain"] as string | undefined);
+  }
+  return new KeychainTokenStore(keychainAccount(env));
+}
+
+export function cliAccess(io: Io, o: Output, values: Values, target: Target, deps: MainDeps): CliAccess {
+  const dev = io.channel === "development";
+  return new CliAccess(io, o, {
+    target,
+    store: deps.store ?? tokenStore(io.channel, values, io.env),
+    requirement: dev ? ((values["dev-peer-requirement"] as string | undefined) ?? PEER_REQUIREMENT) : PEER_REQUIREMENT,
+    skipPeerCheck: dev && (values["dev-skip-peer-check"] === true || io.env.HOMERUN_DEV_SKIP_PEER_CHECK === "1"),
+    inspector: deps.inspector ?? macosInspector,
+    platform: deps.platform ?? process.platform,
+    graceMs: deps.graceMs,
+  });
+}
+
+export async function main(io: Io, deps: MainDeps = {}): Promise<number> {
   const early = new Output(io.stdout, io.stderr, false, colorWanted(io.env, io.argv.includes("--no-color")));
   const fail = (o: Output, e: unknown) => {
     const err = toCliError(e);
@@ -92,16 +140,26 @@ export async function main(io: Io): Promise<number> {
       return EXIT.OK;
     }
     if (command.name === "chat" && values.title !== undefined && positionals.length) throw new CliError("--title applies to a new chat", EXIT.USAGE);
+    const role = roleFor(io.channel, values);
+    const target = resolveTarget(values, io.env);
+    if (command.name === "login" || command.name === "logout") {
+      if (role !== "cli") throw usageError(`${command.name} is for the release CLI; a development build uses the development token`, "add --dev-role cli to try the release flow");
+      const a = cliAccess(io, o, values, target, deps);
+      return await (command.name === "login" ? access.login(a, o) : access.logout(a, o));
+    }
     const handler = HANDLERS[command.name];
     if (!handler) throw new CliError(`no handler for ${command.name}`);
-    // A release build has no credential yet. It never reads the development token. Even with
-    // one it answers questions only (§5.2): approvals and grants need UI the user can see.
-    if (io.channel !== "development" && fullAuthorityOnly(command.name, values)) throw releaseQuestionsOnly();
-    if (io.channel !== "development") throw releaseRefusal();
-    const target = resolveTarget(values, io.env);
-    const c = await connect(io.channel, target);
+    // The release role answers questions only (§5.2): approvals and grants need UI the user can
+    // see. homerund refuses them too; this says so before connecting.
+    if (role === "cli" && fullAuthorityOnly(command.name, values)) throw releaseQuestionsOnly();
+    let c: RpcClient;
+    let a: CliAccess | undefined;
+    if (role === "cli") {
+      a = cliAccess(io, o, values, target, deps);
+      c = await a.connect(!!io.stdin.isTTY && !!io.stderr.isTTY);
+    } else c = await connectDev(io.channel, target);
     try {
-      return await handler({ io, o, c, values, positionals, role: roleFor(io.channel) }, target.socketPath);
+      return await handler({ io, o, c, values, positionals, role, tokenStore: a?.store.where }, target.socketPath);
     } finally {
       c.close();
     }

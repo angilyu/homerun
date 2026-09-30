@@ -6,6 +6,7 @@ use crate::notifications::{self, Permission};
 use crate::shell::Shell;
 use crate::{lifecycle, login_item, updater};
 use homerun_shell_core::allowlist::{forward, ShellError};
+use homerun_shell_core::cli_tool::{self, Place, ToolStatus};
 use homerun_shell_core::keys::{self, KeyError, KeyStatus, SetOutcome, ShellCalls};
 use homerun_shell_core::login::LoginItem;
 use homerun_shell_core::quit::Why;
@@ -202,6 +203,40 @@ pub fn update_set_auto(app: AppHandle, shell: State<'_, Arc<Shell>>, on: bool) {
     }
 }
 
+/// Where the app runs from, for *Install command-line tool* (§5.2).
+fn cli_place() -> Res<Place> {
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).ok_or_else(|| ShellError::shell("HOME isn't set."))?;
+    let exe = std::env::current_exe().map_err(|e| ShellError::shell(e.to_string()))?;
+    Ok(Place { home: home.into(), exe })
+}
+
+#[tauri::command]
+pub async fn cli_tool_status() -> Res<ToolStatus> {
+    blocking(|| Ok(cli_tool::status(&cli_place()?))).await
+}
+
+#[tauri::command]
+pub async fn cli_tool_install(shell: State<'_, Arc<Shell>>) -> Res<ToolStatus> {
+    let s = shell.inner().clone();
+    blocking(move || {
+        let r = cli_tool::install(&cli_place()?);
+        s.rt.log_event("cli_tool.install", json!({"ok": r.is_ok()}));
+        r.map_err(|e| ShellError::shell(e.0))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cli_tool_remove(shell: State<'_, Arc<Shell>>) -> Res<ToolStatus> {
+    let s = shell.inner().clone();
+    blocking(move || {
+        let r = cli_tool::remove(&cli_place()?);
+        s.rt.log_event("cli_tool.remove", json!({"ok": r.is_ok()}));
+        r.map_err(|e| ShellError::shell(e.0))
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,7 +247,14 @@ mod tests {
         let caps: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
         let perms: Vec<&str> = caps["permissions"].as_array().unwrap().iter().filter_map(|p| p.as_str()).collect();
         assert!(perms.iter().all(|p| !p.starts_with("updater:") && !p.starts_with("shell:")), "{perms:?}");
-        for c in ["allow-update-restart", "allow-login-item-set", "allow-notifications-request"] {
+        for c in [
+            "allow-update-restart",
+            "allow-login-item-set",
+            "allow-notifications-request",
+            "allow-cli-tool-status",
+            "allow-cli-tool-install",
+            "allow-cli-tool-remove",
+        ] {
             assert!(perms.contains(&c), "{c}");
         }
     }

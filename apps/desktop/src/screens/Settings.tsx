@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { errorMessage } from "@homerun/app-state";
 import type { HealthSettings } from "@homerun/core";
-import type { LoginItemStatus, NotificationPermission, UpdateState } from "../platform/types";
+import type { CliToolStatus, LoginItemStatus, NotificationPermission, UpdateState } from "../platform/types";
 import { useAction, useApp, useLoad, useStore } from "../hooks";
 import { ConfirmButton, Empty, ErrorText, Page, Time } from "../ui/bits";
 import { runtimeText } from "./Layout";
@@ -230,7 +230,7 @@ function DigestSection() {
   );
 }
 
-/** Command-line access (§5.2): tokens approved from `homerun login`. */
+/** Command-line access (§5.2): the `homerun` link, and the clients approved from `homerun login`. */
 function CliSection() {
   const app = useApp();
   const t = useLoad(() => app.client.rpc.call("cli.tokens.list", {}).then((r) => r.tokens), []);
@@ -241,25 +241,84 @@ function CliSection() {
   return (
     <section aria-label="Command-line access">
       <h2>Command-line access</h2>
+      <CliTool />
       <ErrorText error={t.error ?? revoke.error} />
       {t.data && t.data.length === 0 && <Empty>No command-line clients are signed in.</Empty>}
       <ul className="plain">
         {t.data?.map((x) => (
           <li key={x.token_id}>
-            {x.client.name} {x.client.version}{" "}
+            {x.client.name} {x.client.version} <span className="muted">on {x.hostname}</span>{" "}
             <span className="muted">
               added <Time ts={x.created_at} />
-              {x.last_used_at && (
+              {x.last_used_at ? (
                 <>
                   , used <Time ts={x.last_used_at} relative />
                 </>
+              ) : (
+                ", never used"
               )}
             </span>{" "}
-            <ConfirmButton label="Revoke" confirm="Sign it out?" onConfirm={() => void revoke.run(x.token_id)} />
+            <ConfirmButton label="Revoke" confirm="Sign it out? Anything it has open closes now." onConfirm={() => void revoke.run(x.token_id)} />
           </li>
         ))}
       </ul>
     </section>
+  );
+}
+
+const PATH_HINT = 'export PATH="$HOME/.local/bin:$PATH"';
+
+/** A symlink in ~/.local/bin to the CLI inside this app; no admin rights (§5.2). */
+function CliTool() {
+  const app = useApp();
+  const [s, setS] = useOnFocus<CliToolStatus>(useCallback(() => app.shell.cliTool(), [app]));
+  const install = useAction(async () => setS(await app.shell.installCliTool()));
+  const remove = useAction(async () => setS(await app.shell.removeCliTool()));
+  const busy = install.busy || remove.busy;
+  const installButton = (label: string) => (
+    <button type="button" disabled={busy} onClick={() => void install.run()}>
+      {label}
+    </button>
+  );
+  if (!s) return null;
+  return (
+    <div aria-label="Command-line tool" role="group">
+      {s.state === "unavailable" && <p className="muted">{s.reason}</p>}
+      {s.state === "not_installed" && (
+        <p>
+          Use <code>homerun</code> in Terminal to ask about your tasks and monitors. {installButton("Install command-line tool")}
+        </p>
+      )}
+      {s.state === "installed" && (
+        <>
+          <p>
+            Installed at <code>{s.link}</code>.{" "}
+            <button type="button" disabled={busy} onClick={() => void remove.run()}>
+              Remove
+            </button>
+          </p>
+          <p className="muted small">
+            If Terminal says <code>command not found</code>, add this line to <code>~/.zshrc</code>: <code>{PATH_HINT}</code>
+          </p>
+        </>
+      )}
+      {s.state === "other_copy" && (
+        <p>
+          <code>{s.link}</code> points to another copy of Homerun (<code>{s.target}</code>). {installButton("Use this copy")}
+        </p>
+      )}
+      {s.state === "dangling" && (
+        <p>
+          <code>{s.link}</code> points to a copy of Homerun that has moved or been deleted. {installButton("Repair")}
+        </p>
+      )}
+      {s.state === "foreign" && (
+        <p className="muted">
+          Something else is already at <code>{s.link}</code>, so Homerun leaves it alone.
+        </p>
+      )}
+      <ErrorText error={install.error ?? remove.error} />
+    </div>
   );
 }
 

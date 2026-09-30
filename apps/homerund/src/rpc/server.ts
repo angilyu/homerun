@@ -35,6 +35,8 @@ export interface ServerOptions {
   helloTimeoutMs?: number;
   /** Notifications the shell sends the runtime (`power.*`), already checked against their schema. */
   onNotification?: (method: NotificationName, params: unknown) => void;
+  /** A connection closed, for whatever reason (withdraws its CLI access request). */
+  onConnectionClosed?: (conn: Connection) => void;
 }
 
 type Data = { conn: Connection };
@@ -80,6 +82,11 @@ export class RpcServer {
     for (const c of this.connections) c.notify(method, params);
   }
 
+  /** Close every connection that said hello with this CLI token (it was revoked, §5.2). */
+  closeTokenConnections(tokenId: string): void {
+    for (const c of [...this.connections]) if (c.cliTokenId === tokenId) c.close();
+  }
+
   /** Stop accepting and close every connection. */
   stop(): void {
     this.listener?.stop(true);
@@ -115,27 +122,48 @@ export function socketAnswers(path: string, timeoutMs = 500): Promise<boolean> {
 
 export class Connection implements Conn {
   role: CallerRole | null = null;
+  cliTokenId: string | null = null;
   readonly subscriptions = new Map<string, () => void>();
   private inbuf: Buffer = Buffer.alloc(0);
   private out: Buffer[] = [];
   private outBytes = 0;
   private closed = false;
   private closeAfterFlush = false;
+  private closedNotified = false;
   private helloTimer: ReturnType<typeof setTimeout> | null;
 
   constructor(
     private socket: Socket<Data>,
     private opts: ServerOptions,
   ) {
-    this.helloTimer = setTimeout(() => {
-      if (this.role === null) this.close();
-    }, opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS);
+    this.helloTimer = null;
+    this.restartHelloTimeout();
   }
 
   setRole(role: CallerRole): void {
     this.role = role;
+    this.holdHelloTimeout();
+  }
+
+  /** An access request is waiting for the user: don't drop the connection meanwhile. */
+  holdHelloTimeout(): void {
     if (this.helloTimer) clearTimeout(this.helloTimer);
     this.helloTimer = null;
+  }
+
+  /** Close the connection unless it says hello within the timeout. */
+  restartHelloTimeout(): void {
+    this.holdHelloTimeout();
+    if (this.closed || this.role !== null) return;
+    this.helloTimer = setTimeout(() => {
+      if (this.role === null) this.close();
+    }, this.opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS);
+  }
+
+  /** The one notification an unauthenticated connection receives: the answer to its own access request. */
+  sendAccessDecision(params: unknown): void {
+    if (this.role !== null) return;
+    this.send({ jsonrpc: "2.0", method: "cli.access_decision", params });
   }
 
   onData(chunk: Buffer): void {
@@ -306,11 +334,14 @@ export class Connection implements Conn {
   }
 
   onClose(): void {
+    const first = !this.closedNotified;
+    this.closedNotified = true;
     this.closed = true;
     if (this.helloTimer) clearTimeout(this.helloTimer);
     this.helloTimer = null;
     for (const unsub of this.subscriptions.values()) unsub();
     this.subscriptions.clear();
+    if (first) this.opts.onConnectionClosed?.(this);
   }
 }
 

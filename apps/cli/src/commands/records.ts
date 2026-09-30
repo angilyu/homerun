@@ -28,6 +28,7 @@ export async function status(x: Ctx, socketPath: string): Promise<number> {
       protocol: ping.protocol,
       role: c.hello!.role,
       device_id: c.hello!.device_id,
+      ...(x.tokenStore ? { token_store: x.tokenStore } : {}),
       cli: { version: CLI_VERSION, build: BUILD_CHANNEL },
       active_runs: runs,
       pending_input: requests,
@@ -37,6 +38,7 @@ export async function status(x: Ctx, socketPath: string): Promise<number> {
   const k = o.c;
   o.line(`${k.green("●")} homerund ${ping.runtime_version} ${k.dim(`· protocol ${ping.protocol} · ${socketPath}`)}`);
   o.line(k.dim(`  connected as ${c.hello!.role} (CLI ${CLI_VERSION}, ${BUILD_CHANNEL}) · device ${shortId(c.hello!.device_id)}`));
+  if (x.tokenStore) o.line(k.dim(`  token in ${x.tokenStore}`));
   if (!runs.length) o.line("  no active runs");
   else {
     const by = (s: string) => runs.filter((r) => r.state === s).length;

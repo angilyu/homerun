@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "20.14.5",
+    "@homerun/cli": "workspace:*",
     "@homerun/client": "workspace:*",
     "@homerun/homerund": "workspace:*",
     "@playwright/test": "1.63.0",

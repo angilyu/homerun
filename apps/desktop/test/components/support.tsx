@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { AppClient } from "@homerun/app-state";
 import { AppRoot, createApp } from "../../src/app";
 import type { Route } from "../../src/hooks";
-import type { AppInfo, KeyStatus, LoginItemStatus, NotificationPermission, SetKeyOutcome, ShellApi, ShellEvent, ShellPrefs, UpdateState } from "../../src/platform/types";
+import type { AppInfo, CliToolStatus, KeyStatus, LoginItemStatus, NotificationPermission, SetKeyOutcome, ShellApi, ShellEvent, ShellPrefs, UpdateState } from "../../src/platform/types";
 import { DEVICE, FakeTransport, T0, uuid } from "../../../../packages/app-state/test/helpers";
 
 export * from "../../../../packages/app-state/test/helpers";
@@ -68,6 +68,19 @@ export class FakeShell implements ShellApi {
   setAutoUpdate = async (on: boolean) => {
     this.calls.push(`setAutoUpdate:${on}`);
     this.shellPrefs.auto_download_updates = on;
+  };
+  tool: CliToolStatus = { state: "unavailable", reason: "The command-line tool comes with the Homerun app; this is a development build." };
+  cliTool = async () => this.tool;
+  installCliTool = async () => {
+    this.calls.push("installCliTool");
+    if (this.tool.state === "foreign" || this.tool.state === "unavailable") throw new Error("Something else is in the way.");
+    this.tool = { state: "installed", link: "/Users/me/.local/bin/homerun" };
+    return this.tool;
+  };
+  removeCliTool = async () => {
+    this.calls.push("removeCliTool");
+    this.tool = { state: "not_installed", link: "/Users/me/.local/bin/homerun" };
+    return this.tool;
   };
 }
 

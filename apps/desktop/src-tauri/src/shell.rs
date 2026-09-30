@@ -1,7 +1,9 @@
 //! The shell's side of the runtime (§5.1): start the supervisor, pick the key store, relay
 //! runtime notifications and status to the webview through one ordered Tauri channel, post the
-//! runtime's local notifications (§8.2) and keep the menu bar's summary fresh.
+//! runtime's local notifications (§8.2), prompt for CLI access (§5.2) and keep the menu bar's
+//! summary fresh.
 
+use crate::cli_prompts::CliPrompts;
 use crate::keychain::Keychain;
 use crate::notifications;
 use homerun_shell_core::keys::{KeyStore, MemoryKeyStore, Remembered, API_KEY};
@@ -15,6 +17,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::Duration;
 use tauri::ipc::Channel;
+use tauri::AppHandle;
 
 /// Shell events for the webview (`navigate`, `update`), queued until it attaches: a notification
 /// click can launch the app before the page has loaded.
@@ -30,6 +33,7 @@ pub struct AppHost {
     status: Mutex<RuntimeStatus>,
     events: Mutex<Events>,
     notices: Mutex<Notices>,
+    cli: Arc<CliPrompts>,
     /// Something the menu bar shows may have changed.
     dirty: (Mutex<bool>, Condvar),
 }
@@ -100,6 +104,9 @@ impl AppHost {
 
 impl Host for AppHost {
     fn status(&self, s: &RuntimeStatus) {
+        if !matches!(s, RuntimeStatus::Ready { .. }) {
+            self.cli.runtime_gone();
+        }
         *self.status.lock().unwrap() = s.clone();
         self.emit(json!({"type": "status", "status": s}));
         let ops = self.notices.lock().unwrap().status(s);
@@ -121,6 +128,7 @@ impl Host for AppHost {
                 self.apply(ops);
             }
             "threads.changed" => self.mark_dirty(),
+            "cli.access_requested" | "cli.access_withdrawn" => self.cli.notification(method, &params),
             _ => {}
         }
     }
@@ -225,17 +233,20 @@ fn key_store(test: bool) -> Box<dyn KeyStore> {
     Box::new(m)
 }
 
-pub fn start(version: &str, test: bool) -> Shell {
+pub fn start(version: &str, test: bool, app: AppHandle) -> Shell {
     let data_dir = data_dir();
     let mut cfg = Config::new(runtime_program(), data_dir.join("logs").join("homerund.log"), version);
-    // Secrets travel over the launch-token connection only, never the environment (§5.2).
-    cfg.env_remove = vec!["ANTHROPIC_API_KEY".into(), "ANTHROPIC_AUTH_TOKEN".into()];
+    // Secrets travel over the launch-token connection only, never the environment (§5.2). The
+    // runtime is a compiled Bun program, and Bun reads its own options from the environment
+    // (a preload, or running as `bun`): none reach the process the release CLI trusts.
+    cfg.env_remove = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "BUN_OPTIONS", "BUN_BE_BUN", "NODE_OPTIONS"].map(String::from).to_vec();
     let host = Arc::new(AppHost {
         keys: key_store(test),
         channel: Mutex::new(None),
         status: Mutex::new(RuntimeStatus::Starting),
         events: Mutex::new(Events::default()),
         notices: Mutex::new(Notices::default()),
+        cli: CliPrompts::new(app),
         dirty: (Mutex::new(false), Condvar::new()),
     });
     let prefs = prefs::load(&prefs::path(&data_dir));

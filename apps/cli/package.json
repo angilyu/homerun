@@ -6,13 +6,14 @@
     "homerun": "./src/main.ts"
   },
   "scripts": {
-    "build": "bun build --compile --minify --sourcemap ./src/main.ts --outfile ./dist/homerun",
-    "build:dev": "bun build --compile --sourcemap --define 'HOMERUN_CLI_BUILD=\"development\"' ./src/main.ts --outfile ./dist/homerun-dev",
+    "build": "bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --minify --sourcemap ./src/main.ts --outfile ./dist/homerun",
+    "build:dev": "bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --sourcemap --define 'HOMERUN_CLI_BUILD=\"development\"' ./src/main.ts --outfile ./dist/homerun-dev",
     "typecheck": "tsc -p .",
     "test": "bun test",
     "test:unit": "bun test test/unit",
     "test:e2e": "bun test test/e2e",
-    "test:replay": "bun test test/replay"
+    "test:replay": "bun test test/replay",
+    "test:macos": "bun test test/macos"
   },
   "dependencies": {
     "@homerun/client": "workspace:*",
