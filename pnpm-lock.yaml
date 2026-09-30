@@ -116,6 +116,9 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
     devDependencies:
+      '@homerun/relay':
+        specifier: workspace:*
+        version: link:../relay
       '@homerun/testkit':
         specifier: workspace:*
         version: link:../../packages/testkit

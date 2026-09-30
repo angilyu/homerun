@@ -30,7 +30,7 @@ import { listCliTokens } from "../store/cli-tokens";
 import type { Authenticator } from "./auth";
 import type { RemotePeer } from "./server";
 import type { ShellSecrets } from "../shell-secrets";
-import type { RemoteService } from "../remote/service";
+import { RemoteError, type RemoteService } from "../remote/service";
 import type { AccessRequester, CliAccess } from "./cli-access";
 
 /** A JSON-RPC error a handler wants to send as is. */
@@ -115,6 +115,15 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     if (!d.remote) throw new RpcFail(RPC_ERROR.UNAVAILABLE, "Remote access isn't running.");
     return d.remote;
   };
+  /** Runs a remote-access call, turning what it refuses into the matching RPC error. */
+  const remote = async <T>(fn: (r: RemoteService) => T | Promise<T>): Promise<T> => {
+    try {
+      return await fn(remoteOf());
+    } catch (e) {
+      if (e instanceof RemoteError) throw new RpcFail(e.kind === "not_found" ? RPC_ERROR.NOT_FOUND : RPC_ERROR.UNAVAILABLE, e.message);
+      throw e;
+    }
+  };
 
   return {
     hello: (conn, p) => {
@@ -158,6 +167,12 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     },
     "account.cancel_sign_in": () => ({ status: remoteOf().cancelSignIn() }),
     "account.sign_out": async () => ({ status: await remoteOf().signOut() }),
+    "account.delete": () => remote(async (r) => ({ status: await r.deleteAccount() })),
+    "devices.list": () => ({ devices: remoteOf().list() }),
+    "devices.unpair": (_c, p) => remote((r) => (r.unpair(p.device_id), { ok: true as const })),
+    "devices.pairing.start": () => remote((r) => r.startPairing()),
+    "devices.pairing.cancel": (_c, p) => remote((r) => (r.cancelPairing(p.offer_id), { ok: true as const })),
+    "devices.link.decide": (_c, p) => remote((r) => (r.decideLink(p.request_id, p.approve), { ok: true as const })),
     "cli.tokens.revoke": (_c, p) => {
       if (!d.cliAccess.revoke(p.token_id)) throw notFound("CLI token");
       return { ok: true as const };

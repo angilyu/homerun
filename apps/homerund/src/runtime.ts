@@ -219,6 +219,11 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       shellSecrets,
       now: t,
       broadcast: (m, p) => server?.broadcast(m, p),
+      adopt: (sink, peer) => {
+        if (!server) throw new Error("the RPC server isn't running");
+        return server.adopt(sink, peer);
+      },
+      hostname: device.hostname,
       ...o.remote,
     });
     const changes = new ThreadChanges(store, device.device_id, (summary) => server?.broadcast("threads.changed", { summary }));
@@ -251,6 +256,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         else if (method === "power.did_wake") {
           const p = params as { at: number; slept_at: number | null };
           fires.didWake(p.at, p.slept_at);
+          remote.wake();
         }
       },
     });
