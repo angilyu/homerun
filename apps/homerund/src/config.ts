@@ -121,18 +121,19 @@ function ensureDir(d: string): string {
 /** Locate the bundled `claude` (§5.1). In development it comes from the SDK's platform package. */
 export function findClaude(env: Record<string, string | undefined>): string {
   if (env.HOMERUN_CLAUDE_PATH) return env.HOMERUN_CLAUDE_PATH;
-  const besideExe = join(dirname(process.execPath), "claude");
+  const exe = process.platform === "win32" ? "claude.exe" : "claude";
+  const besideExe = join(dirname(process.execPath), exe);
   if (isCompiled && existsSync(besideExe)) return besideExe;
   const pkg = `claude-agent-sdk-${process.platform}-${process.arch}`;
   let dir = resolve(import.meta.dir);
   for (let i = 0; i < 8; i++) {
     for (const suffix of ["", "-musl"]) {
-      const p = join(dir, "node_modules", "@anthropic-ai", pkg + suffix, "claude");
+      const p = join(dir, "node_modules", "@anthropic-ai", pkg + suffix, exe);
       if (existsSync(p)) return p;
     }
     const pnpmDir = join(dir, "node_modules", ".pnpm");
     if (existsSync(pnpmDir)) {
-      const hit = [...new Bun.Glob(`@anthropic-ai+${pkg}@*/node_modules/@anthropic-ai/*/claude`).scanSync({ cwd: pnpmDir })][0];
+      const hit = [...new Bun.Glob(`@anthropic-ai+${pkg}@*/node_modules/@anthropic-ai/*/${exe}`).scanSync({ cwd: pnpmDir })][0];
       if (hit) return join(pnpmDir, hit);
     }
     dir = dirname(dir);

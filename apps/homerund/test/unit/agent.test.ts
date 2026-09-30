@@ -69,6 +69,7 @@ describe("isolation (§5.3, F9, F10)", () => {
     runtimeVersion: "0.0.0",
     anthropicBaseUrl: null,
     useShellEnvironment: false,
+    platform: "darwin" as const,
   };
 
   test("the child environment is complete and owned: no inherited variables, clean bash, private config dir", () => {
@@ -91,6 +92,26 @@ describe("isolation (§5.3, F9, F10)", () => {
       ].sort(),
     );
     expect(claudeEnv({ ...input, useShellEnvironment: true, userShell: "/bin/zsh" })).toMatchObject({ HOME: "/Users/u", SHELL: "/bin/zsh" });
+  });
+
+  test("on Windows: system directories on PATH, what Win32 needs, TEMP and TMP, and no bash", () => {
+    const win = { ...input, platform: "win32" as const, systemRoot: "D:\\Win", shellHome: "C:\\d\\shell-home", tmpDir: "C:\\d\\tmp" };
+    const env = claudeEnv(win);
+    expect(env).toMatchObject({
+      PATH: "D:\\Win\\System32;D:\\Win;D:\\Win\\System32\\Wbem;D:\\Win\\System32\\WindowsPowerShell\\v1.0",
+      SystemRoot: "D:\\Win",
+      SystemDrive: "D:",
+      ComSpec: "D:\\Win\\System32\\cmd.exe",
+      HOME: "C:\\d\\shell-home",
+      USERPROFILE: "C:\\d\\shell-home",
+      TMPDIR: "C:\\d\\tmp",
+      TEMP: "C:\\d\\tmp",
+      TMP: "C:\\d\\tmp",
+    });
+    expect(env.SHELL).toBeUndefined();
+    expect(env.BASH_ENV).toBeUndefined();
+    expect(env.APPDATA).toBeUndefined();
+    expect(claudeEnv({ ...win, useShellEnvironment: true, userShell: "C:\\bin\\pwsh.exe" }).SHELL).toBe("C:\\bin\\pwsh.exe");
   });
 
   test("query() options carry the whole isolation list", () => {

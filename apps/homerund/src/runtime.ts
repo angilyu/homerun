@@ -134,7 +134,11 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     const killedTools = await processes.killEscapedTools(config.claudeConfigDir);
 
     // 2. Caches a killed claude leaves behind (F1, F5). The SDK puts claude-resume-* in TMPDIR.
-    if (o.setTmpdir !== false) process.env.TMPDIR = config.tmpDir;
+    if (o.setTmpdir !== false) {
+      process.env.TMPDIR = config.tmpDir;
+      // Windows reads TEMP and TMP, not TMPDIR (os.tmpdir(), GetTempPath).
+      if (process.platform === "win32") process.env.TEMP = process.env.TMP = config.tmpDir;
+    }
     const { removed: swept } = sweepTemp(config.claudeConfigDir, config.tmpDir);
     prepareShellHome(config.shellHome);
 
