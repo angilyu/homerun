@@ -30,8 +30,10 @@ const main = join(ROOT, "apps", "homerund", "src", "main.ts");
 const define = release
   ? ["--minify", ...(process.env.HOMERUND_VERSION ? ["--define", `HOMERUND_VERSION=${JSON.stringify(process.env.HOMERUND_VERSION)}`] : [])]
   : ["--define", `HOMERUND_BUILD="development"`];
+// The release CLI trusts this process (§5.2): no bunfig.toml or .env from its working directory.
+const noAutoload = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv"];
 const t0 = Date.now();
-const r = Bun.spawnSync([process.execPath, "build", "--compile", ...define, main, "--outfile", homerund], { stdout: "pipe", stderr: "pipe" });
+const r = Bun.spawnSync([process.execPath, "build", "--compile", ...noAutoload, ...define, main, "--outfile", homerund], { stdout: "pipe", stderr: "pipe" });
 if (r.exitCode !== 0) throw new Error(`building homerund failed:\n${r.stderr.toString()}`);
 
 const claude = join(OUT, `claude-${triple}`);

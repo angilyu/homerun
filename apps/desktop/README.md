@@ -56,7 +56,8 @@ switches, which `scripts/macos/update-test.sh` sets. A release build ignores the
 test flag is compiled into the bundle's config, not read from the environment.
 
 **A local `.app`.** `scripts/macos/package.sh` stages a release-channel `homerund` and `claude`
-(`scripts/macos/fetch-toolchain.sh`), builds the app, and signs it inside out. By default it
+(`scripts/macos/fetch-toolchain.sh`), compiles the release CLI (below), builds the app, and signs
+it inside out. By default it
 signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
 `dist/macos/<version>/`. It has been tried on Apple silicon only. Notarized distribution is milestone 11 (§11).
 
@@ -210,6 +211,26 @@ when each was last used; **Revoke** signs one out and closes anything it has ope
 
 If `~/.local/bin` isn't on your `PATH`, Settings shows the line to add to `~/.zshrc`.
 
+**How the CLI is built and signed.** `package.sh` asks `sign.sh --runtime-requirement` for the
+designated requirement `homerund` will have once signed: a throwaway copy is signed exactly as
+step 3 signs it. Ad hoc that is a `cdhash`; with Developer ID it is the team's requirement for
+`com.angilyu.homerun.homerund`. It compiles `apps/cli` with that requirement and the app's
+version compiled in, with no `bunfig.toml` or `.env` autoload, and adds it to `externalBin` for
+this build only (`tauri dev` doesn't have it). `sign.sh` step 3b then signs it hardened as
+`com.angilyu.homerun.cli`, with `allow-jit` only (`entitlements/cli.plist`). After signing,
+`package.sh` checks the bundled `homerund` against the same requirement (the CLI's own peer check)
+and fails the build if it doesn't pass. The CLI adds about 62 MB to the app (25 MB compressed),
+since it is a second Bun executable.
+
+`scripts/macos/cli-test.sh [Homerun.app]` (nightly) packages an ad-hoc app if none is given, then
+runs `apps/cli`'s macOS tests against it:
+- its signature and entitlements;
+- every development switch refused;
+- approvals refused (questions only);
+- the peer check passing for the bundled `homerund` and failing for any other listener before a
+  byte is sent;
+- the keychain calls, against a throwaway keychain.
+
 ## Releasing an update
 
 The manifest and payload are hosted on GitHub Releases:
@@ -355,7 +376,8 @@ cd src-tauri && cargo test -p homerun-shell-core
   $0.10), and `HOMERUN_E2E_LIVE_LEDGER` appends each run's spend to a file. One run costs about
   $0.04. Traces and videos are off, because they would record the key.
 - **CI.** The `desktop`, `desktop-e2e` and `shell` jobs run on every pull request. The Tauri crate
-  and an unsigned `.app` build nightly on macOS, followed by `update-test.sh adhoc`.
+  and an unsigned `.app` build nightly on macOS, followed by `cli-test.sh` (the bundled CLI,
+  below) and `update-test.sh adhoc`.
 
 ## Manual checks
 

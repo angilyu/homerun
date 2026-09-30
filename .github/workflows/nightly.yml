@@ -58,6 +58,11 @@ jobs:
         run: cargo test --workspace --locked
       - name: Unsigned .app
         run: pnpm --filter @homerun/desktop tauri build --bundles app --no-sign
+      # The release CLI as it ships (§5.2): an ad-hoc package, then the bundled CLI against the
+      # bundled homerund (peer check, refused switches, questions only) and the keychain FFI
+      # against a throwaway keychain. About 2 minutes. No API key or network.
+      - name: CLI test (ad hoc)
+        run: scripts/macos/cli-test.sh
       # Two ad-hoc builds with an ephemeral key, a mid-run Restart now, install on quit, and the
       # power assertion (§8.1); about 4 minutes locally. No API key or network.
       - name: Update test (ad hoc)

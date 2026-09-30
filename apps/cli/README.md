@@ -167,6 +167,9 @@ None of them need an API key. The e2e tests start homerund in-process on a tempo
 data dir, play the shell to set a mock key, and spawn the CLI from source.
 `test/e2e/build-gate.test.ts` compiles the CLI both ways and checks the rules above.
 `test/e2e/access.test.ts` drives login, deny, expiry, Ctrl-C, revocation and logout with an
-in-memory token store and a fake peer inspector. `test/macos` makes the real Security.framework
-calls against a throwaway keychain file, never the login keychain; the checks that need the
-login keychain or a person are in [apps/desktop/README.md](../desktop/README.md).
+file token store and no peer check (the peer check's logic is unit tested with a fake inspector).
+`test/macos/ffi.test.ts` makes the real Security.framework calls against a throwaway keychain
+file, never the login keychain. `test/macos/bundled.test.ts` runs only with
+`HOMERUN_TEST_APP=path/to/Homerun.app`, as `scripts/macos/cli-test.sh` sets it: the bundled
+release CLI against the bundled `homerund`. The checks that need the login keychain or a person
+are in [apps/desktop/README.md](../desktop/README.md).

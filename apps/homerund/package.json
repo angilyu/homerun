@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build --compile --minify --sourcemap ./src/main.ts --outfile ./dist/homerund",
-    "build:dev": "bun build --compile --sourcemap --define 'HOMERUND_BUILD=\"development\"' ./src/main.ts --outfile ./dist/homerund-dev",
+    "build": "bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --minify --sourcemap ./src/main.ts --outfile ./dist/homerund",
+    "build:dev": "bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --sourcemap --define 'HOMERUND_BUILD=\"development\"' ./src/main.ts --outfile ./dist/homerund-dev",
     "dev": "bun run scripts/dev-shell.ts",
     "typecheck": "tsc -p .",
     "test": "bun test",
