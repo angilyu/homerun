@@ -19,6 +19,10 @@
  * or is answered without asking (`allow`, `deny`). Try it with a development CLI in release-role
  * mode: `pnpm homerun --dev-role cli --dev-token-store /tmp/t --dev-skip-peer-check login`.
  *
+ * For remote access (§9, §10; README.md) it prints the sign-in page the runtime asks the shell
+ * to open, keeps what the runtime persists (`secrets.persist`) in memory for this session only,
+ * and asks on this terminal about a device that wants to link, with its code, like `--cli-access`.
+ *
  * Development only: this script is not part of any build.
  */
 import { randomBytes } from "node:crypto";
@@ -149,9 +153,58 @@ if (apiKey) {
   await shell.call("secrets.set", { name: "anthropic_api_key", value: apiKey });
   apiKey = null;
 }
+/** What the Keychain would hold. Gone when this script stops, so sign in again next time. */
+const persisted = new Map<string, string>();
+shell.onRequest((method, params) => {
+  const p = params as { name: string; value?: string };
+  if (method === "secrets.persist" && p.value) {
+    persisted.set(p.name, p.value);
+    return { stored: true };
+  }
+  if (method === "secrets.delete" && p.name !== "anthropic_api_key") {
+    persisted.delete(p.name);
+    return { deleted: true };
+  }
+  throw new Error(`dev-shell doesn't handle ${method}`);
+});
+
+/** The stand-in for the native link prompt (§10.5): the same answers as CLI access. */
+async function askLink(p: { request_id: string; name: string; platform: string; code: string }): Promise<void> {
+  let approve = cliAccess === "allow";
+  if (cliAccess === "ask") {
+    if (!process.stdin.isTTY) {
+      process.stderr.write("dev-shell: a device asked to link, but stdin is not a terminal; declining (use --cli-access allow)\n");
+    } else {
+      process.stderr.write(`dev-shell: link "${p.name}" (${p.platform}) to this computer? It shows ${p.code.slice(0, 3)} ${p.code.slice(3)}. [y/N] `);
+      approve = (await readLine()).trim().toLowerCase() === "y";
+    }
+  }
+  try {
+    await shell.call("devices.link.decide", { request_id: p.request_id, approve });
+    process.stderr.write(`dev-shell: link ${approve ? "approved" : "declined"}\n`);
+  } catch (e) {
+    process.stderr.write(`dev-shell: couldn't answer: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+}
+
 /** The stand-in for the native CLI access prompt (§5.2). Nothing is answered unless the user types y. */
 const answering = new Set<string>();
 shell.onNotification((method, params) => {
+  if (method === "browser.open") {
+    process.stderr.write(`dev-shell: sign in at ${(params as { url: string }).url}\n`);
+    return;
+  }
+  if (method === "devices.link_requested") {
+    const p = params as { request_id: string; name: string; platform: string; code: string };
+    if (answering.has(p.request_id)) return;
+    answering.add(p.request_id);
+    void askLink(p);
+    return;
+  }
+  if (method === "devices.link_withdrawn") {
+    process.stderr.write(`dev-shell: link request ${(params as { request_id: string }).request_id} withdrawn\n`);
+    return;
+  }
   if (method === "cli.access_withdrawn") {
     const p = params as { request_id: string; reason: string };
     process.stderr.write(`dev-shell: CLI access request ${p.request_id} ${p.reason}\n`);
