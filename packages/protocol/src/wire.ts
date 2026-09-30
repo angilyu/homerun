@@ -3,6 +3,7 @@ import { DeviceId, RelayPresence, StaticPublicKey, TimestampMs } from "@homerun/
 import { framed, fromB64url, toB64url, utf8 } from "./bytes";
 import { ed25519Verify, hash, type SigningKey } from "./crypto";
 import { DeviceKind, DevicePublic, SigningPublicKey } from "./identity";
+import { AppAttestation } from "./app-attest";
 import { NOISE_MAX_MESSAGE } from "./noise";
 import { SealedEnvelope } from "./sealed";
 import { LinkStatement } from "./statement";
@@ -90,7 +91,11 @@ export const bodyBytes = (body: string) => utf8(body);
 
 // ---------------------------------------------------------------- HTTPS bodies
 
-export const RegisterDevice = z.strictObject({ device: DevicePublic, name: DeviceName });
+/**
+ * `POST /v1/register`. An iPhone includes its App Attest attestation; the relay verifies it for its
+ * own routing (push tokens, lock-screen answers) and registers an unattested `ios` claim as `web`.
+ */
+export const RegisterDevice = z.strictObject({ device: DevicePublic, name: DeviceName, attestation: AppAttestation.optional() });
 export type RegisterDevice = z.infer<typeof RegisterDevice>;
 
 export const LinkedDevice = z.strictObject({

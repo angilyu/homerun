@@ -7,6 +7,7 @@ import { type DhKey, hash, type Random, systemRandom } from "./crypto";
 import { SigningPublicKey } from "./identity";
 import { HandshakeState, NoiseError } from "./noise";
 import { LinkStatement, RemotePlatform } from "./statement";
+import { AppAttestation } from "./app-attest";
 
 /**
  * QR pairing (§9.6). The desktop shows `homerun://pair?d=<base64url(JSON PairingQrPayload)>`
@@ -59,6 +60,8 @@ export const PairHello = z.strictObject({
   platform: RemotePlatform,
   name: z.string().min(1).max(100),
   signing_public_key: SigningPublicKey,
+  /** An iPhone's App Attest attestation (§9.8); without a valid one the desktop treats it as web. */
+  attestation: AppAttestation.optional(),
 });
 export type PairHello = z.infer<typeof PairHello>;
 

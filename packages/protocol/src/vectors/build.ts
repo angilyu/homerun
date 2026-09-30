@@ -9,6 +9,9 @@ import { decodePairingUrl, encodePairingUrl, offerTag, pairingPsk, PairInitiator
 import { openSealed, seal, sealRaw, type SealedEnvelope, type SealedHeader } from "../sealed";
 import { linkStatementBytes, signLinkStatement, type LinkStatementBody } from "../statement";
 import { challengeBytes, requestBytes, signChallenge, signRequest } from "../wire";
+import { p256 } from "@noble/curves/nist.js";
+import { attestationClientDataHash, IOS_APP_ID } from "../app-attest";
+import { testAppAttestCA, testAssertion } from "../testing/app-attest";
 import { ACCOUNT, identityOf, T0, vectorDeviceKeys, type VectorDeviceName } from "./fixtures";
 import { seededRandom } from "./seeded";
 
@@ -486,6 +489,43 @@ export function buildEncoding() {
   };
 }
 
+// ---------------------------------------------------------------- App Attest
+
+export function buildAppAttest() {
+  const who = (n: VectorDeviceName) => ({ device_id: keys(n).device_id, static_public_key: keys(n).x25519_public, signing_public_key: keys(n).ed25519_public });
+  const approvalKey = toB64url(p256.getPublicKey(seededRandom("app-attest/approval")(32), false));
+  const ca = testAppAttestCA("homerun-vector-app-attest");
+  const phone = who("phone");
+  const good = ca.attest(phone, { approvalKey, credentialSecretKey: seededRandom("app-attest/credential")(32) });
+  const dev = ca.attest(phone, { environment: "development", credentialSecretKey: seededRandom("app-attest/credential")(32) });
+  const cdh = attestationClientDataHash(phone, undefined);
+  return {
+    $comment: COMMENT(
+      "App Attest (§9.8): `client_data_hash` is what an iPhone passes to attestKey (every client must match); `attestation` cases check a verifier against a test root (not Apple's) at `now`; `assertion` cases check assertion verification with a stored counter.",
+    ),
+    app_id: IOS_APP_ID,
+    client_data_hash: [
+      { name: "with an approval key", identity: phone, approval_key: approvalKey, hex: toHex(attestationClientDataHash(phone, approvalKey)) },
+      { name: "without an approval key", identity: phone, approval_key: null, hex: toHex(cdh) },
+      { name: "web keys", identity: who("web"), approval_key: null, hex: toHex(attestationClientDataHash(who("web"), undefined)) },
+    ],
+    root: toB64url(ca.root),
+    now: T0,
+    attestation: [
+      { name: "valid", identity: phone, attestation: good.attestation, allow_development: false, valid: true, credential_public_key: toB64url(good.credentialPublicKey) },
+      { name: "another identity", identity: who("other"), attestation: good.attestation, allow_development: false, valid: false },
+      { name: "approval key dropped", identity: phone, attestation: { key_id: good.attestation.key_id, object: good.attestation.object }, allow_development: false, valid: false },
+      { name: "development, production policy", identity: phone, attestation: dev.attestation, allow_development: false, valid: false },
+      { name: "development, development policy", identity: phone, attestation: dev.attestation, allow_development: true, valid: true, credential_public_key: toB64url(dev.credentialPublicKey) },
+    ],
+    assertion: [
+      { name: "counter increases", client_data_hash: toHex(cdh), assertion: toB64url(testAssertion(good.credentialSecretKey, cdh, 3)), last_counter: 2, valid: true, counter: 3 },
+      { name: "counter replayed", client_data_hash: toHex(cdh), assertion: toB64url(testAssertion(good.credentialSecretKey, cdh, 2)), last_counter: 2, valid: false },
+      { name: "other data", client_data_hash: toHex(attestationClientDataHash(who("other"), undefined)), assertion: toB64url(testAssertion(good.credentialSecretKey, cdh, 3)), last_counter: 0, valid: false },
+    ].map((c) => ({ ...c, credential_public_key: toB64url(good.credentialPublicKey) })),
+  };
+}
+
 export async function buildAll(): Promise<Record<string, unknown>> {
   return {
     "sealed.json": await buildSealed(),
@@ -496,5 +536,6 @@ export async function buildAll(): Promise<Record<string, unknown>> {
     "apns-payload.json": await buildApns(),
     "relay-wire.json": await buildWire(),
     "encoding.json": buildEncoding(),
+    "app-attest.json": buildAppAttest(),
   };
 }

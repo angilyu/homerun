@@ -5,6 +5,7 @@ import { type DhKey, hash, type Random, systemRandom } from "./crypto";
 import { SigningPublicKey } from "./identity";
 import { type CipherState, HandshakeState, NoiseError } from "./noise";
 import { LinkStatement, RemotePlatform } from "./statement";
+import { AppAttestation } from "./app-attest";
 
 /**
  * Linking with a matching code (§10.5), for a device that can't scan the desktop's QR code. Both
@@ -59,6 +60,8 @@ export const LinkDeviceInfo = z.strictObject({
   platform: RemotePlatform,
   name: z.string().min(1).max(100),
   signing_public_key: SigningPublicKey,
+  /** An iPhone's App Attest attestation (§9.8); without a valid one the desktop treats it as web. */
+  attestation: AppAttestation.optional(),
   commit: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
 export type LinkDeviceInfo = z.infer<typeof LinkDeviceInfo>;

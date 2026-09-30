@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./vector-files": "./src/vectors/files.ts",
+    "./testing": "./src/testing/app-attest.ts",
     "./vectors/*": "./vectors/*"
   },
   "files": ["src", "vectors", "README.md"],

@@ -7,6 +7,7 @@ import { decodePairingUrl, encodePairingUrl, offerTag, pairingPsk, PairInitiator
 import { openSealed, seal, sealRaw } from "../sealed";
 import { linkStatementBytes, signLinkStatement, verifyLinkStatement } from "../statement";
 import { ClientFrame, challengeBytes, requestBytes, ServerFrame, signChallenge, signRequest, verifySignature } from "../wire";
+import { attestationClientDataHash, IOS_APP_ID, verifyAssertion, verifyAttestation } from "../app-attest";
 import { identityOf, type VectorDeviceKeys } from "./fixtures";
 import { type CacophonyVector, verifyCacophony } from "./cacophony";
 
@@ -274,6 +275,34 @@ export async function verifyEncodingVectors(v: Json): Promise<CaseResult[]> {
   return out;
 }
 
+export async function verifyAppAttestVectors(v: Json): Promise<CaseResult[]> {
+  const F = "app-attest.json";
+  const out: CaseResult[] = [];
+  for (const c of v.client_data_hash as Json[]) {
+    out.push(await run(F, `client data hash: ${c.name}`, () => (toHex(attestationClientDataHash(c.identity, c.approval_key ?? undefined)) === c.hex ? undefined : "differs")));
+  }
+  const roots = [fromB64url(v.root)];
+  for (const c of v.attestation as Json[]) {
+    out.push(
+      await run(F, `attestation: ${c.name}`, () => {
+        const r = verifyAttestation(c.attestation, c.identity, { appId: v.app_id, allowDevelopment: c.allow_development, roots }, v.now);
+        if (r.ok !== c.valid) return `expected valid=${c.valid}${r.ok ? "" : ` (${r.reason})`}`;
+        if (r.ok && toB64url(r.credentialPublicKey) !== c.credential_public_key) return "credential key differs";
+      }),
+    );
+  }
+  for (const c of v.assertion as Json[]) {
+    out.push(
+      await run(F, `assertion: ${c.name}`, () => {
+        const r = verifyAssertion(fromB64url(c.assertion), fromHex(c.client_data_hash), fromB64url(c.credential_public_key), c.last_counter, { appId: v.app_id ?? IOS_APP_ID });
+        if (r.ok !== c.valid) return `expected valid=${c.valid}`;
+        if (r.ok && r.counter !== c.counter) return "counter differs";
+      }),
+    );
+  }
+  return out;
+}
+
 export async function verifyCacophonyVectors(v: Json): Promise<CaseResult[]> {
   const out: CaseResult[] = [];
   for (const c of v.vectors as CacophonyVector[]) {
@@ -293,6 +322,7 @@ export const VERIFIERS: Record<string, (v: Json) => Promise<CaseResult[]>> = {
   "apns-payload.json": verifyApnsVectors,
   "relay-wire.json": verifyWireVectors,
   "encoding.json": verifyEncodingVectors,
+  "app-attest.json": verifyAppAttestVectors,
 };
 
 /** Runs every verifier over the given files (name → parsed JSON). Missing files fail. */
