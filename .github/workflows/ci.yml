@@ -26,11 +26,11 @@ jobs:
       - name: Packages resolve from registry.npmjs.org only
         run: scripts/check-registry.sh
       # Root devDependency `bun` pins the Bun version used by `bun test`.
-      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/core..." --filter "@homerun/client..." --filter "@homerun/homerund"
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/core..." --filter "@homerun/client..." --filter "@homerun/win32" --filter "@homerun/homerund"
       - name: Typecheck
-        run: pnpm --filter @homerun/core --filter @homerun/client --filter @homerun/homerund typecheck
+        run: pnpm --filter @homerun/core --filter @homerun/client --filter @homerun/win32 --filter @homerun/homerund typecheck
       - name: Test
-        run: pnpm --filter @homerun/core --filter @homerun/client test
+        run: pnpm --filter @homerun/core --filter @homerun/client --filter @homerun/win32 test
       - name: Generated JSON Schema and vectors are up to date
         run: pnpm --filter @homerun/core schema:check
       - name: Markdown links and anchors resolve
