@@ -215,6 +215,31 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ""
 
+  ios-js:
+    name: apps/ios (JavaScript)
+    # The iPhone app's JavaScript (§9.8): its session (sign-in, pairing, linking, the App Attest
+    # notice, account deletion) against the real runtime and the relay's Bun adapter with a fake
+    # native module, the encrypted history cache, the Face ID lock, and the protocol self-test
+    # compiled by hermesc. The Swift and the simulator build run on macOS (ios.yml).
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/ios..."
+      - name: Typecheck (the app, and its tests and build config)
+        run: pnpm --filter @homerun/ios typecheck
+      - name: Test
+        run: pnpm --filter @homerun/ios test
+        env:
+          ANTHROPIC_API_KEY: ""
+      - name: The protocol self-test compiles under Hermes
+        run: pnpm --filter @homerun/ios test:hermes
+
   web-e2e:
     name: apps/web end-to-end
     # The web bundle in Chrome under its own CSP and Trusted Types, served with the headers Pages

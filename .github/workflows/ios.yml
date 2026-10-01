@@ -1,0 +1,112 @@
+name: iOS
+
+# The iPhone app's native half on macOS, where minutes cost ten times Linux's (§16 row 10).
+# ios-swift: HomerunKit (Noise, sealed messages, pushes, App Attest, the token owner) under
+# `swift test` against the same packages/protocol/vectors JSON as bun test, on pull requests that
+# touch the Swift or the vectors. About a minute.
+# ios-sim: nightly and on demand, the whole app: prebuild, CocoaPods, a Release simulator build
+# (the JavaScript bundled by Metro, compiled by hermesc), then the app launched with
+# `-HomerunSelfTest 1` runs the protocol vectors under Hermes on the simulator. The JavaScript
+# side runs per pull request on Linux (ci.yml ios-js).
+on:
+  pull_request:
+    paths:
+      - "apps/ios/modules/**"
+      - "apps/ios/targets/**"
+      - "packages/protocol/vectors/**"
+      - ".github/workflows/ios.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/ios/modules/**"
+      - "apps/ios/targets/**"
+      - "packages/protocol/vectors/**"
+      - ".github/workflows/ios.yml"
+  schedule:
+    - cron: "30 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  ios-swift:
+    name: HomerunKit (swift test)
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift
+        run: swift --version
+      - name: HomerunKit against the protocol vectors
+        working-directory: apps/ios/modules/homerun/ios/HomerunKit
+        run: swift test
+
+  ios-sim:
+    name: apps/ios simulator build and Hermes self-test
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: macos-26
+    # The agreed exception to 3 minutes (plan §8): a cold React Native build.
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # Expo's precompiled modules are built with Swift 6.3 (Xcode 26.4). Use the newest Xcode on
+      # the image; with an older Swift, build the Expo modules from source instead.
+      - name: Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          swift=$(xcrun swift --version 2>&1 | sed -nE 's/.*Swift version ([0-9]+\.[0-9]+).*/\1/p' | head -1)
+          echo "$xcode, Swift $swift"
+          if [ "$(printf '%s\n6.3\n' "$swift" | sort -V | head -1)" != "6.3" ]; then
+            echo "EXPO_USE_PRECOMPILED_MODULES=0" >> "$GITHUB_ENV"
+          fi
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/ios..."
+      # No relay or issuer: the self-test needs neither, and the build carries no account config.
+      - name: Prebuild
+        run: pnpm --filter @homerun/ios exec expo prebuild --platform ios --clean --no-install
+      - uses: actions/cache@v4
+        with:
+          path: |
+            apps/ios/ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'apps/ios/app.config.ts', 'apps/ios/modules/**/*.podspec', 'apps/ios/targets/**/pods.rb') }}-${{ env.EXPO_USE_PRECOMPILED_MODULES }}
+      - name: CocoaPods
+        working-directory: apps/ios/ios
+        run: pod install
+      - name: Release simulator build
+        working-directory: apps/ios/ios
+        run: |
+          set -o pipefail
+          xcodebuild -workspace Homerun.xcworkspace -scheme Homerun -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            build | tail -40
+      # The app prints "HomerunSelfTest vectors: N passed" through console.error, which React
+      # Native sends to the unified log in Release builds.
+      - name: Protocol vectors under Hermes on the simulator
+        working-directory: apps/ios/ios
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r,v in sorted(d.items(), reverse=True) if 'iOS' in r for x in v if x['name'].startswith('iPhone')))")
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b >/dev/null
+          xcrun simctl install "$udid" build/Build/Products/Release-iphonesimulator/Homerun.app
+          xcrun simctl launch "$udid" com.angilyu.homerun.ios -HomerunSelfTest 1
+          for _ in $(seq 1 60); do
+            line=$(xcrun simctl spawn "$udid" log show --last 5m --style compact --predicate 'eventMessage CONTAINS "HomerunSelfTest vectors:"' 2>/dev/null | grep -o 'HomerunSelfTest vectors:.*' | tail -1 || true)
+            if [ -n "$line" ]; then break; fi
+            sleep 2
+          done
+          echo "${line:-no self-test result}"
+          case "$line" in
+            *failed*|"") exit 1 ;;
+          esac
