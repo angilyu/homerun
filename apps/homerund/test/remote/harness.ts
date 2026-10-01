@@ -31,7 +31,7 @@ export interface World {
   stop(): Promise<void>;
 }
 
-async function workerdRelay(issuer: OidcIssuer, apns: ApnsMock): Promise<World["relay"]> {
+async function workerdRelay(issuer: OidcIssuer, apns: ApnsMock, webOrigins: string[]): Promise<World["relay"]> {
   const host = await startWorkerd({
     OIDC_ISSUER: issuer.url,
     OIDC_CLIENT_ID: issuer.clientId,
@@ -44,6 +44,7 @@ async function workerdRelay(issuer: OidcIssuer, apns: ApnsMock): Promise<World["
     PROVIDER_ADMIN: "workos",
     WORKOS_API_KEY: issuer.adminKey,
     WORKOS_API_BASE: issuer.url,
+    ...(webOrigins.length ? { WEB_ORIGINS: webOrigins.join(",") } : {}),
   });
   const bunOnly = (): never => {
     throw new Error("only the Bun relay can do this; skip the test under workerd");
@@ -51,12 +52,21 @@ async function workerdRelay(issuer: OidcIssuer, apns: ApnsMock): Promise<World["
   return { url: host.url, connections: bunOnly, dropConnections: bunOnly, stop: () => host.stop() };
 }
 
-export async function startWorld(): Promise<World> {
-  const issuer = await OidcIssuer.start();
+/**
+ * `webOrigins` are web clients' origins (§9.9): the issuer allows them CORS and their
+ * `/auth/callback`, and the relay allows them as browser origins.
+ */
+export async function startWorld(o: { webOrigins?: string[] } = {}): Promise<World> {
+  const webOrigins = o.webOrigins ?? [];
+  const issuer = await OidcIssuer.start({
+    redirectUris: ["http://127.0.0.1/callback", ...webOrigins.map((x) => `${x}/auth/callback`)],
+    corsOrigins: webOrigins,
+  });
   const apns = await ApnsMock.start();
   const relay = ON_WORKERD
-    ? await workerdRelay(issuer, apns)
+    ? await workerdRelay(issuer, apns, webOrigins)
     : await startLocalRelay({
+        webOrigins,
         issuer: issuer.url,
         clientId: issuer.clientId,
         apns: { keyP8: apns.p8, keyId: apns.keyId, teamId: apns.teamId, topic: apns.topic, endpoint: apns.url },
