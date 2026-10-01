@@ -19,6 +19,8 @@
     "OIDC_ISSUER": "",
     "OIDC_CLIENT_ID": "",
     "OIDC_AUDIENCE": "",
+    // The web client's origins, comma-separated and exact, e.g. "https://app.homerun.app" (README.md).
+    "WEB_ORIGINS": "",
     "APNS_TOPIC": "com.angilyu.homerun.ios"
   },
   // Secrets, set with `wrangler secret put`: APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID.

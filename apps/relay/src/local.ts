@@ -7,6 +7,7 @@ import { ApnsClient, type ApnsConfig, type PushSender } from "./apns";
 import { AuthError, bearerToken, TokenVerifier, type AuthConfig, type VerifiedToken } from "./auth";
 import { DEFAULT_LIMITS, type RelayLimits } from "./config";
 import { AccountRelay, errorResponse, type RelaySocket, type SocketState } from "./core/account";
+import { checkOrigin, parseWebOrigins, preflight, withCors } from "./core/cors";
 import { dropAll, type Sql, type SqlValue } from "./core/sql";
 
 /**
@@ -21,6 +22,8 @@ export interface LocalRelayOptions extends Omit<AuthConfig, "fetch"> {
   limits?: Partial<RelayLimits>;
   /** Whose App Attest attestations make a device an iPhone. Apple's production root by default. */
   appAttest?: AppAttestPolicy;
+  /** The web client's origins, exactly (§9.9). Other pages can't call the relay. */
+  webOrigins?: string[];
   hostname?: string;
   port?: number;
   /** Keep each account's database in files here, so a restart keeps queues and links. */
@@ -131,6 +134,7 @@ export async function startLocalRelay(opts: LocalRelayOptions): Promise<LocalRel
   const verifier = new TokenVerifier({ ...opts, now });
   const limits = { ...DEFAULT_LIMITS, ...opts.limits };
   const appAttest = opts.appAttest ?? productionAppAttestPolicy(false);
+  const webOrigins = parseWebOrigins(opts.webOrigins);
   const push: PushSender | null = !opts.apns ? null : "send" in opts.apns ? opts.apns : new ApnsClient({ ...opts.apns, now });
   const accounts = new Map<string, Account>();
   let stopped = false;
@@ -164,15 +168,18 @@ export async function startLocalRelay(opts: LocalRelayOptions): Promise<LocalRel
     port: opts.port ?? 0,
     async fetch(req, srv) {
       const url = new URL(req.url);
-      if (url.pathname === RELAY_PATHS.health) return Response.json({ ok: true });
+      const origin = checkOrigin(req, webOrigins);
+      if (!origin.ok) return errorResponse("forbidden", "this origin may not call the relay");
+      if (req.method === "OPTIONS") return origin.origin ? preflight(origin.origin) : errorResponse("not_found", "no such endpoint");
+      if (url.pathname === RELAY_PATHS.health) return withCors(Response.json({ ok: true }), origin.origin);
       const auth = await authenticate(req);
-      if (auth instanceof Response) return auth;
+      if (auth instanceof Response) return withCors(auth, origin.origin);
       if (url.pathname === RELAY_PATHS.connect) {
         if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return errorResponse("invalid", "expected a WebSocket upgrade");
         const ok = srv.upgrade(req, { data: { sub: auth.sub, exp: auth.exp, state: null }, headers: { "sec-websocket-protocol": WS_SUBPROTOCOL } });
         return ok ? undefined : errorResponse("invalid", "upgrade failed");
       }
-      return account(auth.sub).relay.http(req, auth);
+      return withCors(await account(auth.sub).relay.http(req, auth), origin.origin);
     },
     websocket: {
       open(ws) {

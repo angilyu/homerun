@@ -48,6 +48,10 @@ A device that registers as `ios` must send an App Attest attestation of its keys
 
 Production accepts only `appattest` (App Store and TestFlight builds). `APP_ATTEST_ALLOW_DEVELOP=1` also accepts `appattestdevelop`, from builds signed for development. Set it on a relay used with Xcode builds, together with a development desktop, which accepts them too. A production relay and a development desktop disagree about such a phone, and pairing it fails. `APP_ATTEST_TEST_ROOT` (DER, base64url) replaces Apple's root, for the workerd tests only.
 
+### Web pages
+
+Only the web client's own pages may call the relay from a browser ([§9.9](../../docs/design.md#99-the-web-client), [§18 row 105](../../docs/design.md#18-decision-log)). `WEB_ORIGINS` lists their origins, comma-separated and exact: `https`, no path, no wildcard (`http` only on loopback, for a dev server). A request whose `Origin` isn't listed is refused with `403 forbidden` before its token is looked at, WebSocket upgrades included, and so is `Origin: null` (sandboxed frames, `file:` pages). Listed origins get a preflight answer and `Access-Control-Allow-Origin` echoing them exactly, never `*` and never credentials: the access token is a header, not a cookie. A request with no `Origin`, or with the relay's own, comes from a native client (the desktop, the iPhone app) and passes without CORS headers.
+
 ### Limits
 
 From `src/config.ts`; the queue bounds are §9.4's.
@@ -80,7 +84,7 @@ To run a relay on your machine:
 OIDC_ISSUER=https://issuer.example OIDC_CLIENT_ID=client_... bun run dev   # port 8787
 ```
 
-It also reads `OIDC_AUDIENCE`, `RELAY_PORT` and `RELAY_DATA_DIR`. Push is off unless `APNS_KEY_P8_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are all set.
+It also reads `OIDC_AUDIENCE`, `RELAY_PORT`, `RELAY_DATA_DIR`, `APP_ATTEST_ALLOW_DEVELOP` and `WEB_ORIGINS` (add `http://127.0.0.1:5173` for the web client's dev server). Push is off unless `APNS_KEY_P8_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are all set.
 
 ## Deploying
 
@@ -107,7 +111,7 @@ The topic is the iOS app's bundle id, `com.angilyu.homerun.ios`. Real delivery t
 
 1. Create a Cloudflare account. Durable Objects with SQLite storage are on the Workers Free plan; pick Paid for production volume.
 2. `pnpm --filter @homerun/relay exec wrangler login`.
-3. In `wrangler.jsonc`, fill in `OIDC_ISSUER` and `OIDC_CLIENT_ID` (and `OIDC_AUDIENCE` if the tokens have one). These are configuration, not secrets. Optionally add `"account_id"` and a `routes` entry for a custom domain such as `relay.homerun.app`.
+3. In `wrangler.jsonc`, fill in `OIDC_ISSUER` and `OIDC_CLIENT_ID` (and `OIDC_AUDIENCE` if the tokens have one), and `WEB_ORIGINS` with the web client's origin once it is deployed. These are configuration, not secrets. Optionally add `"account_id"` and a `routes` entry for a custom domain such as `relay.homerun.app`.
 4. Set the push secrets, pasting each value when asked:
    ```sh
    cd apps/relay

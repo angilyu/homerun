@@ -4,6 +4,7 @@ import { ApnsClient, type PushSender } from "./apns";
 import { AuthError, bearerToken, TokenVerifier } from "./auth";
 import { DEFAULT_LIMITS } from "./config";
 import { AccountRelay, errorResponse, type RelaySocket, type SocketState } from "./core/account";
+import { checkOrigin, parseWebOrigins, preflight, withCors } from "./core/cors";
 import { dropAll, type Sql, type SqlValue } from "./core/sql";
 
 /**
@@ -18,6 +19,8 @@ export interface Env {
   OIDC_ISSUER: string;
   OIDC_AUDIENCE?: string;
   OIDC_CLIENT_ID?: string;
+  /** The web client's origins, comma-separated and exact (§9.9). Other pages can't call the relay. */
+  WEB_ORIGINS?: string;
   /** Secrets: the contents of AuthKey_<id>.p8, its key id and the team id. */
   APNS_KEY_P8?: string;
   APNS_KEY_ID?: string;
@@ -32,6 +35,13 @@ export interface Env {
    * decides pushes and lock-screen answers here; desktops verify attestations themselves (§13).
    */
   APP_ATTEST_TEST_ROOT?: string;
+}
+
+let cachedOrigins: { raw: string; list: string[] } | null = null;
+function webOrigins(env: Env): string[] {
+  const raw = env.WEB_ORIGINS ?? "";
+  if (cachedOrigins?.raw !== raw) cachedOrigins = { raw, list: parseWebOrigins(raw) };
+  return cachedOrigins.list;
 }
 
 function appAttest(env: Env): AppAttestPolicy {
@@ -61,21 +71,30 @@ function verifier(env: Env): TokenVerifier {
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
-    if (url.pathname === RELAY_PATHS.health) return Response.json({ ok: true });
+    let origins: string[];
+    try {
+      origins = webOrigins(env);
+    } catch {
+      return errorResponse("internal", "the relay is not configured");
+    }
+    const origin = checkOrigin(req, origins);
+    if (!origin.ok) return errorResponse("forbidden", "this origin may not call the relay");
+    if (req.method === "OPTIONS") return origin.origin ? preflight(origin.origin) : errorResponse("not_found", "no such endpoint");
+    if (url.pathname === RELAY_PATHS.health) return withCors(Response.json({ ok: true }), origin.origin);
     if (!env.OIDC_ISSUER) return errorResponse("internal", "the relay is not configured");
     const token = bearerToken(req);
-    if (!token) return errorResponse("unauthenticated", "no access token");
+    if (!token) return withCors(errorResponse("unauthenticated", "no access token"), origin.origin);
     let auth;
     try {
       auth = await verifier(env).verify(token);
     } catch (e) {
-      return e instanceof AuthError ? errorResponse(e.code, e.message) : errorResponse("internal", "token check failed");
+      return withCors(e instanceof AuthError ? errorResponse(e.code, e.message) : errorResponse("internal", "token check failed"), origin.origin);
     }
     const headers = new Headers(req.headers);
     headers.set(SUB_HEADER, auth.sub);
     headers.set(EXP_HEADER, String(auth.exp));
     const stub = env.ACCOUNTS.get(env.ACCOUNTS.idFromName(auth.sub));
-    return stub.fetch(new Request(req, { headers }));
+    return withCors(await stub.fetch(new Request(req, { headers })), origin.origin);
   },
 } satisfies ExportedHandler<Env>;
 

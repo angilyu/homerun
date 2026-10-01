@@ -34,6 +34,9 @@ export interface Target {
 export const appAttest = testAppAttestCA();
 export const appAttestRoot = toB64url(appAttest.root);
 
+/** The web client's origin the relays under test list. */
+export const WEB_ORIGIN = "https://app.homerun.test";
+
 export const b64 = (n = 32) => toB64url(crypto.getRandomValues(new Uint8Array(n)));
 export const sessionId = () => b64(16);
 
@@ -52,10 +55,11 @@ export class TestDevice {
     return publicOf(this.id);
   }
 
-  async req(t: Target, token: string, method: string, path: string, body?: unknown, o: { ts?: number; sign?: boolean } = {}): Promise<Response> {
+  async req(t: Target, token: string, method: string, path: string, body?: unknown, o: { ts?: number; sign?: boolean; origin?: string } = {}): Promise<Response> {
     const bytes = body === undefined ? new Uint8Array() : utf8(JSON.stringify(body));
     const headers: Record<string, string> = { authorization: `Bearer ${token}` };
     if (body !== undefined) headers["content-type"] = "application/json";
+    if (o.origin) headers.origin = o.origin;
     if (o.sign !== false) headers["homerun-device"] = await signRequest(this.id.signing, this.deviceId, o.ts ?? t.now(), method, path, bytes);
     return fetch(t.url + path, { method, headers, ...(body !== undefined ? { body: bytes as Uint8Array<ArrayBuffer> } : {}) });
   }

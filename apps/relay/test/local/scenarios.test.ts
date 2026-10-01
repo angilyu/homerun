@@ -1,7 +1,7 @@
 import { afterAll, beforeAll } from "bun:test";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
 import { type LocalRelay, startLocalRelay } from "../../src/local";
-import { appAttest } from "../helpers";
+import { appAttest, WEB_ORIGIN } from "../helpers";
 import { type Ctx, sharedScenarios } from "../scenarios";
 
 let issuer: OidcIssuer;
@@ -16,6 +16,7 @@ beforeAll(async () => {
     clientId: issuer.clientId,
     apns: { keyP8: apns.p8, keyId: apns.keyId, teamId: apns.teamId, topic: apns.topic, endpoint: apns.url },
     appAttest: appAttest.policy(),
+    webOrigins: [WEB_ORIGIN],
   });
 });
 afterAll(async () => {
@@ -24,4 +25,4 @@ afterAll(async () => {
   await issuer.stop();
 });
 
-sharedScenarios((): Ctx => ({ t: { url: relay.url, wsUrl: relay.wsUrl, now: Date.now }, issuer, apns }));
+sharedScenarios((): Ctx => ({ t: { url: relay.url, wsUrl: relay.wsUrl, now: Date.now }, issuer, apns, webOrigin: WEB_ORIGIN }));

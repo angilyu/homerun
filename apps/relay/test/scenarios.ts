@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope } from "@homerun/protocol";
+import { newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope, WS_BEARER_PREFIX, WS_SUBPROTOCOL } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
 import { fakeDeviceToken, type ApnsMock, type OidcIssuer } from "@homerun/testkit";
 import { b64, type Conn, instruction, pushBody, sessionId, statement, type Target, TestDevice } from "./helpers";
@@ -13,6 +13,8 @@ export interface Ctx {
   t: Target;
   issuer: OidcIssuer;
   apns: ApnsMock;
+  /** The web client's origin, in the relay's WEB_ORIGINS. */
+  webOrigin?: string;
 }
 
 const HOUR = 60 * 60 * 1000;
@@ -68,6 +70,66 @@ export function sharedScenarios(get: () => Ctx) {
       const c = get();
       const d = new TestDevice("desktop");
       await expect(d.connect(c.t, await c.issuer.mint({ foreignKey: true }))).rejects.toThrow();
+    });
+  });
+
+  describe("web origins (§9.9)", () => {
+    const withOrigin = (origin: string, init: RequestInit = {}) => ({ ...init, headers: { ...(init.headers as Record<string, string>), origin } });
+
+    test("the web client's origin may call the relay, after a preflight, and reads the answer", async () => {
+      const c = get();
+      const origin = c.webOrigin!;
+      const pre = await fetch(c.t.url + RELAY_PATHS.devices, withOrigin(origin, { method: "OPTIONS", headers: { "access-control-request-method": "POST", "access-control-request-headers": "authorization, homerun-device, content-type" } }));
+      expect(pre.status).toBe(204);
+      expect(pre.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(pre.headers.get("access-control-allow-headers")).toContain("homerun-device");
+      expect(pre.headers.get("access-control-allow-credentials")).toBeNull();
+      const { tok } = await account(c);
+      const web = new TestDevice("web");
+      const r = await web.req(c.t, tok, "POST", RELAY_PATHS.devices, { device: web.pub, name: web.name }, { origin });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(r.headers.get("vary")).toContain("Origin");
+      // Errors are readable too, so the page can tell a lapsed token from a broken relay.
+      const e = await fetch(c.t.url + RELAY_PATHS.devices, withOrigin(origin));
+      expect(e.status).toBe(401);
+      expect(e.headers.get("access-control-allow-origin")).toBe(origin);
+    });
+
+    test("any other origin, or null, is refused before anything else", async () => {
+      const c = get();
+      const { tok } = await account(c);
+      for (const origin of ["https://evil.example", "null", `${c.webOrigin!}.evil.example`, c.webOrigin!.replace("https:", "http:")]) {
+        const pre = await fetch(c.t.url + RELAY_PATHS.devices, withOrigin(origin, { method: "OPTIONS", headers: { "access-control-request-method": "POST" } }));
+        expect(pre.status).toBe(403);
+        expect(pre.headers.get("access-control-allow-origin")).toBeNull();
+        const web = new TestDevice("web");
+        const r = await web.req(c.t, tok, "POST", RELAY_PATHS.devices, { device: web.pub, name: web.name }, { origin });
+        expect(r.status).toBe(403);
+        expect(r.headers.get("access-control-allow-origin")).toBeNull();
+        expect((await web.req(c.t, tok, "GET", RELAY_PATHS.devices)).status).toBe(404);
+        const ws = new WebSocket(c.t.wsUrl, { headers: { origin }, protocols: [WS_SUBPROTOCOL, WS_BEARER_PREFIX + tok] } as never);
+        const opened = await new Promise<boolean>((resolve) => {
+          ws.addEventListener("open", () => resolve(true));
+          ws.addEventListener("error", () => resolve(false));
+          ws.addEventListener("close", () => resolve(false));
+        });
+        expect(opened).toBe(false);
+        ws.close();
+      }
+    });
+
+    test("native clients (no Origin, or the relay's own) need no listing", async () => {
+      const c = get();
+      const { tok } = await account(c);
+      const phone = new TestDevice("ios");
+      expect((await phone.register(c.t, tok)).status).toBe(200);
+      const own = new URL(c.t.url).origin;
+      const r = await phone.req(c.t, tok, "GET", RELAY_PATHS.devices, undefined, { origin: own });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("access-control-allow-origin")).toBeNull();
+      const conn = await phone.connect(c.t, tok, { browser: true });
+      conn.close();
     });
   });
 
