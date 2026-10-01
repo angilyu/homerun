@@ -75,6 +75,8 @@ React DOM; the iOS app (milestone 10b) renders the same stores with React Native
   - It keeps open threads alive while a view retains them, plus a linger.
   - On every new connection it reloads the list, the inbox and the tasks, and resubscribes open
     threads.
+  - `may(method)` says whether its role may call a method, from core's allowlists. The views
+    hide what the runtime would refuse; the web client doesn't edit tasks, schedules or grants.
 
 **Dependencies.** `@homerun/core`, and `marked` for its lexer only; its HTML renderer is never
 used.

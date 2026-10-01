@@ -1,4 +1,4 @@
-import { NOTIFICATIONS, parseThreadEventLenient, type HealthDigest } from "@homerun/core";
+import { authorize, NOTIFICATIONS, parseThreadEventLenient, type HealthDigest, type MethodName } from "@homerun/core";
 import { defaultEnv, type Env } from "./env";
 import { Inbox } from "./inbox";
 import { Remote } from "./remote";
@@ -78,6 +78,14 @@ export class AppClient {
 
   get connected(): boolean {
     return this.runtime.get().state === "ready";
+  }
+
+  /**
+   * Whether this client's role may call `method` (core's allowlists, §9.9). Views hide what the
+   * runtime would refuse: the web client doesn't create or edit tasks, schedules or grants.
+   */
+  may(method: MethodName): boolean {
+    return authorize(this.role, method).ok;
   }
 
   get deviceId(): string | null {
