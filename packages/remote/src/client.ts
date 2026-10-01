@@ -72,11 +72,11 @@ export interface RemoteClientOptions {
   now?: () => number;
   fetch?: Fetch;
   /**
-   * An iPhone's App Attest (§9.8): a fresh attestation of this device's keys, sent when it
-   * registers, pairs and links. Without one, the relay and the desktop treat an `ios` device
-   * as a browser.
+   * An iPhone's App Attest (§9.8): an attestation of this device's keys, sent when it
+   * registers, pairs and links. Without one (none given, or it resolves to undefined because
+   * App Attest is unavailable), the relay and the desktop treat an `ios` device as a browser.
    */
-  attest?: (identity: AttestedIdentity) => Promise<AppAttestation>;
+  attest?: (identity: AttestedIdentity) => Promise<AppAttestation | undefined>;
 }
 
 export interface DesktopView extends PairedDesktop {
