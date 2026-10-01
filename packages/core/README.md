@@ -209,6 +209,13 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
   `health.settings.set`
   (`NOT_WEB` in `methods.ts`). A web client that could edit a monitor's prompt, tools or roots
   would get full authority at its next scheduled fire, because scheduled runs have no origin.
+- **A remote's role is what the desktop verified.** `remote.devices` and link requests carry
+  `platform` (the role the device has: `ios` only with an App Attest attestation the desktop
+  checked) and `claimed_platform` (what it said it was), so the UI can name an unverified
+  iPhone that links with a browser's authority (§18 rows 99 and 101).
+- **Account deletion says what happened at the identity provider.** `account.delete` returns
+  a `ProviderDeletion`: `deleted`, `pending` (the relay keeps retrying) or `manual` (delete
+  the sign-in in the provider's settings), §10.9, §18 row 103.
 - **Only the development-mode CLI answers approvals.** Anything running as the user can invoke
   the CLI binary (§5.2).
   - A separate caller role, `cli_dev`, is authenticated by `auth.kind: "dev_token"` (the
