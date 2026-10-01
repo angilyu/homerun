@@ -90,7 +90,22 @@ impl Fixture {
             if f(&s) {
                 return s;
             }
-            assert!(t0.elapsed() < Duration::from_secs(10), "waiting for {what}; status {s:?}; statuses {:?}", self.host.statuses.lock().unwrap());
+            // Cloned first: panicking while holding the lock would poison it for the supervisor.
+            let seen = self.host.statuses.lock().unwrap().clone();
+            assert!(t0.elapsed() < Duration::from_secs(10), "waiting for {what}; status {s:?}; statuses {seen:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    /// The first status the supervisor reported, in order, that matches: unlike `wait`, it can't
+    /// miss one that lasted less than a poll on a slow runner.
+    fn seen(&self, what: &str, f: impl Fn(&RuntimeStatus) -> bool) -> RuntimeStatus {
+        let t0 = Instant::now();
+        loop {
+            let seen = self.host.statuses.lock().unwrap().clone();
+            if let Some(s) = seen.iter().find(|s| f(s)) {
+                return s.clone();
+            }
+            assert!(t0.elapsed() < Duration::from_secs(10), "waiting for {what}; statuses {seen:?}");
             std::thread::sleep(Duration::from_millis(10));
         }
     }
@@ -214,11 +229,12 @@ fn exit_codes_that_block() {
 #[test]
 fn a_hung_runtime_is_restarted() {
     let f = start("hang", &[("FAKE_MODE", "no_pong")], None);
-    f.wait("ready", ready);
-    let s = f.wait("restart", |s| matches!(s, RuntimeStatus::Restarting { .. }));
+    // It never answers a ping, so each Ready lasts only until the misses add up (about 300 ms).
+    f.seen("ready", ready);
+    let s = f.seen("restart", |s| matches!(s, RuntimeStatus::Restarting { .. }));
     let RuntimeStatus::Restarting { last_error: Some(e), .. } = s else { panic!() };
     assert_eq!(e, "The runtime stopped responding.");
-    f.wait("ready again", |s| matches!(s, RuntimeStatus::Ready { connection: 2, .. }));
+    f.seen("ready again", |s| matches!(s, RuntimeStatus::Ready { connection: 2, .. }));
 }
 
 #[test]
