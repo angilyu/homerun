@@ -1,7 +1,7 @@
 // Compiles the phone's protocol self-test (every vector file the phone verifies, with @noble and
 // the protocol code) to Hermes bytecode with the hermesc react-native ships. This catches syntax
 // Hermes can't take, on Linux, per pull request. hermes-compiler has no VM, so running the vectors
-// under Hermes is the nightly simulator job's (`-HomerunSelfTest 1`, nightly.yml ios-sim).
+// under Hermes is the nightly simulator job's (`-HomerunSelfTest 1`, ios.yml ios-sim).
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";

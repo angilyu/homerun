@@ -84,6 +84,9 @@ export interface HomerunNative {
   takeTap(): Promise<NativeTap | null>;
   clearDelivered(requestId: string): Promise<void>;
 
+  /** The simulator self-test's result line, to stdout and a file CI reads; a no-op otherwise. */
+  selfTestReport(line: string): Promise<void>;
+
   addListener(event: "pushToken", fn: (t: NativePushToken) => void): NativeSubscription;
   addListener(event: "pushTap", fn: (t: NativeTap) => void): NativeSubscription;
   addListener(event: "pushError", fn: (e: { message: string }) => void): NativeSubscription;

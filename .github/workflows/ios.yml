@@ -5,9 +5,10 @@ name: iOS
 # `swift test` against the same packages/protocol/vectors JSON as bun test, on pull requests that
 # touch the Swift or the vectors. About a minute.
 # ios-sim: nightly and on demand, the whole app: prebuild, CocoaPods, a Release simulator build
-# (the JavaScript bundled by Metro, compiled by hermesc), then the app launched with
-# `-HomerunSelfTest 1` runs the protocol vectors under Hermes on the simulator. The JavaScript
-# side runs per pull request on Linux (ci.yml ios-js).
+# (the JavaScript bundled by Metro, compiled by hermesc; C and C++ through ccache), then the app
+# launched with `-HomerunSelfTest 1` runs the protocol vectors under Hermes on the simulator
+# (apps/ios/scripts/sim-selftest.sh). The JavaScript side runs per pull request on Linux (ci.yml
+# ios-js).
 on:
   pull_request:
     paths:
@@ -50,8 +51,12 @@ jobs:
     name: apps/ios simulator build and Hermes self-test
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: macos-26
-    # The agreed exception to 3 minutes (plan §8): a cold React Native build.
-    timeout-minutes: 12
+    # The agreed exception to 3 minutes (plan §8): a cold React Native build, about 9 minutes.
+    timeout-minutes: 20
+    env:
+      USE_CCACHE: "1"
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -70,6 +75,18 @@ jobs:
           if [ "$(printf '%s\n6.3\n' "$swift" | sort -V | head -1)" != "6.3" ]; then
             echo "EXPO_USE_PRECOMPILED_MODULES=0" >> "$GITHUB_ENV"
           fi
+      # A simulator's first boot takes minutes on a fresh runner: start it now, and let it finish
+      # during the build. The self-test waits for it, bounded.
+      - name: Boot a simulator while the app builds
+        run: |
+          udid=$(apps/ios/scripts/sim-selftest.sh pick)
+          echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl list devices | grep "$udid"
+          perl -e 'alarm 60; exec @ARGV' xcrun simctl boot "$udid" || echo "simctl boot didn't return; the self-test waits for the boot"
+      - name: ccache
+        run: |
+          command -v ccache || HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ccache
+          ccache --zero-stats
       - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/ios..."
       # No relay or issuer: the self-test needs neither, and the build carries no account config.
       - name: Prebuild
@@ -80,33 +97,47 @@ jobs:
             apps/ios/ios/Pods
             ~/Library/Caches/CocoaPods
           key: pods-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'apps/ios/app.config.ts', 'apps/ios/modules/**/*.podspec', 'apps/ios/targets/**/pods.rb') }}-${{ env.EXPO_USE_PRECOMPILED_MODULES }}
+      # USE_CCACHE=1 makes the Podfile route clang through ccache (react_native_post_install).
       - name: CocoaPods
         working-directory: apps/ios/ios
         run: pod install
+      # ccache is content-addressed, so any earlier cache helps: restore the newest, save a new one.
+      - uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('apps/ios/ios/Podfile.lock', 'apps/ios/modules/**/*.swift', 'apps/ios/targets/**/*.swift') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('apps/ios/ios/Podfile.lock', 'apps/ios/modules/**/*.swift', 'apps/ios/targets/**/*.swift') }}-
+            ccache-${{ runner.os }}-
       - name: Release simulator build
+        id: build
         working-directory: apps/ios/ios
         run: |
           set -o pipefail
           xcodebuild -workspace Homerun.xcworkspace -scheme Homerun -configuration Release \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
-            build | tail -40
-      # The app prints "HomerunSelfTest vectors: N passed" through console.error, which React
-      # Native sends to the unified log in Release builds.
+            -showBuildTimingSummary build > build.log 2>&1 || { tail -80 build.log; exit 1; }
+          tail -5 build.log
+          # Where the time goes, longest first.
+          sed -n '/Build Timing Summary/,/BUILD SUCCEEDED/p' build.log | grep -E '\| *[0-9.]+ seconds' | sort -t'|' -k2 -rn | head -15
+          ccache --show-stats
+      - uses: actions/cache/save@v4
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('apps/ios/ios/Podfile.lock', 'apps/ios/modules/**/*.swift', 'apps/ios/targets/**/*.swift') }}-${{ github.run_id }}
+      # The app writes "HomerunSelfTest vectors: N passed" to stdout and a file in its container.
       - name: Protocol vectors under Hermes on the simulator
         working-directory: apps/ios/ios
-        run: |
-          udid=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r,v in sorted(d.items(), reverse=True) if 'iOS' in r for x in v if x['name'].startswith('iPhone')))")
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b >/dev/null
-          xcrun simctl install "$udid" build/Build/Products/Release-iphonesimulator/Homerun.app
-          xcrun simctl launch "$udid" com.angilyu.homerun.ios -HomerunSelfTest 1
-          for _ in $(seq 1 60); do
-            line=$(xcrun simctl spawn "$udid" log show --last 5m --style compact --predicate 'eventMessage CONTAINS "HomerunSelfTest vectors:"' 2>/dev/null | grep -o 'HomerunSelfTest vectors:.*' | tail -1 || true)
-            if [ -n "$line" ]; then break; fi
-            sleep 2
-          done
-          echo "${line:-no self-test result}"
-          case "$line" in
-            *failed*|"") exit 1 ;;
-          esac
+        timeout-minutes: 4
+        run: ../scripts/sim-selftest.sh build/Build/Products/Release-iphonesimulator/Homerun.app "$RUNNER_TEMP/selftest"
+      - uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        with:
+          name: ios-sim-selftest
+          path: |
+            ${{ runner.temp }}/selftest
+            apps/ios/ios/build.log
+          if-no-files-found: ignore
+          retention-days: 7

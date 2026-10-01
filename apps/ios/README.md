@@ -149,8 +149,12 @@ account.
 CI (§18 rows 129–130): `ios-js` in `ci.yml` runs the first three on Linux for every pull request.
 `ios.yml`'s `ios-swift` runs `swift test` on macOS when the Swift or the vectors change. Its
 `ios-sim` runs nightly and on demand: a Release simulator build, then the app launched with
-`-HomerunSelfTest 1`, which runs the protocol vectors under Hermes and prints
-`HomerunSelfTest vectors: N passed` to the log. There are no Detox or Maestro tests yet (§17).
+`-HomerunSelfTest 1`, which runs the protocol vectors under Hermes and writes
+`HomerunSelfTest vectors: N passed` to stdout and to `Library/Caches/HomerunSelfTest.txt`.
+`scripts/sim-selftest.sh` boots the simulator, installs, launches and reads that line, with every
+wait bounded. On failure it prints what it saw (the app's output, whether it's running, its log)
+and keeps a screenshot, which the job uploads. It runs locally too, given a simulator runtime and a
+Release build. There are no Detox or Maestro tests yet (§17).
 
 ## Manual checks
 

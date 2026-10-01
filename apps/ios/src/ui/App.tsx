@@ -17,6 +17,7 @@ import { Link } from "./Link";
 import { Main } from "./Main";
 import { Card, Screen, T, s } from "./theme";
 
+const reportSelfTest = (line: string) => Homerun.selfTestReport(line);
 const authenticate: Authenticate = async (reason) => (await authenticateAsync({ promptMessage: reason })).success;
 
 /** Builds the session once; `null` when the build carries no relay or issuer config. */
@@ -66,7 +67,7 @@ export function App() {
     <SafeAreaProvider>
       <StatusBar style="auto" />
       {selfTest ? (
-        <SelfTest />
+        <SelfTest report={reportSelfTest} />
       ) : phone ? (
         <PhoneContext.Provider value={phone}>
           <Root />

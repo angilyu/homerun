@@ -250,6 +250,8 @@ export class FakeNative implements HomerunNative {
 
   async clearDelivered(_requestId: string) {}
 
+  async selfTestReport(_line: string) {}
+
   addListener(event: string, fn: (e: never) => void): NativeSubscription {
     let set = this.listeners.get(event);
     if (!set) this.listeners.set(event, (set = new Set()));

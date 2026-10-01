@@ -75,20 +75,23 @@ export function NotConfigured() {
 
 /**
  * The protocol vectors under Hermes (§16.2), for the nightly simulator job, which launches the
- * app with `-HomerunSelfTest 1` and reads this line from the system log. Nothing else starts.
+ * app with `-HomerunSelfTest 1` and reads this line through `report` (scripts/sim-selftest.sh).
+ * Nothing else starts.
  */
-export function SelfTest() {
+export function SelfTest({ report }: { report: (line: string) => Promise<void> }) {
   const [line, setLine] = useState<string | null>(null);
   useEffect(() => {
     void runSelfTest()
       .then(selfTestLine)
       .catch((e: unknown) => `vectors: self-test crashed (${e instanceof Error ? e.name : "error"})`)
       .then((l) => {
-        // console.error: Release builds keep it in the unified log, where CI reads it.
+        // Also in the unified log, for someone watching Console.app.
         console.error(`HomerunSelfTest ${l}`);
         setLine(l);
-      });
-  }, []);
+        return report(l);
+      })
+      .catch(() => console.error("HomerunSelfTest couldn't report the result"));
+  }, [report]);
   return (
     <Screen>
       <View style={s.center}>

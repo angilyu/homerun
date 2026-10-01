@@ -190,6 +190,20 @@ public final class HomerunModule: Module {
     AsyncFunction("clearDelivered") { (requestId: String) async in
       await Notifications.removeDelivered(requestId: requestId)
     }
+
+    // MARK: the simulator self-test
+
+    /// The protocol vectors' result line, only when launched with `-HomerunSelfTest 1`: on
+    /// stdout, which `simctl launch --stdout` captures, and in Library/Caches, which the CI job
+    /// reads from the app's container (scripts/sim-selftest.sh). The vectors are public data.
+    AsyncFunction("selfTestReport") { (line: String) in
+      guard UserDefaults.standard.bool(forKey: "HomerunSelfTest") else { return }
+      let text = Data("HomerunSelfTest \(line)\n".utf8)
+      FileHandle.standardOutput.write(text)
+      if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+        try? text.write(to: caches.appendingPathComponent("HomerunSelfTest.txt"), options: .atomic)
+      }
+    }
   }
 
   private func keys() throws -> DeviceKeys {
