@@ -39,10 +39,14 @@
       "properties": {
         "status": {
           "$ref": "#/$defs/AccountStatus"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderDeletion"
         }
       },
       "required": [
-        "status"
+        "status",
+        "provider"
       ]
     },
     "AccountSignInParams": {
@@ -3408,6 +3412,14 @@
       "required": [
         "min",
         "max"
+      ]
+    },
+    "ProviderDeletion": {
+      "type": "string",
+      "enum": [
+        "deleted",
+        "pending",
+        "manual"
       ]
     },
     "PushCategory": {

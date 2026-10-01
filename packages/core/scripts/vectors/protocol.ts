@@ -279,7 +279,15 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
   "account.delete": {
     params: [["empty", {}]],
     badParams: [["null", null]],
-    results: [["signed out", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }]],
+    results: [
+      ["provider user deleted", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null }, provider: "deleted" }],
+      ["provider deletion pending", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null }, provider: "pending" }],
+      ["provider user deleted by hand", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null }, provider: "manual" }],
+    ],
+    badResults: [
+      ["no provider outcome", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null } }],
+      ["unknown provider outcome", { status: { state: "signed_out", email: null, error: null, relay: { state: "off", since: null, error: null }, link_request: null }, provider: "maybe" }],
+    ],
   },
   "devices.list": {
     params: [["empty", {}]],

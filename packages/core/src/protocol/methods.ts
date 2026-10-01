@@ -161,6 +161,14 @@ export const AccountStatus = named(
 );
 export type AccountStatus = z.infer<typeof AccountStatus>;
 
+/**
+ * What happened to the user at the identity provider when the account was deleted (§10.9):
+ * `deleted` by the relay, `pending` (the relay keeps retrying) or `manual` (this relay can't, so
+ * the user deletes it in the provider's own settings).
+ */
+export const ProviderDeletion = named("ProviderDeletion", z.enum(["deleted", "pending", "manual"]));
+export type ProviderDeletion = z.infer<typeof ProviderDeletion>;
+
 /** A phone or browser linked to this desktop (§9.6 revocation). */
 export const PairedDevice = named(
   "PairedDevice",
@@ -504,9 +512,10 @@ export const METHODS = {
   }),
   "account.delete": def("account.delete", {
     params: Empty,
-    result: z.object({ status: AccountStatus }),
+    result: z.object({ status: AccountStatus, provider: ProviderDeletion }),
     callers: LOCAL_UI,
-    description: "Delete the account's devices, links and queued messages at the relay (§10.7), unpair everything here, and sign out.",
+    description:
+      "Delete the account's devices, links and queued messages at the relay (§10.7) and its user at the identity provider (§10.9), unpair everything here, and sign out.",
   }),
   "devices.list": def("devices.list", {
     params: Empty,

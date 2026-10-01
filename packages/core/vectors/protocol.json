@@ -2753,7 +2753,7 @@
     },
     {
       "schema": "AccountDeleteResult",
-      "name": "account.delete: signed out",
+      "name": "account.delete: provider user deleted",
       "valid": true,
       "value": {
         "status": {
@@ -2766,7 +2766,85 @@
             "error": null
           },
           "link_request": null
+        },
+        "provider": "deleted"
+      }
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: provider deletion pending",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        },
+        "provider": "pending"
+      }
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: provider user deleted by hand",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        },
+        "provider": "manual"
+      }
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: no provider outcome",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
         }
+      }
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: unknown provider outcome",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        },
+        "provider": "maybe"
       }
     },
     {
