@@ -119,6 +119,9 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
     devDependencies:
+      '@homerun/app-state':
+        specifier: workspace:*
+        version: link:../../packages/app-state
       '@homerun/relay':
         specifier: workspace:*
         version: link:../relay
