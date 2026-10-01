@@ -38,7 +38,7 @@ Every request carries the provider's access token (`Authorization: Bearer`). Eve
 | `GET /v1/connect` | The WebSocket. The token travels in the subprotocol and the device signs a challenge. Live-session frames, sealed messages, pairing and linking run over it |
 | `POST /v1/sealed` | Sends a sealed message without a socket: how a lock-screen answer arrives |
 | `POST` / `DELETE /v1/push-token` | Sets or removes an iOS device's APNs token |
-| `DELETE /v1/account` | Deletes the account's devices, links, tokens and queue |
+| `DELETE /v1/account` | Deletes the account's devices, links, tokens and queue, then its user at the identity provider (202, `AccountDeleted`) |
 
 The frames and bodies are defined in `packages/protocol/src/wire.ts`, and `vectors/relay-wire.json` pins them.
 
@@ -47,6 +47,15 @@ The frames and bodies are defined in `packages/protocol/src/wire.ts`, and `vecto
 A device that registers as `ios` must send an App Attest attestation of its keys ([§9.8](../../docs/design.md#98-the-ios-app-a-full-conversational-client), [§18 row 99](../../docs/design.md#18-decision-log)). The relay checks it against Apple's App Attest root and the app id `NMJBY8WL8T.com.angilyu.homerun.ios`. One that is missing or doesn't verify registers as `web`: no push token and no lock-screen answers. The role is settled at the first registration and kept when the device registers again. The desktop checks the same attestation itself before it gives the device an iPhone's authority, so this check only decides what the relay does (push), never what the desktop allows ([§13](../../docs/design.md#13-security-model)).
 
 Production accepts only `appattest` (App Store and TestFlight builds). `APP_ATTEST_ALLOW_DEVELOP=1` also accepts `appattestdevelop`, from builds signed for development. Set it on a relay used with Xcode builds, together with a development desktop, which accepts them too. A production relay and a development desktop disagree about such a phone, and pairing it fails. `APP_ATTEST_TEST_ROOT` (DER, base64url) replaces Apple's root, for the workerd tests only.
+
+### Deleting an account
+
+`DELETE /v1/account` deletes everything the relay holds for the account, then the user at the identity provider, because the App Store requires that deleting an account in the app deletes it outright ([§10.9](../../docs/design.md#109-obligations-that-come-with-accounts), [§18 row 103](../../docs/design.md#18-decision-log)). `PROVIDER_ADMIN` says how:
+
+- `workos`: `DELETE /user_management/users/{sub}` with the `WORKOS_API_KEY` secret. A 2xx or 404 means the user is gone. Anything else is tried again by the alarm, after a minute and then doubling up to every 6 hours, and the answer says `pending`. Until it succeeds, the account's tokens are refused, so nobody signs back into an account that is half deleted.
+- `none` (the default when unset): the answer says `manual`, and the app tells the user to delete their sign-in in the provider's settings.
+
+Another provider is another `ProviderAdmin` in `src/core/provider-admin.ts`. Afterwards the relay keeps a tombstone for 24 hours: the account id, when it was deleted, and whether the provider is done. Tokens issued before the deletion are refused meanwhile, so a device that missed it can't register into the empty account; one that connects is closed with 4410 (removed) and forgets the account. Then the tombstone goes too.
 
 ### Web pages
 
@@ -84,7 +93,7 @@ To run a relay on your machine:
 OIDC_ISSUER=https://issuer.example OIDC_CLIENT_ID=client_... bun run dev   # port 8787
 ```
 
-It also reads `OIDC_AUDIENCE`, `RELAY_PORT`, `RELAY_DATA_DIR`, `APP_ATTEST_ALLOW_DEVELOP` and `WEB_ORIGINS` (add `http://127.0.0.1:5173` for the web client's dev server). Push is off unless `APNS_KEY_P8_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are all set.
+It also reads `OIDC_AUDIENCE`, `RELAY_PORT`, `RELAY_DATA_DIR`, `APP_ATTEST_ALLOW_DEVELOP`, `PROVIDER_ADMIN`, `WORKOS_API_KEY` and `WEB_ORIGINS` (add `http://127.0.0.1:5173` for the web client's dev server). Push is off unless `APNS_KEY_P8_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are all set.
 
 ## Deploying
 
@@ -118,6 +127,7 @@ The topic is the iOS app's bundle id, `com.angilyu.homerun.ios`. Real delivery t
    pnpm exec wrangler secret put APNS_KEY_P8     # the whole .p8 file, including its BEGIN and END lines
    pnpm exec wrangler secret put APNS_KEY_ID
    pnpm exec wrangler secret put APNS_TEAM_ID
+   pnpm exec wrangler secret put WORKOS_API_KEY  # WorkOS → API Keys: the secret key (sk_...), for account deletion
    ```
 5. `pnpm exec wrangler deploy`, then check `https://<your-relay>/v1/health` returns `{"ok":true}`.
 6. In the Cloudflare dashboard, add a rate-limiting rule by IP for the relay's hostname. The relay limits each account itself, but a request without a valid token is refused at the Worker before it reaches an account.

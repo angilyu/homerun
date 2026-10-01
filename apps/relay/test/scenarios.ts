@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope, WS_BEARER_PREFIX, WS_SUBPROTOCOL } from "@homerun/protocol";
+import { AccountDeleted, newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope, WS_BEARER_PREFIX, WS_SUBPROTOCOL } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
 import { fakeDeviceToken, type ApnsMock, type OidcIssuer } from "@homerun/testkit";
 import { b64, type Conn, instruction, pushBody, sessionId, statement, type Target, TestDevice } from "./helpers";
@@ -604,15 +604,30 @@ export function sharedScenarios(get: () => Ctx) {
       dc.close();
     });
 
-    test("deleting the account closes every connection and forgets every device", async () => {
+    test("deleting the account closes every connection, forgets every device and deletes the provider's user", async () => {
       const c = get();
       const p = await linkedPair(c);
       const r = await p.desktop.req(c.t, p.tok, "DELETE", RELAY_PATHS.account);
-      expect(r.status).toBe(204);
+      expect(r.status).toBe(202);
+      expect(AccountDeleted.parse(await r.json())).toEqual({ provider: "deleted" });
+      expect(c.issuer.deletedUsers.has(p.sub)).toBe(true);
       expect((await p.dc.closed).code).toBe(4410);
       expect((await p.pc.closed).code).toBe(4410);
-      expect((await p.desktop.req(c.t, p.tok, "GET", RELAY_PATHS.devices)).status).toBe(404);
-      expect((await p.desktop.register(c.t, p.tok)).status).toBe(200);
+      // A device that hasn't heard, with a token from before, can't bring the account back.
+      const stale = await p.phone.req(c.t, p.tok, "GET", RELAY_PATHS.devices);
+      expect(stale.status).toBe(401);
+      expect(((await stale.json()) as { message: string }).message).toContain("deleted");
+      expect((await p.desktop.register(c.t, p.tok)).status).toBe(401);
+    });
+
+    test("a device connecting with a token from before the deletion hears it was removed", async () => {
+      const c = get();
+      const p = await linkedPair(c);
+      await p.desktop.req(c.t, p.tok, "DELETE", RELAY_PATHS.account);
+      await p.dc.closed;
+      const ws = new WebSocket(c.t.wsUrl, [WS_SUBPROTOCOL, WS_BEARER_PREFIX + p.tok]);
+      const code = await new Promise<number>((resolve) => ws.addEventListener("close", (e) => resolve(e.code)));
+      expect(code).toBe(4410);
     });
   });
 }

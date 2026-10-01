@@ -5,6 +5,7 @@ import { AuthError, bearerToken, TokenVerifier } from "./auth";
 import { DEFAULT_LIMITS } from "./config";
 import { AccountRelay, errorResponse, type RelaySocket, type SocketState } from "./core/account";
 import { checkOrigin, parseWebOrigins, preflight, withCors } from "./core/cors";
+import { providerAdminFrom, type ProviderAdminConfig } from "./core/provider-admin";
 import { dropAll, type Sql, type SqlValue } from "./core/sql";
 
 /**
@@ -14,7 +15,7 @@ import { dropAll, type Sql, type SqlValue } from "./core/sql";
  * nothing. Configuration is in wrangler.jsonc (vars) and `wrangler secret put` (the APNs key).
  */
 
-export interface Env {
+export interface Env extends ProviderAdminConfig {
   ACCOUNTS: DurableObjectNamespace<AccountDurableObject>;
   OIDC_ISSUER: string;
   OIDC_AUDIENCE?: string;
@@ -35,6 +36,8 @@ export interface Env {
    * decides pushes and lock-screen answers here; desktops verify attestations themselves (§13).
    */
   APP_ATTEST_TEST_ROOT?: string;
+  // PROVIDER_ADMIN ("workos" or "none"), the secret WORKOS_API_KEY and, for tests, WORKOS_API_BASE:
+  // who deletes the user at the identity provider when the account is deleted (§10.9).
 }
 
 let cachedOrigins: { raw: string; list: string[] } | null = null;
@@ -51,6 +54,7 @@ function appAttest(env: Env): AppAttestPolicy {
 
 const SUB_HEADER = "x-homerun-sub";
 const EXP_HEADER = "x-homerun-exp";
+const IAT_HEADER = "x-homerun-iat";
 
 let cached: { key: string; verifier: TokenVerifier } | null = null;
 function verifier(env: Env): TokenVerifier {
@@ -74,6 +78,7 @@ export default {
     let origins: string[];
     try {
       origins = webOrigins(env);
+      providerAdminFrom(env);
     } catch {
       return errorResponse("internal", "the relay is not configured");
     }
@@ -93,6 +98,7 @@ export default {
     const headers = new Headers(req.headers);
     headers.set(SUB_HEADER, auth.sub);
     headers.set(EXP_HEADER, String(auth.exp));
+    headers.set(IAT_HEADER, String(auth.iat));
     const stub = env.ACCOUNTS.get(env.ACCOUNTS.idFromName(auth.sub));
     return withCors(await stub.fetch(new Request(req, { headers })), origin.origin);
   },
@@ -114,6 +120,7 @@ export class AccountDurableObject extends DurableObject<Env> {
       push: apns(env),
       limits: DEFAULT_LIMITS,
       appAttest: appAttest(env),
+      providerAdmin: providerAdminFrom(env),
       wipe: () => dropAll(sql),
       log: (event, fields) => console.log(JSON.stringify({ event, ...fields })),
     });
@@ -123,8 +130,9 @@ export class AccountDurableObject extends DurableObject<Env> {
     // Only the Worker reaches this object, and it always sets these.
     const sub = req.headers.get(SUB_HEADER);
     const exp = Number(req.headers.get(EXP_HEADER));
-    if (!sub || !Number.isFinite(exp)) return errorResponse("unauthenticated", "no account");
-    const auth = { sub, exp };
+    const iat = Number(req.headers.get(IAT_HEADER));
+    if (!sub || !Number.isFinite(exp) || !Number.isFinite(iat)) return errorResponse("unauthenticated", "no account");
+    const auth = { sub, exp, iat };
     const url = new URL(req.url);
     if (url.pathname === RELAY_PATHS.connect) {
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return errorResponse("invalid", "expected a WebSocket upgrade");

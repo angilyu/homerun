@@ -23,6 +23,9 @@ beforeAll(async () => {
     APNS_ENDPOINT: apns.url,
     APP_ATTEST_TEST_ROOT: appAttestRoot,
     WEB_ORIGINS: `https://other.homerun.test, ${WEB_ORIGIN}`,
+    PROVIDER_ADMIN: "workos",
+    WORKOS_API_KEY: issuer.adminKey,
+    WORKOS_API_BASE: issuer.url,
   });
 }, 60_000);
 afterAll(async () => {

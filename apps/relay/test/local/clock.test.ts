@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { newPairingCode, offerTag, RELAY_PATHS } from "@homerun/protocol";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
 import type { RelayLimits } from "../../src/config";
+import { WorkosAdmin } from "../../src/core/provider-admin";
 import { type LocalRelay, type LocalRelayOptions, startLocalRelay } from "../../src/local";
 import { appAttest, instruction, sessionId, statement, TestDevice } from "../helpers";
 import { account, type Ctx, linkedPair } from "../scenarios";
@@ -293,5 +294,49 @@ describe("statement", () => {
     const s = await statement(desktop, web, sub, clock);
     dc.send({ type: "link_add", statement: { ...s, platform: "ios" } });
     expect((await dc.next("error")).code).toBe("invalid");
+  });
+});
+
+describe("account deletion at the provider (§10.9)", () => {
+  /** A token issued now by the relay's clock, `ahead` seconds on. */
+  const tokenAt = (sub: string, ahead = 1, ttlSec = 600) => issuer.mint({ sub, skewSec: Math.ceil((clock - Date.now()) / 1000) + ahead, ttlSec });
+
+  test("the provider failing: refused meanwhile, retried with backoff until the user is gone; the tombstone lasts a day", async () => {
+    const c = await start({}, { providerAdmin: new WorkosAdmin(issuer.adminKey, issuer.url) });
+    const p = await linkedPair(c);
+    const old = await issuer.mint({ sub: p.sub, ttlSec: 3 * 24 * 3600 });
+    await advance(2000);
+    issuer.failAdmin = [503, 500];
+    const r = await p.desktop.req(c.t, p.tok, "DELETE", RELAY_PATHS.account);
+    expect(await r.json()).toEqual({ provider: "pending" });
+    expect(issuer.deletedUsers.has(p.sub)).toBe(false);
+    // Until the provider's user is gone, even a fresh token is refused.
+    const web = new TestDevice("web");
+    expect((await web.register(c.t, await tokenAt(p.sub))).status).toBe(401);
+    await advance(60_000);
+    expect(issuer.deletedUsers.has(p.sub)).toBe(false);
+    expect(issuer.failAdmin).toEqual([]);
+    await advance(60_000);
+    expect(issuer.deletedUsers.has(p.sub)).toBe(false);
+    await advance(60_000);
+    expect(issuer.deletedUsers.has(p.sub)).toBe(true);
+    expect((await web.register(c.t, old)).status).toBe(401);
+    await advance(24 * HOUR);
+    // No token from before lives this long in practice; the relay has forgotten the account.
+    expect((await web.register(c.t, old)).status).toBe(200);
+  });
+
+  test("with no provider configured, the user deletes it by hand, and only tokens from before are refused", async () => {
+    const c = await start();
+    const p = await linkedPair(c);
+    await advance(2000);
+    const r = await p.desktop.req(c.t, p.tok, "DELETE", RELAY_PATHS.account);
+    expect(r.status).toBe(202);
+    expect(await r.json()).toEqual({ provider: "manual" });
+    expect((await p.desktop.register(c.t, p.tok)).status).toBe(401);
+    // Signing in again (the provider's user still exists) starts afresh.
+    expect((await p.desktop.register(c.t, await tokenAt(p.sub))).status).toBe(200);
+    await advance(24 * HOUR);
+    expect((await p.desktop.register(c.t, await tokenAt(p.sub, 1, 600))).status).toBe(200);
   });
 });

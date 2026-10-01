@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Fails if the repository holds anything shaped like an Anthropic API key other than the known
 # dummy keys, a minisign/Tauri updater secret key (§11: it lives outside the repo), a PEM private
-# key or key file (the relay's APNs .p8, §9.7), wrangler's local secrets (.dev.vars), or if a
-# replay cassette holds credential headers or machine-specific paths.
+# key or key file (the relay's APNs .p8, §9.7), a WorkOS secret key, wrangler's local secrets
+# (.dev.vars), or if a replay cassette holds credential headers or machine-specific paths.
 # Scans every tracked or committable file, or the files given as arguments.
 # Never prints a matched value: only file and line.
 set -uo pipefail
@@ -46,6 +46,15 @@ while IFS= read -r loc; do
   echo "error: a PEM private key at $loc" >&2
   status=1
 done < <(grep -I -o -n -H -E -e "$pem" -- "${files[@]}" 2>/dev/null | cut -d: -f1,2)
+
+# A WorkOS secret key (the relay's WORKOS_API_KEY, for account deletion, §10.9). The local
+# issuer's test key is made at run time. Built at run time so this script doesn't match itself.
+workos="$(printf 'sk_%s' '(live|test)')_[A-Za-z0-9]{24,}"
+while IFS= read -r loc; do
+  [ -z "$loc" ] && continue
+  echo "error: a WorkOS secret key at $loc" >&2
+  status=1
+done < <(grep -I -o -n -H -E -e "$workos" -- "${files[@]}" 2>/dev/null | cut -d: -f1,2)
 
 for f in "${files[@]}"; do
   case "$f" in

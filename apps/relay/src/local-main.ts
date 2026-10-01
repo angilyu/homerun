@@ -1,5 +1,6 @@
 import { productionAppAttestPolicy } from "@homerun/protocol";
 import { parseWebOrigins } from "./core/cors";
+import { providerAdminFrom } from "./core/provider-admin";
 import { startLocalRelay } from "./local";
 
 /**
@@ -28,6 +29,7 @@ const relay = await startLocalRelay({
   apns,
   appAttest: productionAppAttestPolicy(env.APP_ATTEST_ALLOW_DEVELOP === "1"),
   ...(env.WEB_ORIGINS ? { webOrigins: parseWebOrigins(env.WEB_ORIGINS) } : {}),
+  providerAdmin: providerAdminFrom({ PROVIDER_ADMIN: env.PROVIDER_ADMIN, WORKOS_API_KEY: env.WORKOS_API_KEY, WORKOS_API_BASE: env.WORKOS_API_BASE }),
   log: (event, fields) => console.log(JSON.stringify({ event, ...fields })),
 });
 console.log(`relay listening on ${relay.url}`);

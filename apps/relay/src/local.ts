@@ -8,6 +8,7 @@ import { AuthError, bearerToken, TokenVerifier, type AuthConfig, type VerifiedTo
 import { DEFAULT_LIMITS, type RelayLimits } from "./config";
 import { AccountRelay, errorResponse, type RelaySocket, type SocketState } from "./core/account";
 import { checkOrigin, parseWebOrigins, preflight, withCors } from "./core/cors";
+import type { ProviderAdmin } from "./core/provider-admin";
 import { dropAll, type Sql, type SqlValue } from "./core/sql";
 
 /**
@@ -22,6 +23,8 @@ export interface LocalRelayOptions extends Omit<AuthConfig, "fetch"> {
   limits?: Partial<RelayLimits>;
   /** Whose App Attest attestations make a device an iPhone. Apple's production root by default. */
   appAttest?: AppAttestPolicy;
+  /** Deletes the user at the identity provider when the account is deleted (§10.9); none by default. */
+  providerAdmin?: ProviderAdmin | null;
   /** The web client's origins, exactly (§9.9). Other pages can't call the relay. */
   webOrigins?: string[];
   hostname?: string;
@@ -50,6 +53,7 @@ export interface LocalRelay {
 interface WsData {
   sub: string;
   exp: number;
+  iat: number;
   state: SocketState | null;
 }
 
@@ -67,6 +71,7 @@ class Account {
     push: PushSender | null,
     limits: RelayLimits,
     appAttest: AppAttestPolicy,
+    providerAdmin: ProviderAdmin | null,
     log: LocalRelayOptions["log"],
   ) {
     const sql = bunSql(db);
@@ -87,6 +92,7 @@ class Account {
       push,
       limits,
       appAttest,
+      providerAdmin,
       wipe: () => dropAll(sql),
       ...(log ? { log } : {}),
     });
@@ -146,7 +152,7 @@ export async function startLocalRelay(opts: LocalRelayOptions): Promise<LocalRel
       const file = opts.dataDir ? join(opts.dataDir, `${new Bun.CryptoHasher("sha256").update(sub).digest("hex").slice(0, 32)}.sqlite`) : ":memory:";
       const db = new Database(file, { create: true, strict: true });
       db.run("PRAGMA journal_mode = WAL");
-      a = new Account(db, now, !!opts.now, (t) => verifier.verify(t), push, limits, appAttest, opts.log);
+      a = new Account(db, now, !!opts.now, (t) => verifier.verify(t), push, limits, appAttest, opts.providerAdmin ?? null, opts.log);
       accounts.set(sub, a);
     }
     return a;
@@ -176,7 +182,7 @@ export async function startLocalRelay(opts: LocalRelayOptions): Promise<LocalRel
       if (auth instanceof Response) return withCors(auth, origin.origin);
       if (url.pathname === RELAY_PATHS.connect) {
         if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return errorResponse("invalid", "expected a WebSocket upgrade");
-        const ok = srv.upgrade(req, { data: { sub: auth.sub, exp: auth.exp, state: null }, headers: { "sec-websocket-protocol": WS_SUBPROTOCOL } });
+        const ok = srv.upgrade(req, { data: { sub: auth.sub, exp: auth.exp, iat: auth.iat, state: null }, headers: { "sec-websocket-protocol": WS_SUBPROTOCOL } });
         return ok ? undefined : errorResponse("invalid", "upgrade failed");
       }
       return withCors(await account(auth.sub).relay.http(req, auth), origin.origin);
@@ -185,7 +191,7 @@ export async function startLocalRelay(opts: LocalRelayOptions): Promise<LocalRel
       open(ws) {
         const a = account(ws.data.sub);
         a.sockets.add(ws);
-        a.relay.open(wrap(ws), { sub: ws.data.sub, exp: ws.data.exp });
+        a.relay.open(wrap(ws), { sub: ws.data.sub, exp: ws.data.exp, iat: ws.data.iat });
       },
       async message(ws, msg) {
         const a = account(ws.data.sub);
