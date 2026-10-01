@@ -51,7 +51,7 @@ export function cborDecode(buf: Uint8Array): Cbor {
       case 3: {
         const b = take(arg(info));
         try {
-          return new TextDecoder("utf-8", { fatal: true }).decode(b);
+          return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(b);
         } catch {
           throw new CborError("invalid utf-8");
         }
