@@ -24,6 +24,11 @@ export interface IssuerOptions {
   rotateRefresh?: boolean;
   user?: IssuerUser;
   port?: number;
+  /**
+   * Browser origins allowed to call discovery, JWKS, token and revocation (CORS), as a provider
+   * allows a public web client's registered origin. Exact matches; none by default.
+   */
+  corsOrigins?: string[];
 }
 
 interface Key {
@@ -68,6 +73,7 @@ export type Consent = { user: IssuerUser } | "deny";
 export class OidcIssuer {
   readonly clientId: string;
   readonly redirectUris: string[];
+  readonly corsOrigins: string[];
   audience: string | undefined;
   accessTtlSec: number;
   rotateRefresh: boolean;
@@ -77,7 +83,16 @@ export class OidcIssuer {
   down = false;
   /** The next token response fails with this OAuth error (then clears). */
   failNextToken: { status: number; error: string } | null = null;
-  readonly stats = { authorize: 0, codeGrants: 0, refreshes: 0, revocations: 0, jwks: 0, reuseDetected: 0 };
+  readonly stats = { authorize: 0, codeGrants: 0, refreshes: 0, revocations: 0, jwks: 0, reuseDetected: 0, adminDeletes: 0 };
+  /**
+   * The management API's key (WorkOS's `sk_...`): `DELETE /user_management/users/{id}` with it
+   * deletes a user, as the relay does when the account is deleted (§10.9). Test-only.
+   */
+  readonly adminKey = `sk_test_${randomToken()}`;
+  /** Users deleted through the management API. */
+  readonly deletedUsers = new Set<string>();
+  /** The next management API calls fail with these statuses, in order. */
+  failAdmin: number[] = [];
 
   private keys: Key[] = [];
   private foreign: Key | null = null;
@@ -88,6 +103,7 @@ export class OidcIssuer {
   private constructor(o: IssuerOptions) {
     this.clientId = o.clientId ?? "client_homerun_test";
     this.redirectUris = o.redirectUris ?? ["http://127.0.0.1/callback"];
+    this.corsOrigins = o.corsOrigins ?? [];
     this.audience = o.audience;
     this.accessTtlSec = o.accessTtlSec ?? 300;
     this.rotateRefresh = o.rotateRefresh ?? true;
@@ -163,6 +179,24 @@ export class OidcIssuer {
   }
 
   private async handle(req: Request): Promise<Response> {
+    const origin = req.headers.get("origin");
+    const allowed = origin !== null && this.corsOrigins.includes(origin) ? origin : null;
+    const res = await this.route(req, allowed);
+    if (allowed && !req.url.includes("/user_management/")) {
+      res.headers.set("access-control-allow-origin", allowed);
+      res.headers.set("vary", "origin");
+    }
+    return res;
+  }
+
+  private async route(req: Request, corsOrigin: string | null): Promise<Response> {
+    if (req.method === "OPTIONS") {
+      if (!corsOrigin) return new Response(null, { status: 403 });
+      return new Response(null, {
+        status: 204,
+        headers: { "access-control-allow-methods": "GET, POST", "access-control-allow-headers": "content-type, dpop", "access-control-max-age": "600" },
+      });
+    }
     if (this.down) return json({ error: "temporarily_unavailable" }, 503);
     const url = new URL(req.url);
     switch (`${req.method} ${url.pathname}`) {
@@ -177,8 +211,11 @@ export class OidcIssuer {
         return this.token(new URLSearchParams(await req.text()));
       case "POST /revoke":
         return this.revoke(new URLSearchParams(await req.text()));
-      default:
+      default: {
+        const del = req.method === "DELETE" && /^\/user_management\/users\/([^/]+)$/.exec(url.pathname);
+        if (del) return this.deleteUser(req, decodeURIComponent(del[1]!));
         return json({ error: "not_found" }, 404);
+      }
     }
   }
 
@@ -308,6 +345,17 @@ export class OidcIssuer {
       out.refresh_token = rt;
     }
     return out;
+  }
+
+  private deleteUser(req: Request, sub: string): Response {
+    if (req.headers.get("authorization") !== `Bearer ${this.adminKey}`) return json({ message: "Unauthorized" }, 401);
+    const fail = this.failAdmin.shift();
+    if (fail) return json({ message: "failed" }, fail);
+    if (this.deletedUsers.has(sub)) return json({ message: "User not found" }, 404);
+    this.deletedUsers.add(sub);
+    this.stats.adminDeletes++;
+    this.revokeUser(sub);
+    return new Response(null, { status: 202 });
   }
 
   private revoke(p: URLSearchParams): Response {

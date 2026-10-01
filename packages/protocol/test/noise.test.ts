@@ -7,8 +7,8 @@ import { verifyCacophony } from "../src/vectors/cacophony";
 
 describe("Noise against cacophony (an independent implementation)", () => {
   for (const v of cacophony.vectors) {
-    test(v.protocol_name, () => {
-      expect(verifyCacophony(v)).toEqual({ ok: true });
+    test(v.protocol_name, async () => {
+      expect(await verifyCacophony(v)).toEqual({ ok: true });
     });
   }
 });
@@ -26,13 +26,13 @@ function pair(pattern: PatternName) {
 
 describe("handshakes", () => {
   for (const p of ["K", "KK", "IKpsk1", "XX"] as PatternName[]) {
-    test(`${p} round trip authenticates both statics`, () => {
+    test(`${p} round trip authenticates both statics`, async () => {
       const { init, resp, is, rs } = pair(p);
       let from = init;
       let to = resp;
       while (!init.finished) {
-        const m = from.writeMessage(new Uint8Array([9]));
-        expect(to.readMessage(m)).toEqual(new Uint8Array([9]));
+        const m = await from.writeMessage(new Uint8Array([9]));
+        expect(await to.readMessage(m)).toEqual(new Uint8Array([9]));
         [from, to] = [to, from];
       }
       expect(resp.finished).toBe(true);
@@ -46,50 +46,63 @@ describe("handshakes", () => {
     });
   }
 
-  test("a different prologue fails the first authenticated message", () => {
+  test("a different prologue fails the first authenticated message", async () => {
     const is = generateX25519();
     const rs = generateX25519();
     const init = new HandshakeState({ pattern: "KK", initiator: true, prologue: new Uint8Array([1]), s: is, rs: rs.publicKey });
     const resp = new HandshakeState({ pattern: "KK", initiator: false, prologue: new Uint8Array([2]), s: rs, rs: is.publicKey });
-    expect(() => resp.readMessage(init.writeMessage())).toThrow(NoiseError);
+    await expect(resp.readMessage(await init.writeMessage())).rejects.toThrow(NoiseError);
   });
 
-  test("KK with the wrong remote static fails", () => {
+  test("KK with the wrong remote static fails", async () => {
     const is = generateX25519();
     const rs = generateX25519();
     const other = generateX25519();
     const init = new HandshakeState({ pattern: "KK", initiator: true, prologue: new Uint8Array(0), s: is, rs: other.publicKey });
     const resp = new HandshakeState({ pattern: "KK", initiator: false, prologue: new Uint8Array(0), s: rs, rs: is.publicKey });
-    expect(() => resp.readMessage(init.writeMessage())).toThrow(NoiseError);
+    await expect(resp.readMessage(await init.writeMessage())).rejects.toThrow(NoiseError);
   });
 
-  test("IKpsk1 with the wrong psk fails on the first message", () => {
+  test("IKpsk1 with the wrong psk fails on the first message", async () => {
     const is = generateX25519();
     const rs = generateX25519();
     const init = new HandshakeState({ pattern: "IKpsk1", initiator: true, prologue: new Uint8Array(0), s: is, rs: rs.publicKey, psk: new Uint8Array(32).fill(1) });
     const resp = new HandshakeState({ pattern: "IKpsk1", initiator: false, prologue: new Uint8Array(0), s: rs, psk: new Uint8Array(32).fill(2) });
-    expect(() => resp.readMessage(init.writeMessage())).toThrow(NoiseError);
+    await expect(resp.readMessage(await init.writeMessage())).rejects.toThrow(NoiseError);
   });
 
-  test("a tampered handshake message is rejected, and the state refuses to continue", () => {
+  test("a tampered handshake message is rejected, and the state refuses to continue", async () => {
     const { init, resp } = pair("KK");
-    const m = init.writeMessage(new Uint8Array([5]));
+    const m = await init.writeMessage(new Uint8Array([5]));
     m[m.length - 1]! ^= 1;
-    expect(() => resp.readMessage(m)).toThrow(NoiseError);
-    expect(() => resp.writeMessage()).toThrow(NoiseError);
+    await expect(resp.readMessage(m)).rejects.toThrow(NoiseError);
+    await expect(resp.writeMessage()).rejects.toThrow(NoiseError);
   });
 
-  test("a low-order public key is refused", () => {
+  test("a second message can't start while one is awaiting its DH", async () => {
+    const { init } = pair("KK");
+    const first = init.writeMessage();
+    await expect(init.writeMessage()).rejects.toThrow("already in progress");
+    expect((await first).length).toBeGreaterThan(0);
+  });
+
+  test("a DhKey that returns an all-zero secret is refused", async () => {
+    const s = { publicKey: generateX25519().publicKey, dh: async () => new Uint8Array(32) };
+    const init = new HandshakeState({ pattern: "KK", initiator: true, prologue: new Uint8Array(0), s, rs: generateX25519().publicKey });
+    await expect(init.writeMessage()).rejects.toThrow();
+  });
+
+  test("a low-order public key is refused", async () => {
     const s = generateX25519();
     const zero = new Uint8Array(32);
     const init = new HandshakeState({ pattern: "KK", initiator: true, prologue: new Uint8Array(0), s, rs: zero });
-    expect(() => init.writeMessage()).toThrow();
+    await expect(init.writeMessage()).rejects.toThrow();
   });
 
-  test("transport nonces advance only on success", () => {
+  test("transport nonces advance only on success", async () => {
     const { init, resp } = pair("KK");
-    resp.readMessage(init.writeMessage());
-    init.readMessage(resp.writeMessage());
+    await resp.readMessage(await init.writeMessage());
+    await init.readMessage(await resp.writeMessage());
     const a = init.split();
     const b = resp.split();
     const c = a.send!.encryptWithAd(new Uint8Array(0), new Uint8Array([1]));

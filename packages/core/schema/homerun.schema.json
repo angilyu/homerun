@@ -39,10 +39,14 @@
       "properties": {
         "status": {
           "$ref": "#/$defs/AccountStatus"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderDeletion"
         }
       },
       "required": [
-        "status"
+        "status",
+        "provider"
       ]
     },
     "AccountSignInParams": {
@@ -162,11 +166,19 @@
                     "ios",
                     "web"
                   ]
+                },
+                "claimed_platform": {
+                  "type": "string",
+                  "enum": [
+                    "ios",
+                    "web"
+                  ]
                 }
               },
               "required": [
                 "name",
-                "platform"
+                "platform",
+                "claimed_platform"
               ]
             },
             {
@@ -1141,6 +1153,13 @@
             "web"
           ]
         },
+        "claimed_platform": {
+          "type": "string",
+          "enum": [
+            "ios",
+            "web"
+          ]
+        },
         "code": {
           "type": "string",
           "pattern": "^[0-9]{6}$"
@@ -1156,6 +1175,7 @@
         "request_id",
         "name",
         "platform",
+        "claimed_platform",
         "code",
         "requested_at",
         "expires_at"
@@ -3197,6 +3217,13 @@
             "web"
           ]
         },
+        "claimed_platform": {
+          "type": "string",
+          "enum": [
+            "ios",
+            "web"
+          ]
+        },
         "method": {
           "type": "string",
           "enum": [
@@ -3225,6 +3252,7 @@
         "device_id",
         "name",
         "platform",
+        "claimed_platform",
         "method",
         "paired_at",
         "online",
@@ -3384,6 +3412,14 @@
       "required": [
         "min",
         "max"
+      ]
+    },
+    "ProviderDeletion": {
+      "type": "string",
+      "enum": [
+        "deleted",
+        "pending",
+        "manual"
       ]
     },
     "PushCategory": {

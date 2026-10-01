@@ -7,7 +7,10 @@ clients build on it: they supply a browser for sign-in, a `RemoteStore`, and the
 
 - **`Account`** signs in with OIDC Authorization Code + PKCE (§10.4) through a `browser` the app
   supplies. It refreshes access tokens one at a time before they expire, and passes each rotated
-  refresh token to `onRefreshToken` to persist. `signOut()` revokes the refresh token.
+  refresh token to `onRefreshToken` to persist. `signOut()` revokes the refresh token. A page
+  that must leave for the provider uses `beginRedirect()`, keeps the serializable pending half
+  (verifier, state, nonce) in session storage, and calls `completeRedirect()` on the callback.
+  `RemoteClient` needs only the narrower `TokenSource`.
 - **`RelayConnection`** is one device's link to the relay:
   - HTTPS calls signed with the device key (`homerun-device`).
   - A WebSocket that answers the relay's challenge and re-authenticates before the token expires.
@@ -31,8 +34,31 @@ clients build on it: they supply a browser for sign-in, a `RemoteStore`, and the
   - `answerFromLockScreen()` answers by HTTPS POST. It works only for a push that offers actions.
   - `unpair()` and `deleteAccount()`.
   - Sealed messages from the relay's queue are opened, checked against the seen-set and acked.
+  - `desktops()` and `onDesktops()`: the pinned desktops with the relay's presence.
+- **`RelayTransport`** is `@homerun/app-state`'s `Transport` over the relay (§9.8), for one paired
+  desktop. The web client and the iPhone app run the same `AppClient` on it as the desktop's
+  webview runs on Tauri IPC.
+  - It opens a live session when the relay says the desktop is online, and says hello as itself
+    in the role it was paired with. Each new session is a new `connection`, so app-state reloads
+    and resubscribes from each thread's last seq.
+  - Its status is offline with `reason: "relay"` while the relay is out of reach, and
+    `reason: "desktop"` with `last_seen_at` while the desktop is away. It retries with backoff.
+  - It is blocked when the desktop refuses the hello, until `retry()`, and blocked for good
+    (`unlinked`) once the pairing is gone. Another tab or window taking over the device blocks it
+    too (`other_runtime`).
+  - `queueInstruction` seals a message at the relay while the desktop is away (§9.4). It expires
+    in 12 h, and the desktop applies it once when it's back (idempotent on `client_msg_id`).
+  - Its `device_id` is this device's, so the views can say "on this iPhone".
+- **`RemoteSessions`** keeps one `RelayTransport` per desktop, for a client paired with several.
 - **`MemoryStore`** holds the device keys, pinned desktops and the seen-set. Real clients keep
-  these in the Keychain or IndexedDB.
+  these in an encrypted database or IndexedDB.
+- **`DeviceKeyStore`** keeps the secret keys out of the store, as handles whose `dh` and `sign`
+  are async. `WebCryptoKeys` is the web client's (§9.9): X25519 and Ed25519 made with
+  `extractable: false` and kept in IndexedDB through a `CryptoKeyDb`. A page can use them but
+  never read them out. `supportsWebCryptoKeys()` says whether a browser can; there is no raw-key
+  fallback. If the keys are gone (cleared site data), the client starts as a new device with
+  nothing linked. Unpairing the last desktop or deleting the account destroys them. iOS uses a
+  Keychain-backed store (milestone 10b).
 
 The desktop decides what a remote may do (§5.2, §13). A refused call comes back as an ordinary
 JSON-RPC error on the live session. It can also be a sealed answer the desktop drops, such as a
@@ -46,16 +72,21 @@ testkit's OIDC issuer and APNs mock, and a scripted desktop
 scripted desktop keeps these tests fast and independent of the runtime. The same client
 against the real runtime is `homerund`'s remote suite
 ([`apps/homerund/test/remote`](../../apps/homerund/test/remote)), which CI runs as
-`remote-e2e`.
+`remote-e2e`. Its `app.test.ts` runs app-state's `AppClient` over `RelayTransport` there.
 
 The tests cover:
 
-- **Sign-in:** PKCE sign-in, and refresh after revocation.
+- **Sign-in:** PKCE sign-in, across a redirect too, and refresh after revocation.
+- **Web keys:** linking with non-extractable WebCrypto keys and none in the store, resuming with
+  them after a reload, a new device when they are lost, and their destruction on unpair.
 - **Connection:** both WebSocket auth forms, reconnect after a relay restart, and re-authenticating
   before token expiry.
 - **Pairing and linking:** QR pairing, a wrong code, and code linking, both matched and declined.
 - **Live sessions:** JSON-RPC with fragmented replies, errors and notifications, and an offline
   desktop.
+- **`RelayTransport`:** hello in the pinned role, calls, notifications and errors; an offline
+  desktop with a sealed message and a new connection when it's back; the relay out of reach; a
+  refused hello, then an unpairing; one transport per desktop.
 - **Sealed messages and push:**
   - Instructions to an online desktop and to an offline one.
   - Push to APNs and back, a lock-screen answer applied once and a replay refused, the generic

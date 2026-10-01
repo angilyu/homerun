@@ -1,14 +1,33 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import type { DeviceId, RequestId } from "@homerun/core";
-import { startLocalRelay, type LocalRelay } from "@homerun/relay/local";
+import { startLocalRelay, type LocalRelay, WorkosAdmin } from "@homerun/relay/local";
 import { decodePairingUrl, encodePairingUrl, generateDeviceKeys, identityFromStored, newPairingCode, RELAY_PATHS, type SealedEnvelope } from "@homerun/protocol";
+import { testAppAttestCA } from "@homerun/protocol/testing";
 import { ApnsMock, fakeDeviceToken, OidcIssuer } from "@homerun/testkit";
-import { Account, LinkDeclinedError, LiveClosedError, MemoryStore, RelayConnection, RemoteClient, RpcCallError, type ConnectionState } from "../src";
+import { NotConnectedError, RpcCallError as AppRpcCallError, type RuntimeStatus, type TransportEvent } from "@homerun/app-state";
+import {
+  Account,
+  LinkDeclinedError,
+  LiveClosedError,
+  MemoryKeyDb,
+  MemoryStore,
+  RelayConnection,
+  RelayTransport,
+  RemoteClient,
+  RemoteSessions,
+  RpcCallError,
+  WebCryptoKeys,
+  supportsWebCryptoKeys,
+  type ConnectionState,
+  type DeviceKeyStore,
+} from "../src";
 import { FakeDesktop } from "./fake-desktop";
 
 let issuer: OidcIssuer;
 let apns: ApnsMock;
 let relay: LocalRelay;
+/** Stands in for Apple: the fake desktop trusts it, and test iPhones attest with it. */
+const appAttest = testAppAttestCA();
 const cleanup: (() => void)[] = [];
 
 beforeAll(async () => {
@@ -18,6 +37,8 @@ beforeAll(async () => {
     issuer: issuer.url,
     clientId: issuer.clientId,
     apns: { keyP8: apns.p8, keyId: apns.keyId, teamId: apns.teamId, topic: apns.topic, endpoint: apns.url },
+    appAttest: appAttest.policy(),
+    providerAdmin: new WorkosAdmin(issuer.adminKey, issuer.url),
   });
 });
 afterEach(() => {
@@ -48,7 +69,7 @@ async function signIn() {
   return account;
 }
 
-async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: MemoryStore; sent?: SealedEnvelope[] } = {}) {
+async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: MemoryStore; keys?: DeviceKeyStore; sent?: SealedEnvelope[]; attest?: boolean } = {}) {
   const account = o.account ?? (await signIn());
   const store = o.store ?? new MemoryStore();
   const sent = o.sent;
@@ -56,9 +77,11 @@ async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: Memor
     relayUrl: relay.url,
     account,
     store,
+    keys: o.keys,
     kind: o.kind ?? "ios",
     name: o.kind === "web" ? "Chrome" : "Wenjing's iPhone",
     reconnect: { initialMs: 50, maxMs: 500 },
+    ...(o.attest === false ? {} : { attest: async (id) => appAttest.attest(id).attestation }),
     // Records sealed POSTs, so a test can replay one.
     fetch: async (input, init) => {
       if (sent && String(input).endsWith(RELAY_PATHS.sealed) && init?.body) sent.push(JSON.parse(new TextDecoder().decode(init.body as Uint8Array)).envelope);
@@ -73,6 +96,7 @@ async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: Memor
 
 async function desktop(sub: string) {
   const d = new FakeDesktop(relay.url, sub, () => issuer.mint({ sub }));
+  d.attest = appAttest.policy();
   await d.start();
   cleanup.push(() => d.stop());
   return d;
@@ -180,6 +204,8 @@ describe("pairing and linking", () => {
     const [view] = client.desktops();
     expect(view).toMatchObject({ device_id: d.deviceId, name: "Studio Mac", online: true });
     expect(view!.statement.method).toBe("qr");
+    // The phone's App Attest attestation made it an iPhone on the desktop.
+    expect(client.role(d.deviceId)).toBe("ios");
     expect(d.peers.has(client.deviceId)).toBe(true);
     expect(Object.keys((await store.load())!.desktops)).toEqual([d.deviceId]);
   });
@@ -212,6 +238,18 @@ describe("pairing and linking", () => {
     expect(client.desktops().map((x) => x.device_id)).toEqual([d.deviceId]);
   });
 
+  test("an iPhone links by code with its App Attest attestation", async () => {
+    const sub = newUser();
+    const d = await desktop(sub);
+    const seen: string[] = [];
+    d.confirmCode = async (_code, device) => (seen.push(device.platform), true);
+    const { client } = await phone();
+    const pinned = await client.linkByCode(d.deviceId, () => {});
+    expect(seen).toEqual(["ios"]);
+    expect(pinned.statement.platform).toBe("ios");
+    expect(client.role(d.deviceId)).toBe("ios");
+  });
+
   test("a declined code leaves nothing linked", async () => {
     const sub = newUser();
     const d = await desktop(sub);
@@ -220,6 +258,69 @@ describe("pairing and linking", () => {
     await expect(client.linkByCode(d.deviceId, () => {})).rejects.toBeInstanceOf(LinkDeclinedError);
     expect(client.desktops()).toEqual([]);
     expect(d.peers.size).toBe(0);
+  });
+});
+
+describe("web keys and redirect sign-in (§9.9)", () => {
+  test("the browser makes X25519 and Ed25519 keys", async () => {
+    expect(await supportsWebCryptoKeys()).toBe(true);
+    expect(await supportsWebCryptoKeys({} as SubtleCrypto)).toBe(false);
+  });
+
+  test("signs in across a redirect: the pending half survives as JSON", async () => {
+    const sub = newUser();
+    const account = await Account.create({ issuer: issuer.url, clientId: issuer.clientId, allowInsecureLoopback: true, redirectUri: "http://127.0.0.1:53682/callback" });
+    const pending = JSON.parse(JSON.stringify(await account.beginRedirect()));
+    const callback = await issuer.browse(pending.url);
+    await account.completeRedirect(pending, callback);
+    expect(account.subject).toBe(sub);
+    await expect((await Account.create({ issuer: issuer.url, clientId: issuer.clientId, allowInsecureLoopback: true, redirectUri: "http://x/" })).signIn()).rejects.toThrow(/beginRedirect/);
+  });
+
+  test("links with non-extractable keys, keeps none in the store, and resumes with them", async () => {
+    const sub = newUser();
+    const d = await desktop(sub);
+    d.confirmCode = async () => true;
+    const db = new MemoryKeyDb();
+    const store = new MemoryStore();
+    const account = await signIn();
+    const { client } = await phone({ kind: "web", account, store, keys: new WebCryptoKeys(db) });
+    await client.linkByCode(d.deviceId, () => {});
+    const saved = (await store.load())!;
+    expect(saved.device.keys).toBeUndefined();
+    const kept = await db.get(`${client.deviceId}/x25519`);
+    expect(kept!.privateKey.extractable).toBe(false);
+    expect((await db.get(`${client.deviceId}/ed25519`))!.privateKey.extractable).toBe(false);
+    client.close();
+
+    // A reload: the same store and key database give the same device, still linked.
+    const again = await phone({ kind: "web", account, store, keys: new WebCryptoKeys(db) });
+    expect(again.client.deviceId).toBe(client.deviceId);
+    expect(again.client.desktops().map((x) => x.device_id)).toEqual([d.deviceId]);
+    const live = await again.client.openLive(d.deviceId);
+    expect(await live.request("echo", { ok: 1 })).toEqual({ ok: 1 });
+    live.close();
+  });
+
+  test("lost keys start a new device with nothing linked", async () => {
+    const { client, d, store, account } = await paired({ kind: "web" });
+    expect(client.desktops()).toHaveLength(1);
+    client.close();
+    const fresh = await phone({ kind: "web", account, store, keys: new WebCryptoKeys(new MemoryKeyDb()) });
+    expect(fresh.client.deviceId).not.toBe(client.deviceId);
+    expect(fresh.client.desktops()).toEqual([]);
+    expect(d.peers.has(fresh.client.deviceId)).toBe(false);
+  });
+
+  test("unpairing the last desktop destroys the keys", async () => {
+    const sub = newUser();
+    const d = await desktop(sub);
+    d.confirmCode = async () => true;
+    const db = new MemoryKeyDb();
+    const { client } = await phone({ kind: "web", keys: new WebCryptoKeys(db) });
+    await client.linkByCode(d.deviceId, () => {});
+    await client.unpair(d.deviceId);
+    expect(await db.get(`${client.deviceId}/x25519`)).toBeUndefined();
   });
 });
 
@@ -251,6 +352,98 @@ describe("live sessions", () => {
     relay.dropConnections();
     expect(await live.closed).toMatch(/relay connection/);
     await expect(live.request("echo")).rejects.toBeInstanceOf(LiveClosedError);
+  });
+});
+
+describe("RelayTransport: app-state over the relay (§9.8)", () => {
+  const info = { name: "test", version: "0" };
+  const retry = { initialMs: 50, maxMs: 200 };
+  const statusIs = (t: RelayTransport, want: RuntimeStatus["state"], ms = 5000) => until(() => t.status().state === want, ms);
+  const transport = (client: RemoteClient, desktopId: string) => {
+    const t = new RelayTransport({ client, desktopId, clientInfo: info, retry, openTimeoutMs: 2000 });
+    cleanup.push(() => t.close());
+    return t;
+  };
+
+  test("says hello in its pinned role, then calls, notifications and errors come through", async () => {
+    const { client, d } = await paired({ kind: "web" });
+    const t = transport(client, d.deviceId);
+    await statusIs(t, "ready");
+    expect(t.status()).toMatchObject({ state: "ready", connection: 1, device_id: client.deviceId, runtime_version: "0.0.0-fake", protocol: 1 });
+    expect(d.calls.filter((c) => c.method === "hello")).toHaveLength(1);
+    expect(await t.call("echo", { a: 1 })).toEqual({ a: 1 });
+    const err = (await t.call("tasks.delete", {}).catch((e) => e)) as AppRpcCallError;
+    expect(err).toBeInstanceOf(AppRpcCallError);
+    expect(err.code).toBe(-32601);
+    const events: TransportEvent[] = [];
+    t.listen((e) => events.push(e));
+    d.notify("thread.event", { n: 1 });
+    await until(() => events.length > 0);
+    expect(events[0]).toEqual({ type: "notification", method: "thread.event", params: { n: 1 } });
+  });
+
+  test("an offline desktop: offline with when it was last seen; a message seals at the relay; ready again when it's back", async () => {
+    const { client, d } = await paired();
+    const t = transport(client, d.deviceId);
+    await statusIs(t, "ready");
+    d.stop();
+    await statusIs(t, "offline");
+    expect(t.status()).toMatchObject({ state: "offline", reason: "desktop", last_seen_at: expect.any(Number) });
+    await expect(t.call("echo", {})).rejects.toBeInstanceOf(NotConnectedError);
+    const before = Date.now();
+    const { expires_at } = await t.queueInstruction({ thread_id: crypto.randomUUID(), client_msg_id: crypto.randomUUID(), text: "run the tests" });
+    expect(expires_at).toBeGreaterThanOrEqual(before + 12 * 3600_000);
+    await d.resume();
+    await statusIs(t, "ready");
+    expect(t.status()).toMatchObject({ connection: 2 });
+    const r = await d.nextReceived();
+    expect(r).toMatchObject({ ok: true, inner: { body: { type: "instruction", text: "run the tests" } } });
+  });
+
+  test("the relay out of reach: offline, then a new connection once it's back", async () => {
+    const { client, d } = await paired();
+    const t = transport(client, d.deviceId);
+    await statusIs(t, "ready");
+    const seen: string[] = [];
+    t.listen((e) => e.type === "status" && seen.push(e.status.state === "offline" ? `offline/${e.status.reason}` : e.status.state));
+    relay.dropConnections();
+    await until(() => seen.length > 0 && t.status().state === "ready" && (t.status() as { connection: number }).connection === 2);
+    expect(seen.some((s) => s.startsWith("offline") || s === "starting")).toBe(true);
+    expect(await t.call("echo", { again: true })).toEqual({ again: true });
+  });
+
+  test("a refused hello blocks until retried; an unpairing blocks for good", async () => {
+    const { client, d } = await paired({ kind: "web" });
+    d.refuseHello = "not today";
+    const t = transport(client, d.deviceId);
+    await statusIs(t, "blocked");
+    expect(t.status()).toEqual({ state: "blocked", reason: "failed", message: "Your computer refused this device: not today" });
+    d.refuseHello = null;
+    t.retry();
+    await statusIs(t, "ready");
+    d.unpair(client.deviceId);
+    await statusIs(t, "blocked");
+    expect(t.status()).toMatchObject({ reason: "unlinked" });
+    await expect(t.call("echo", {})).rejects.toBeInstanceOf(NotConnectedError);
+  });
+
+  test("one transport per desktop", async () => {
+    const sub = newUser();
+    const [a, b] = [await desktop(sub), await desktop(sub)];
+    const p = await phone();
+    await p.client.pair(a.openPairing());
+    await p.client.pair(b.openPairing());
+    const sessions = new RemoteSessions({ client: p.client, clientInfo: info, retry });
+    cleanup.push(() => sessions.closeAll());
+    const [ta, tb] = [sessions.transport(a.deviceId), sessions.transport(b.deviceId)];
+    expect(sessions.transport(a.deviceId)).toBe(ta);
+    await statusIs(ta, "ready");
+    await statusIs(tb, "ready");
+    b.stop();
+    await statusIs(tb, "offline");
+    expect(ta.status().state).toBe("ready");
+    sessions.release(a.deviceId);
+    expect(sessions.transport(a.deviceId)).not.toBe(ta);
   });
 });
 
@@ -368,6 +561,7 @@ describe("unpairing and account deletion", () => {
   test("with two desktops, unpairing one keeps the other", async () => {
     const { client, d, sub } = await paired();
     const d2 = new FakeDesktop(relay.url, sub, () => issuer.mint({ sub }), "Laptop");
+    d2.attest = appAttest.policy();
     await d2.start();
     cleanup.push(() => d2.stop());
     await client.pair(d2.openPairing());
@@ -379,7 +573,7 @@ describe("unpairing and account deletion", () => {
 
   test("deleting the account removes every device and signs out", async () => {
     const { client, d, account, store } = await paired();
-    await client.deleteAccount();
+    expect(await client.deleteAccount()).toBe("deleted");
     expect(account.signedIn).toBe(false);
     expect(await store.load()).toBeNull();
     await until(() => d.conn.state === "removed" || d.conn.state === "closed");

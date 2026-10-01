@@ -1,5 +1,7 @@
 import type { DeviceId, JsonValue, RpcMessage, SealedBody, SealedInner } from "@homerun/core";
 import {
+  type AppAttestPolicy,
+  attestedRole,
   type DeviceIdentity,
   encodePairingUrl,
   fromB64url,
@@ -24,6 +26,7 @@ import {
   type ServerFrame,
   signLinkStatement,
   toB64url,
+  verifyAttestation,
 } from "@homerun/protocol";
 import { RelayConnection } from "../src";
 
@@ -54,6 +57,10 @@ export class FakeDesktop {
   private unclaimed: Received[] = [];
   /** Decides a code-linking attempt; the test compares the phone's code with this one. */
   confirmCode: (code: string, device: { name: string; platform: RemotePlatform }) => Promise<boolean> = async () => true;
+  /** Whose App Attest attestations make a device an iPhone; like the runtime, anything else is web. */
+  attest: AppAttestPolicy | null = null;
+  /** Refuse every live `hello` with this message. */
+  refuseHello: string | null = null;
 
   constructor(
     readonly relayUrl: string,
@@ -63,7 +70,12 @@ export class FakeDesktop {
   ) {
     this.id = identityFromStored(crypto.randomUUID() as DeviceId, "desktop", generateDeviceKeys());
     this.conn = new RelayConnection({ url: relayUrl, identity: this.id, token, freshToken: token, reconnect: { initialMs: 50, maxMs: 500 } });
-    this.conn.onFrame((f) => void this.onFrame(f).catch((e) => console.error("fake desktop:", e)));
+    // Handshake steps are async; frames of one conversation are handled strictly in order.
+    this.conn.onFrame((f) => {
+      const key = "from" in f && "session" in f ? `${f.type}/${f.from}/${f.session}` : f.type;
+      const next = (this.lanes.get(key) ?? Promise.resolve()).then(() => this.onFrame(f)).catch((e) => console.error("fake desktop:", e));
+      this.lanes.set(key, next);
+    });
   }
 
   get deviceId(): DeviceId {
@@ -77,6 +89,12 @@ export class FakeDesktop {
 
   stop(): void {
     this.conn.close();
+    this.live.clear();
+  }
+
+  /** Back online after `stop()`, as the same desktop. */
+  async resume(): Promise<void> {
+    await this.conn.connect();
   }
 
   /** Opens a pairing offer and returns the QR code's URL (§9.6). */
@@ -96,7 +114,7 @@ export class FakeDesktop {
   /** Sends a sealed push to a phone, as the runtime does when it needs an answer. */
   async push(to: string, body: Extract<SealedBody, { type: "push" }>, ttlMs = 24 * 3600_000): Promise<ServerFrame> {
     const now = Date.now();
-    const env = seal({
+    const env = await seal({
       inner: { v: 1, msg_id: newMsgId(), sender_device_id: this.deviceId, created_at: now, expires_at: now + ttlMs, body } as SealedInner,
       to,
       sender: this.id.noise,
@@ -128,6 +146,8 @@ export class FakeDesktop {
     }
   }
 
+  private lanes = new Map<string, Promise<void>>();
+
   private async onFrame(f: ServerFrame): Promise<void> {
     if (f.type === "rendezvous" && f.kind === "pair") return this.onPair(f);
     if (f.type === "rendezvous" && f.kind === "link") return this.onLink(f);
@@ -140,21 +160,22 @@ export class FakeDesktop {
 
   private pairing = new Map<string, PairResponder>();
 
-  private onPair(f: Extract<ServerFrame, { type: "rendezvous" }>): void {
+  private async onPair(f: Extract<ServerFrame, { type: "rendezvous" }>): Promise<void> {
     // The relay only forwards a first pairing message for an open offer; the desktop tries each
     // of its open codes (normally one).
     for (const [offer, code] of this.offers) {
       const r = new PairResponder({ desktopId: this.deviceId, deviceId: f.from, sessionId: f.session, code, me: this.id.noise });
       let read;
       try {
-        read = r.read(fromB64url(f.data));
+        read = await r.read(fromB64url(f.data));
       } catch {
         continue;
       }
       this.offers.delete(offer);
-      const statement = this.statement(f.from, read.remoteStatic, read.hello.signing_public_key, read.hello.platform, "qr");
-      this.peers.set(f.from, { static: read.remoteStatic, platform: read.hello.platform });
-      const reply = r.reply({ device_id: this.deviceId, name: this.name, signing_public_key: publicOf(this.id).signing_public_key, statement });
+      const platform = this.role(f.from, read.remoteStatic, read.hello);
+      const statement = await this.statement(f.from, read.remoteStatic, read.hello.signing_public_key, platform, "qr");
+      this.peers.set(f.from, { static: read.remoteStatic, platform });
+      const reply = await r.reply({ device_id: this.deviceId, name: this.name, signing_public_key: publicOf(this.id).signing_public_key, statement });
       this.conn.send({ type: "rendezvous", kind: "pair", to: f.from, session: f.session, data: toB64url(reply) });
       this.conn.send({ type: "link_add", statement, offer });
       this.conn.send({ type: "pair_close", offer });
@@ -187,27 +208,34 @@ export class FakeDesktop {
     const data = fromB64url(f.data);
     if (st.step === 0) {
       st.step = 1;
-      return void send(st.r.accept(data));
+      return void send(await st.r.accept(data));
     }
     if (st.step === 1) {
       st.step = 2;
-      return void send(st.r.commit(data));
+      return void send(await st.r.commit(data));
     }
     if (st.step === 2) {
       st.step = 3;
       const code = st.r.verify(data);
       const device = st.r.device!;
-      const ok = await this.confirmCode(code, { name: device.name, platform: device.platform });
+      const platform = this.role(f.from, st.r.deviceStatic!, device);
+      const ok = await this.confirmCode(code, { name: device.name, platform });
       this.linking.delete(key);
       if (!ok) return void send(st.r.declined());
-      const statement = this.statement(f.from, st.r.deviceStatic!, device.signing_public_key, device.platform, "code");
-      this.peers.set(f.from, { static: st.r.deviceStatic!, platform: device.platform });
+      const statement = await this.statement(f.from, st.r.deviceStatic!, device.signing_public_key, platform, "code");
+      this.peers.set(f.from, { static: st.r.deviceStatic!, platform });
       this.conn.send({ type: "link_add", statement });
       send(st.r.linked(statement));
     }
   }
 
-  private statement(deviceId: string, deviceStatic: Uint8Array, signing: string, platform: RemotePlatform, method: "qr" | "code"): LinkStatement {
+  private role(deviceId: string, deviceStatic: Uint8Array, d: { platform: RemotePlatform; signing_public_key: string; attestation?: unknown }): RemotePlatform {
+    if (d.platform !== "ios" || !this.attest || d.attestation === undefined) return "web";
+    const identity = { device_id: deviceId as DeviceId, static_public_key: toB64url(deviceStatic), signing_public_key: d.signing_public_key };
+    return attestedRole(d.platform, verifyAttestation(d.attestation, identity, this.attest, Date.now()));
+  }
+
+  private statement(deviceId: string, deviceStatic: Uint8Array, signing: string, platform: RemotePlatform, method: "qr" | "code"): Promise<LinkStatement> {
     return signLinkStatement(
       {
         v: 1,
@@ -227,13 +255,13 @@ export class FakeDesktop {
 
   // ---------------------------------------------------------------- live
 
-  private onLive(f: Extract<ServerFrame, { type: "live" }>): void {
+  private async onLive(f: Extract<ServerFrame, { type: "live" }>): Promise<void> {
     const key = `${f.from}/${f.session}`;
     const s = this.live.get(key);
     if (!s) {
       const peer = this.peers.get(f.from);
       if (!peer) return void this.conn.send({ type: "live_close", to: f.from, session: f.session });
-      const r = liveRespond({ initiatorId: f.from, responderId: this.deviceId, sessionId: f.session, me: this.id.noise, peer: peer.static }, fromB64url(f.data));
+      const r = await liveRespond({ initiatorId: f.from, responderId: this.deviceId, sessionId: f.session, me: this.id.noise, peer: peer.static }, fromB64url(f.data));
       this.live.set(key, r.session);
       this.conn.send({ type: "live", to: f.from, session: f.session, data: toB64url(r.reply) });
       return;
@@ -241,8 +269,17 @@ export class FakeDesktop {
     const m = s.decrypt(fromB64url(f.data));
     if (!m || !("method" in m) || !("id" in m)) return;
     this.calls.push({ from: f.from, method: m.method });
+    const params = (m.params ?? {}) as Record<string, JsonValue>;
+    const auth = params.auth as { device_id?: string } | undefined;
+    // Like the runtime (§5.2): a paired device says hello as itself, in the role it was linked with.
+    const helloError =
+      this.refuseHello ?? (params.role !== this.peers.get(f.from)?.platform || auth?.device_id !== f.from ? "role or device does not match the pairing" : null);
     const reply: RpcMessage =
-      m.method === "echo"
+      m.method === "hello"
+        ? helloError
+          ? { jsonrpc: "2.0", id: m.id, error: { code: -32001, message: helloError } }
+          : { jsonrpc: "2.0", id: m.id, result: { protocol: 1, runtime_version: "0.0.0-fake", device_id: this.deviceId, role: params.role as string, capabilities: [] } }
+        : m.method === "echo"
         ? { jsonrpc: "2.0", id: m.id, result: (m.params ?? null) as JsonValue }
         : m.method === "big"
           ? { jsonrpc: "2.0", id: m.id, result: "x".repeat(200_000) }
@@ -252,9 +289,9 @@ export class FakeDesktop {
 
   // ---------------------------------------------------------------- sealed
 
-  private onSealed(id: string, env: Parameters<typeof openSealed>[0]): void {
+  private async onSealed(id: string, env: Parameters<typeof openSealed>[0]): Promise<void> {
     const now = Date.now();
-    const r = openSealed(env, {
+    const r = await openSealed(env, {
       me: { deviceId: this.deviceId, noise: this.id.noise },
       senderStatic: (from) => this.peers.get(from)?.static ?? null,
       now,

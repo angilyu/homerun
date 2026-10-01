@@ -1,6 +1,7 @@
 import { type DeviceId, LINK_REQUEST_TTL_MS } from "@homerun/core";
-import { type ClientFrame, type DeviceIdentity, fromB64url, LinkResponder, publicOf, type ServerFrame, toB64url } from "@homerun/protocol";
+import { type AppAttestPolicy, type ClientFrame, type DeviceIdentity, fromB64url, LinkResponder, publicOf, type ServerFrame, toB64url } from "@homerun/protocol";
 import { log } from "../log";
+import { agreeWithRelay, type DeviceRole, deviceRole } from "./attest";
 import type { DeviceRow } from "./devices";
 import { linkStatement } from "./pairing";
 
@@ -18,6 +19,7 @@ type Rendezvous = Extract<ServerFrame, { type: "rendezvous" }>;
 export interface LinkRequestView {
   name: string;
   platform: "ios" | "web";
+  claimed_platform: "ios" | "web";
 }
 
 export interface LinkingDeps {
@@ -29,6 +31,8 @@ export interface LinkingDeps {
   /** `devices.link_requested` / `devices.link_withdrawn` to the shell. */
   toShell: (method: "devices.link_requested" | "devices.link_withdrawn", params: unknown) => void;
   linked: (row: DeviceRow) => void;
+  /** Whose App Attest attestations make a device an iPhone (§9.8). */
+  attest: AppAttestPolicy;
   /** The pending request appeared or went away. */
   changed: () => void;
   ttlMs?: number;
@@ -41,7 +45,9 @@ interface Attempt {
   step: 1 | 2 | 3;
   /** The relay's registration of the sender. */
   kind: string | null;
-  request: { id: string; name: string; platform: "ios" | "web"; timer: ReturnType<typeof setTimeout> } | null;
+  request: { id: string; name: string; role: DeviceRole; timer: ReturnType<typeof setTimeout> } | null;
+  /** The user answered; the statement is being signed. */
+  deciding: boolean;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -50,39 +56,48 @@ const HANDSHAKE_MS = 60_000;
 
 export class Linking {
   private attempt: Attempt | null = null;
+  /** Handshake steps await the key; they run one at a time, in the order the relay delivered them. */
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(private d: LinkingDeps) {}
 
   /** The request the shell's prompt is showing, if any. */
   get request(): LinkRequestView | null {
     const r = this.attempt?.request;
-    return r ? { name: r.name, platform: r.platform } : null;
+    return r ? { name: r.name, platform: r.role.platform, claimed_platform: r.role.claimed_platform } : null;
   }
 
   onRendezvous(f: Rendezvous): void {
+    this.queue = this.queue.then(() => this.handle(f)).catch(() => {});
+  }
+
+  private async handle(f: Rendezvous): Promise<void> {
     const a = this.attempt;
     if (a && (a.from !== f.from || a.session !== f.session)) {
       this.d.send({ type: "rendezvous_close", to: f.from, session: f.session });
       return;
     }
     try {
-      if (!a) return this.begin(f);
+      if (!a) return await this.begin(f);
       const data = fromB64url(f.data);
       if (a.step === 1) {
         a.step = 2;
-        return this.reply(a, a.r.commit(data));
+        const m = await a.r.commit(data);
+        if (this.attempt === a) this.reply(a, m);
+        return;
       }
       if (a.step === 2 && !a.request) {
         a.step = 3;
         const code = a.r.verify(data);
         const device = a.r.device!;
-        if (a.kind !== null && a.kind !== device.platform) throw new Error("the device's platform doesn't match its registration");
-        return this.prompt(a, code, device.name, device.platform);
+        const keys = { device_id: a.from, static_public_key: toB64url(a.r.deviceStatic!), signing_public_key: device.signing_public_key };
+        const role = agreeWithRelay(deviceRole(device.platform, device.attestation, keys, this.d.attest, this.d.now()), a.kind);
+        return this.prompt(a, code, device.name, role);
       }
       throw new Error("unexpected linking message");
     } catch (e) {
       log.info("code linking failed", { error: (e as Error).message });
-      this.end(a ?? null, true);
+      this.end(a ?? this.attempt, true);
     }
   }
 
@@ -93,9 +108,10 @@ export class Linking {
   }
 
   /** The user's answer in the shell's prompt. Returns whether the request was still open. */
-  decide(requestId: string, approve: boolean): boolean {
+  async decide(requestId: string, approve: boolean): Promise<boolean> {
     const a = this.attempt;
-    if (!a?.request || a.request.id !== requestId) return false;
+    if (!a?.request || a.request.id !== requestId || a.deciding) return false;
+    a.deciding = true;
     const account = this.d.account();
     if (!approve || !account) {
       this.reply(a, a.r.declined());
@@ -108,14 +124,16 @@ export class Linking {
     const row: DeviceRow = {
       device_id: a.from,
       name: device.name,
-      platform: device.platform,
+      ...a.request.role,
       method: "code",
       static_public_key: toB64url(a.r.deviceStatic!),
       signing_public_key: device.signing_public_key,
       paired_at: now,
       last_seen_at: now,
     };
-    const statement = linkStatement(me, account, row, now);
+    const statement = await linkStatement(me, account, row, now);
+    // Withdrawn (the phone gave up, the relay link dropped) while signing.
+    if (this.attempt !== a) return false;
     this.d.send({ type: "link_add", statement });
     this.reply(a, a.r.linked(statement));
     this.end(a, false);
@@ -129,7 +147,7 @@ export class Linking {
     if (this.attempt) this.end(this.attempt, false, "cancelled");
   }
 
-  private begin(f: Rendezvous): void {
+  private async begin(f: Rendezvous): Promise<void> {
     const me = this.d.me();
     const r = new LinkResponder({
       deviceId: f.from,
@@ -145,13 +163,15 @@ export class Linking {
       step: 1,
       kind: f.device?.kind ?? null,
       request: null,
+      deciding: false,
       timer: setTimeout(() => this.end(a, true), HANDSHAKE_MS),
     };
     this.attempt = a;
-    this.reply(a, r.accept(fromB64url(f.data)));
+    const m = await r.accept(fromB64url(f.data));
+    if (this.attempt === a) this.reply(a, m);
   }
 
-  private prompt(a: Attempt, code: string, name: string, platform: "ios" | "web"): void {
+  private prompt(a: Attempt, code: string, name: string, role: DeviceRole): void {
     const now = this.d.now();
     const ttl = this.d.ttlMs ?? LINK_REQUEST_TTL_MS;
     clearTimeout(a.timer);
@@ -159,14 +179,22 @@ export class Linking {
     a.request = {
       id,
       name,
-      platform,
+      role,
       timer: setTimeout(() => {
-        if (this.attempt !== a) return;
+        if (this.attempt !== a || a.deciding) return;
         this.reply(a, a.r.declined());
         this.end(a, false, "expired");
       }, ttl),
     };
-    this.d.toShell("devices.link_requested", { request_id: id, name, platform, code, requested_at: now, expires_at: now + ttl });
+    this.d.toShell("devices.link_requested", {
+      request_id: id,
+      name,
+      platform: role.platform,
+      claimed_platform: role.claimed_platform,
+      code,
+      requested_at: now,
+      expires_at: now + ttl,
+    });
     this.d.changed();
   }
 

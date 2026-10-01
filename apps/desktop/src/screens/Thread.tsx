@@ -17,6 +17,7 @@ import {
   type TimelineItem,
   type ToolItem,
   type UserItem,
+  relayedText,
 } from "@homerun/app-state";
 import type { Content } from "@homerun/core";
 import { useApp, useNow, useStore } from "../hooks";
@@ -117,7 +118,7 @@ function ThreadBody({ sync }: { sync: ThreadSync }) {
           )}
         </div>
         <div className="actions">
-          {!summary?.task_id && view.items.length > 0 && (
+          {!summary?.task_id && view.items.length > 0 && app.client.may("tasks.create") && (
             <button type="button" onClick={() => app.go({ name: "task_edit", kind: "session", from_thread_id: sync.thread_id })}>
               Save as task…
             </button>
@@ -225,6 +226,8 @@ export function deliveryNote(item: UserItem): string | null {
       return "Sending…";
     case "queued":
       return "Waiting for Homerun to send";
+    case "relayed":
+      return relayedText(item.expires_at, Date.now());
     case "failed":
       return `Not sent: ${item.error ?? "error"}`;
     case "held":

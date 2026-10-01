@@ -227,3 +227,22 @@ describe("the SDK session store (F1, F2)", () => {
     expect(await s.load({ ...key, subpath: "subagents/a" })).toBeNull();
   });
 });
+
+describe("migration 8: App Attest (§9.8, §12)", () => {
+  test("an iPhone linked before App Attest keeps its claim but gets a browser's role until it pairs again", () => {
+    dir = mkdtempSync(join(tmpdir(), "hr-store-"));
+    db = openDb(join(dir, "homerun.db"));
+    migrate(db, { backupDir: join(dir, "b"), runtimeVersion: "t", migrations: MIGRATIONS.filter((m) => m.version <= 7) });
+    const add = db.query("INSERT INTO remote_devices VALUES (?, ?, ?, 'qr', 'k', 's', 1, NULL)");
+    add.run("phone", "Ada's iPhone", "ios");
+    add.run("browser", "Firefox", "web");
+    expect(migrate(db, { backupDir: join(dir, "b"), runtimeVersion: "t" })).toMatchObject({ status: "migrated", from: 7, to: N });
+    const rows = db.query<{ device_id: string; platform: string; claimed_platform: string; attest_key: string | null }, []>(
+      "SELECT device_id, platform, claimed_platform, attest_key FROM remote_devices ORDER BY device_id",
+    ).all();
+    expect(rows).toEqual([
+      { device_id: "browser", platform: "web", claimed_platform: "web", attest_key: null },
+      { device_id: "phone", platform: "web", claimed_platform: "ios", attest_key: null },
+    ]);
+  });
+});

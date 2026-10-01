@@ -3,6 +3,7 @@ import type { ApprovalPrompt, QuestionPrompt } from "@homerun/core";
 import {
   alreadyAnswered,
   approvalResponse,
+  cantAnswer,
   checkGrant,
   describeResolution,
   grantEditor,
@@ -78,6 +79,27 @@ describe("Always allow (§5.6)", () => {
   });
 });
 
+describe("the web client's reduced authority (§9.9)", () => {
+  const q = questionPrompt("q1") as unknown as QuestionPrompt;
+  const read = approvalPrompt("t5", { class: "read", reason: "not_allowlisted" }) as unknown as ApprovalPrompt;
+
+  test("the web answers questions and read-class approvals; the rest says where to go", () => {
+    expect(cantAnswer(q, "web")).toBeNull();
+    expect(cantAnswer(read, "web")).toBeNull();
+    expect(cantAnswer(bash, "web")).toBe("Approve on your phone or Mac");
+    for (const role of ["webview", "ios"] as const) expect(cantAnswer(bash, role)).toBeNull();
+  });
+
+  test("never offers Always allow, and core refuses it from the web anyway", () => {
+    const allow = approvalPrompt("t6", { class: "read", offer_always: true }) as unknown as ApprovalPrompt;
+    expect(offersAlways(allow)).toBe(true);
+    expect(offersAlways(allow, "web")).toBe(false);
+    expect(approvalResponse(read, "allow", undefined, "web").response).toEqual({ type: "approval", decision: "allow" });
+    expect(approvalResponse(allow, "allow_always", initialGrant(allow), "web").response).toBeNull();
+    expect(approvalResponse(bash, "allow", undefined, "web").response).toBeNull();
+  });
+});
+
 describe("questions (§5.6)", () => {
   const q = questionPrompt("q1") as unknown as QuestionPrompt;
 
@@ -112,5 +134,14 @@ describe("after the answer", () => {
     expect(describeResolution(bash, { ...r, answered_by: OTHER_DEVICE, surface: "ios" }, DEVICE)).toBe("Allowed once on iPhone");
     expect(describeResolution(bash, { ...r, state: "expired", response: null, answered_by: null, surface: null }, DEVICE)).toBe("Expired without an answer");
     expect(alreadyAnswered("answered", OTHER_DEVICE, DEVICE)).toContain("another device");
+  });
+
+  test("names the device this client runs on by its role", () => {
+    const r = { state: "answered" as const, response: { type: "approval" as const, decision: "deny" as const }, answered_by: DEVICE, surface: "ios" as const, ts: 1 };
+    expect(describeResolution(bash, r, DEVICE, "ios")).toBe("Denied on this iPhone");
+    expect(describeResolution(bash, { ...r, surface: "web" }, DEVICE, "web")).toBe("Denied on this browser");
+    // The desktop's own answer, seen on the phone.
+    expect(describeResolution(bash, { ...r, answered_by: OTHER_DEVICE, surface: "desktop" }, DEVICE, "ios")).toBe("Denied on a Mac");
+    expect(alreadyAnswered("answered", DEVICE, DEVICE, "web")).toBe("You already answered this on this browser.");
   });
 });

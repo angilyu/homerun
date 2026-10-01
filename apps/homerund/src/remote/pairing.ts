@@ -1,5 +1,6 @@
 import { PAIRING_OFFER_TTL_MS } from "@homerun/core";
 import {
+  type AppAttestPolicy,
   type ClientFrame,
   type DeviceIdentity,
   encodePairingUrl,
@@ -15,6 +16,7 @@ import {
   toB64url,
 } from "@homerun/protocol";
 import { log } from "../log";
+import { agreeWithRelay, deviceRole } from "./attest";
 import type { DeviceRow } from "./devices";
 
 /**
@@ -34,6 +36,8 @@ export interface PairingDeps {
   send: (f: ClientFrame) => boolean;
   now: () => number;
   paired: (offerId: string, row: DeviceRow) => void;
+  /** Whose App Attest attestations make a device an iPhone (§9.8). */
+  attest: AppAttestPolicy;
   ttlMs?: number;
 }
 
@@ -47,6 +51,8 @@ interface Offer {
 
 export class Pairing {
   private offers = new Map<string, Offer>();
+  /** First messages are handled one at a time: the handshake awaits the key, and an offer is single-use. */
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(private d: PairingDeps) {}
 
@@ -84,31 +90,37 @@ export class Pairing {
 
   /** A first pairing message: try it against each open offer (normally one). */
   onRendezvous(f: Rendezvous): void {
+    this.queue = this.queue
+      .then(() => this.handle(f))
+      .catch((e) => {
+        log.warn("pairing failed", { error: (e as Error).message });
+        this.d.send({ type: "rendezvous_close", to: f.from, session: f.session });
+      });
+  }
+
+  private async handle(f: Rendezvous): Promise<void> {
     const me = this.d.me();
-    const account = this.d.account();
-    for (const o of this.offers.values()) {
+    for (const o of [...this.offers.values()]) {
       const r = new PairResponder({ desktopId: me.deviceId, deviceId: f.from, sessionId: f.session, code: o.code, me: me.noise });
       let read;
       try {
-        read = r.read(fromB64url(f.data));
+        read = await r.read(fromB64url(f.data));
       } catch {
         continue;
       }
-      // The relay registered the sender; a phone can't claim to be a browser or the reverse.
-      if (!account || (f.device && f.device.kind !== read.hello.platform)) break;
+      // The offer may have closed (cancelled, expired) while the handshake ran.
+      if (this.offers.get(o.offerId) !== o) break;
+      const account = this.d.account();
       const now = this.d.now();
-      const row: DeviceRow = {
-        device_id: f.from,
-        name: read.hello.name,
-        platform: read.hello.platform,
-        method: "qr",
-        static_public_key: toB64url(read.remoteStatic),
-        signing_public_key: read.hello.signing_public_key,
-        paired_at: now,
-        last_seen_at: now,
-      };
-      const statement = linkStatement(me, account, row, now);
-      const reply = r.reply({ device_id: me.deviceId, name: this.d.name, signing_public_key: publicOf(me).signing_public_key, statement });
+      const keys = { device_id: f.from, static_public_key: toB64url(read.remoteStatic), signing_public_key: read.hello.signing_public_key };
+      // The relay registered the sender with the role its own check of the attestation gave;
+      // where the two differ, the device pairs with the lower one (§18 row 102).
+      const role = agreeWithRelay(deviceRole(read.hello.platform, read.hello.attestation, keys, this.d.attest, now), f.device?.kind);
+      if (!account) break;
+      const row: DeviceRow = { ...keys, ...role, name: read.hello.name, method: "qr", paired_at: now, last_seen_at: now };
+      const statement = await linkStatement(me, account, row, now);
+      if (this.offers.get(o.offerId) !== o) break;
+      const reply = await r.reply({ device_id: me.deviceId, name: this.d.name, signing_public_key: publicOf(me).signing_public_key, statement });
       this.d.send({ type: "rendezvous", kind: "pair", to: f.from, session: f.session, data: toB64url(reply) });
       this.d.send({ type: "link_add", statement, offer: o.tag });
       this.close(o.offerId);
@@ -134,7 +146,7 @@ export class Pairing {
 }
 
 /** The desktop's signed statement that it linked this device, in this account (§9.6). */
-export function linkStatement(me: DeviceIdentity, account: string, row: DeviceRow, now: number): LinkStatement {
+export function linkStatement(me: DeviceIdentity, account: string, row: DeviceRow, now: number): Promise<LinkStatement> {
   return signLinkStatement(
     {
       v: 1,

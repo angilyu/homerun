@@ -51,11 +51,34 @@ src/
   apns.ts         the APNs payload: the sealed envelope, or the generic alert when it doesn't fit 4 KB
   wire.ts         relay HTTP bodies, WebSocket frames, close codes, device proofs
   oidc.ts         Authorization Code + PKCE, refresh and revocation over oauth4webapi (§10.4)
+  der.ts, cbor.ts strict, minimal DER and CBOR readers for App Attest
+  app-attest.ts   App Attest attestations and assertions against Apple's pinned root (§18 row 99)
+  testing/        a test App Attest CA, so harnesses can make attested iPhones
   vectors/        builders, the verifier and fixtures for the vector files
 scripts/
   gen-vectors.ts  writes vectors/*.json; --check fails on drift (CI runs it)
 vectors/          the test vectors (below)
 ```
+
+## Keys are handles
+
+A device's keys are `DhKey` and `SigningKey` handles whose `dh` and `sign` return promises
+(§18 row 100), so the secret can stay in a non-extractable WebCrypto key or behind the iOS
+Keychain. `rawDhKey` and `rawSigningKey` wrap bytes for the runtime and tests. Handshakes,
+sealing, linking and signing are therefore async; each handshake object refuses a second step
+while one is running, and an X25519 result of all zeros is rejected.
+
+## App Attest
+
+An iPhone proves it is the Homerun app with an App Attest attestation of its keys (§9.8, §12).
+`attestationClientDataHash()` is what the app attests: SHA-256 over a label, the device id, its Noise
+and signing keys and its Face ID approval key. `verifyAttestation()` checks the CBOR
+`apple-appattest` object: the x5c chain to the pinned Apple App Attestation Root CA, the nonce
+extension, the key id, the app id hash for `NMJBY8WL8T.com.angilyu.homerun.ios`, the counter,
+and the environment (`appattest`; `appattestdevelop` only when the policy allows it).
+`verifyAssertion()` checks a later assertion and its increasing counter. `PairHello`,
+`LinkDeviceInfo` and the relay's `RegisterDevice` carry the attestation, and `attestedRole()`
+turns a claim and a result into a role; the runtime and the relay both use this module (§18 rows 99 and 102).
 
 ## Sealed-message checks
 
@@ -83,6 +106,7 @@ the React Native app and the Swift notification extension. Test keys only; they 
 | `apns-payload.json` | The APNs body for a sealed push, and the generic fallback when it doesn't fit |
 | `relay-wire.json` | Device-proof bytes and signatures; client and server frames that must parse or be rejected |
 | `encoding.json` | base64url and `framed()` edge cases |
+| `app-attest.json` | The client data hash (with and without an approval key); attestations from a test root, accepted or refused for another identity, a dropped approval key, and a development attestation under each policy; assertions whose counter increases, is replayed, or sign other data. The unit tests cover every other rejection |
 
 Every file has a `$comment` and a `devices` block with the keys (secrets in hex, public keys in
 base64url). Fields ending in `_ephemeral` or `_nonce` are the fixed randomness a vector needs;

@@ -25,7 +25,7 @@ export const MSG_ID = "q83vEjRWeJq83vEjRWeJqw";
 export const STATIC_KEY = "3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08";
 export const T0 = 1_767_225_600_000; // 2026-01-01T00:00:00Z
 
-export const pairedDevice = () => ({ device_id: PHONE, name: "Ada's iPhone", platform: "ios", method: "qr", paired_at: T0, online: false, last_seen_at: T0 + 60_000 });
+export const pairedDevice = () => ({ device_id: PHONE, name: "Ada's iPhone", platform: "ios", claimed_platform: "ios", method: "qr", paired_at: T0, online: false, last_seen_at: T0 + 60_000 });
 
 export const origin = (surface: "desktop" | "cli" | "ios" | "web" = "desktop", device_id = DEVICE) => ({ device_id, surface });
 

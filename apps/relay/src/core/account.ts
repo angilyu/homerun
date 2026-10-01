@@ -1,5 +1,8 @@
 import { CLOCK_SKEW_MS, type DeviceId } from "@homerun/core";
 import {
+  type AccountDeleted,
+  type AppAttestPolicy,
+  attestedRole,
   buildApnsPayload,
   challengeBytes,
   CLOSE,
@@ -22,11 +25,13 @@ import {
   toB64url,
   utf8,
   verifyLinkStatement,
+  verifyAttestation,
   verifySignature,
 } from "@homerun/protocol";
 import type { VerifiedToken } from "../auth";
 import type { PushSender } from "../apns";
 import type { RelayLimits } from "../config";
+import type { ProviderAdmin } from "./provider-admin";
 import { migrate, one, type Sql } from "./sql";
 
 /**
@@ -63,6 +68,14 @@ export interface RelayHost {
   verifyToken(token: string): Promise<VerifiedToken>;
   push: PushSender | null;
   limits: RelayLimits;
+  /**
+   * Whose App Attest attestations make a device an iPhone here (§9.8, §18 row 99): only an
+   * attested iPhone gets pushes and answers from the lock screen. The desktop checks the same
+   * attestation for itself, so a relay that lies about it gains nothing (§13).
+   */
+  appAttest: AppAttestPolicy;
+  /** Deletes the user at the identity provider when the account is deleted (§10.9); null: by hand. */
+  providerAdmin: ProviderAdmin | null;
   /** Deletes every row of this account (account deletion). */
   wipe(): void;
   log?(event: string, fields?: Record<string, unknown>): void;
@@ -127,6 +140,19 @@ const SEALED_ROUTES: Record<SealedEnvelope["header"]["kind"], { from: DeviceKind
   push: { from: ["desktop"], to: ["ios"] },
 };
 
+/**
+ * After an account is deleted, the relay keeps a tombstone this long: its id, when, and whether
+ * the provider's user is deleted yet. Tokens issued before the deletion are refused meanwhile,
+ * so a device that hasn't heard can't register again into an empty account. No access token
+ * lives this long (WorkOS's live 5 minutes).
+ */
+export const TOMBSTONE_MS = 24 * 3_600_000;
+
+/** When to try the provider again after the `n`th failure: a minute, doubling, at most 6 h. */
+export const providerRetryDelay = (n: number) => Math.min(60_000 * 2 ** (n - 1), 6 * 3_600_000);
+
+type Binding = "ok" | "other" | "deleted";
+
 export class AccountRelay {
   private buckets = new Map<string, { tokens: number; at: number; dropped: number }>();
 
@@ -141,12 +167,27 @@ export class AccountRelay {
     return this.host.limits;
   }
 
-  /** The account this storage belongs to, bound on first use. False if it belongs to another. */
-  bind(sub: string): boolean {
+  /**
+   * The account this storage belongs to, bound on first use. `other` if it belongs to another;
+   * `deleted` if the account was deleted after `auth` was issued (`iat` is whole seconds, so a
+   * token from the second of the deletion counts as before), or its user at the provider isn't
+   * deleted yet.
+   */
+  bind(auth: VerifiedToken): Binding {
     const row = one(this.sql.all<{ v: string }>(`SELECT v FROM meta WHERE k = 'account'`));
-    if (row) return row.v === sub;
-    this.sql.run(`INSERT INTO meta (k, v) VALUES ('account', ?), ('created_at', ?)`, sub, String(this.host.now()));
-    return true;
+    if (row && row.v !== auth.sub) return "other";
+    const deletedAt = this.meta("deleted_at");
+    if (deletedAt !== null && (this.meta("provider_pending") !== null || auth.iat <= Number(deletedAt))) return "deleted";
+    if (!row) this.sql.run(`INSERT INTO meta (k, v) VALUES ('account', ?), ('created_at', ?)`, auth.sub, String(this.host.now()));
+    return "ok";
+  }
+
+  private meta(k: string): string | null {
+    return one(this.sql.all<{ v: string }>(`SELECT v FROM meta WHERE k = ?`, k))?.v ?? null;
+  }
+
+  private setMeta(k: string, v: string | number): void {
+    this.sql.run(`INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v`, k, String(v));
   }
 
   private account(): string {
@@ -159,7 +200,9 @@ export class AccountRelay {
     const url = new URL(req.url);
     const body = new Uint8Array(await req.arrayBuffer());
     try {
-      if (!this.bind(auth.sub)) return errorResponse("forbidden", "wrong account");
+      const bound = this.bind(auth);
+      if (bound === "other") return errorResponse("forbidden", "wrong account");
+      if (bound === "deleted") return errorResponse("unauthenticated", "the account was deleted");
       const P = RELAY_PATHS;
       switch (`${req.method} ${url.pathname}`) {
         case `POST ${P.devices}`:
@@ -197,8 +240,7 @@ export class AccountRelay {
         }
         case `DELETE ${P.account}`: {
           this.proof(req, url, body);
-          this.deleteAccount();
-          return new Response(null, { status: 204 });
+          return okJson(await this.deleteAccount(auth.sub), 202);
         }
         default:
           return errorResponse("not_found", "no such endpoint");
@@ -238,8 +280,11 @@ export class AccountRelay {
     this.proof(req, url, body, { deviceId: device.device_id, signing: device.signing_public_key });
     const existing = this.device(device.device_id);
     if (existing) {
+      // The role was settled at the first registration; an iPhone doesn't re-attest to keep it,
+      // and one registered as a browser stays one (a new attestation doesn't upgrade it).
+      const sameKind = existing.kind === device.kind || (existing.kind === "web" && device.kind === "ios");
       if (
-        existing.kind !== device.kind ||
+        !sameKind ||
         existing.static_public_key !== device.static_public_key ||
         existing.signing_public_key !== device.signing_public_key
       ) {
@@ -250,10 +295,11 @@ export class AccountRelay {
       const n = one(this.sql.all<{ n: number }>(`SELECT count(*) AS n FROM devices`))!.n;
       if (n >= this.limits.maxDevices) return errorResponse("too_many_devices", `at most ${this.limits.maxDevices} devices per account`);
       if (!this.rate("register", this.limits.registrationsPerHour, 60 * 60 * 1000)) return errorResponse("rate_limited", "too many registrations");
+      const kind = this.attestedKind(device, parsed.data.attestation);
       this.sql.run(
         `INSERT INTO devices (device_id, kind, name, static_public_key, signing_public_key, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, NULL)`,
         device.device_id,
-        device.kind,
+        kind,
         name,
         device.static_public_key,
         device.signing_public_key,
@@ -263,19 +309,65 @@ export class AccountRelay {
     return okJson({ device: this.linkedView(this.device(device.device_id)!, null) });
   }
 
-  private deleteAccount(): void {
+  /** An iPhone without an attestation of these keys that verifies registers as a browser. */
+  private attestedKind(device: RegisterDevice["device"], attestation: RegisterDevice["attestation"]): DeviceKind {
+    if (device.kind !== "ios") return device.kind;
+    if (!attestation) return "web";
+    const r = verifyAttestation(attestation, device, this.host.appAttest, this.host.now());
+    if (!r.ok) this.host.log?.("attestation_rejected", { reason: r.reason });
+    return attestedRole("ios", r);
+  }
+
+  /**
+   * Deletes everything the relay holds for the account (§10.7), then its user at the identity
+   * provider (§10.9). If the provider fails, the alarm tries again until it works, and the
+   * account's tokens are refused meanwhile.
+   */
+  private async deleteAccount(sub: string): Promise<AccountDeleted> {
     for (const s of this.host.sockets()) s.close(CLOSE.DEVICE_REMOVED, "account deleted");
     this.buckets.clear();
     this.host.setAlarm(null);
     this.host.wipe();
     migrate(this.sql);
+    // The tombstone is written before the provider is called, so nothing registers meanwhile.
+    this.setMeta("account", sub);
+    this.setMeta("deleted_at", this.host.now());
+    if (!this.host.providerAdmin) {
+      this.host.log?.("account_deleted", { provider: "manual" });
+      this.schedule();
+      return { provider: "manual" };
+    }
+    this.setMeta("provider_pending", sub);
+    this.setMeta("provider_attempts", 0);
+    const done = await this.deleteAtProvider(sub);
+    this.host.log?.("account_deleted", { provider: done ? "deleted" : "pending" });
+    this.schedule();
+    return { provider: done ? "deleted" : "pending" };
+  }
+
+  /** One attempt at the provider. True once the user is gone; otherwise schedules the next. */
+  private async deleteAtProvider(sub: string): Promise<boolean> {
+    try {
+      await this.host.providerAdmin!.deleteUser(sub);
+      this.sql.run(`DELETE FROM meta WHERE k IN ('provider_pending', 'provider_attempts', 'provider_next_at')`);
+      return true;
+    } catch (e) {
+      const n = Number(this.meta("provider_attempts") ?? 0) + 1;
+      this.setMeta("provider_attempts", n);
+      this.setMeta("provider_next_at", this.host.now() + providerRetryDelay(n));
+      this.host.log?.("provider_delete_failed", { attempt: n, status: (e as { status?: number | null }).status ?? null });
+      return false;
+    }
   }
 
   // ------------------------------------------------------------------ WebSocket
 
   open(ws: RelaySocket, auth: VerifiedToken): void {
-    if (!this.bind(auth.sub)) {
-      ws.close(CLOSE.PROTOCOL_ERROR, "wrong account");
+    const bound = this.bind(auth);
+    if (bound !== "ok") {
+      // A device that missed the deletion hears it now, and forgets the account.
+      if (bound === "deleted") ws.close(CLOSE.DEVICE_REMOVED, "account deleted");
+      else ws.close(CLOSE.PROTOCOL_ERROR, "wrong account");
       return;
     }
     const now = this.host.now();
@@ -499,7 +591,9 @@ export class AccountRelay {
     if (s.account !== this.account()) return fail("invalid", "the statement is for another account");
     const d = this.device(s.device_id);
     if (!d) return fail("device_unknown", "the linked device is not registered");
-    if (d.kind !== s.platform || d.static_public_key !== s.device_static_public_key || d.signing_public_key !== s.device_signing_public_key) {
+    // A desktop that couldn't verify an iPhone links it as a browser; it can never raise a role (§18 row 102).
+    const role = d.kind === s.platform || (d.kind === "ios" && s.platform === "web");
+    if (!role || d.static_public_key !== s.device_static_public_key || d.signing_public_key !== s.device_signing_public_key) {
       return fail("invalid", "the statement doesn't match the device's registration");
     }
     this.sql.tx(() => {
@@ -646,7 +740,35 @@ export class AccountRelay {
       if (now > st.tokenExp + 60_000) ws.close(CLOSE.TOKEN_EXPIRED, "token expired");
       else if (st.phase === "challenge" && now > st.connectedAt + this.limits.challengeTimeoutMs) ws.close(CLOSE.PROTOCOL_ERROR, "no auth");
     }
+    await this.tombstone(now);
     this.schedule();
+  }
+
+  /** Retries the provider, and drops the tombstone once it's done and old enough. */
+  private async tombstone(now: number): Promise<void> {
+    const deletedAt = this.meta("deleted_at");
+    if (deletedAt === null) return;
+    const pending = this.meta("provider_pending");
+    if (pending !== null) {
+      if (!this.host.providerAdmin) {
+        // The relay no longer deletes users at the provider; the user does it by hand.
+        this.sql.run(`DELETE FROM meta WHERE k IN ('provider_pending', 'provider_attempts', 'provider_next_at')`);
+        this.host.log?.("account_deleted", { provider: "manual" });
+      } else {
+        if (Number(this.meta("provider_next_at") ?? 0) > now) return;
+        if (!(await this.deleteAtProvider(pending))) return;
+        this.host.log?.("account_deleted", { provider: "deleted" });
+      }
+    }
+    if (now < Number(deletedAt) + TOMBSTONE_MS) return;
+    const devices = one(this.sql.all<{ n: number }>(`SELECT count(*) AS n FROM devices`))?.n ?? 0;
+    if (devices === 0) {
+      this.host.wipe();
+      migrate(this.sql);
+    } else {
+      // Signed in again since (the provider's user wasn't deleted): only the tombstone goes.
+      this.sql.run(`DELETE FROM meta WHERE k = 'deleted_at'`);
+    }
   }
 
   /** Sets the alarm to the next thing that expires. */
@@ -659,6 +781,12 @@ export class AccountRelay {
       ),
     )?.t;
     let at = next ?? null;
+    const deletedAt = this.meta("deleted_at");
+    if (deletedAt !== null) {
+      const pending = this.meta("provider_pending") !== null && this.host.providerAdmin;
+      const t = pending ? Number(this.meta("provider_next_at") ?? 0) : Number(deletedAt) + TOMBSTONE_MS;
+      at = at === null ? t : Math.min(at, t);
+    }
     for (const ws of this.host.sockets()) {
       const st = ws.state();
       if (!st) continue;

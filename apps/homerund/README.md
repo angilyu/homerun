@@ -337,6 +337,13 @@ Off until you sign in (§10.10). Everything here is in `src/remote/`; the wire p
   ask to link: the shell shows its name and six-digit code in a native prompt and answers with
   `devices.link.decide`. Paired devices are in `remote_devices` (migration 7), public keys
   only; `devices.unpair` removes one here and at the relay.
+- **iPhones are attested** (§18 rows 99–102): a device is `ios` only when its pairing hello
+  or link info carries an App Attest attestation of its keys that verifies against Apple's
+  root (development attestations too in a development build), and the relay registered it as
+  `ios` too; otherwise it is `web` ("Unverified iPhone"), including when the two disagree
+  (`agreeWithRelay`). Migration 8 keeps
+  `claimed_platform`, the credential and counter, and gives iPhones paired before it a
+  browser's role until they pair again.
 - **Live sessions** (§9.3): a paired device opens Noise KK against the pinned keys and then
   speaks this same JSON-RPC, as role `ios` or `web` (from its pinned platform, never from
   `hello`). Those roles call only what their allowlists name (§5.2), never the local-UI methods
@@ -347,6 +354,9 @@ Off until you sign in (§10.10). Everything here is in `src/remote/`; the wire p
   answers a destructive approval or "Did this happen?". Each message's id stays in
   `sealed_seen` until it would have expired. Every local notification but the daily digest is
   also pushed, sealed, to each paired iPhone.
+- **Deleting the account** (§10.9): `account.delete` deletes it at the relay, which deletes
+  the user at the identity provider, and answers whether that happened, is still being retried,
+  or must be done by hand (§18 row 103).
 
 Configuration: the relay URL, the OIDC issuer and the client id. A release build has them only
 from build defines (`HOMERUND_RELAY_URL`, `HOMERUND_OIDC_ISSUER`, `HOMERUND_OIDC_CLIENT_ID`; the

@@ -4,8 +4,8 @@ import type { DeviceKind, LinkStatement, StoredDeviceKeys } from "@homerun/proto
 /**
  * What a remote client keeps between runs: its device identity, the desktops it is paired with
  * (their pinned keys and the statements that link them), and the ids of sealed messages it has
- * already opened. Behind an interface: memory here, the Keychain and a database on iOS, IndexedDB
- * with non-extractable keys on the web (milestone 10).
+ * already opened. Behind an interface: memory here, an encrypted database on iOS, IndexedDB on
+ * the web. With a `DeviceKeyStore` the secret keys live there instead and `keys` is absent.
  */
 
 export interface PairedDesktop {
@@ -17,7 +17,7 @@ export interface PairedDesktop {
 }
 
 export interface RemoteState {
-  device: { device_id: DeviceId; kind: DeviceKind; name: string; keys: StoredDeviceKeys };
+  device: { device_id: DeviceId; kind: DeviceKind; name: string; keys?: StoredDeviceKeys };
   desktops: Record<string, PairedDesktop>;
   /** Sealed message ids already opened, until when to remember them. */
   seen: Record<string, number>;

@@ -24,6 +24,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@homerun/app-state": "workspace:*",
     "@homerun/relay": "workspace:*",
     "@homerun/testkit": "workspace:*",
     "@types/bun": "1.3.14",

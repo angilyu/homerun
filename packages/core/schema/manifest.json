@@ -658,7 +658,7 @@
       ],
       "params": "AccountDeleteParams",
       "result": "AccountDeleteResult",
-      "description": "Delete the account's devices, links and queued messages at the relay (§10.7), unpair everything here, and sign out."
+      "description": "Delete the account's devices, links and queued messages at the relay (§10.7) and its user at the identity provider (§10.9), unpair everything here, and sign out."
     },
     "devices.list": {
       "direction": "to_runtime",

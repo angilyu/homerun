@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { RPC_ERROR, type PairedDevice } from "@homerun/core";
 import { decodePairingUrl } from "@homerun/protocol";
 import { LinkDeclinedError, LiveClosedError, RpcCallError } from "@homerun/remote";
+import { fakeDeviceToken } from "@homerun/testkit";
 import { RpcCallError as LocalCallError } from "../../src/rpc/client";
 import { socketRuntime, until } from "../helpers";
-import { connected, desktop, envFor, pairByQr as pairWith, helloLive, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
+import { appAttest, connected, desktop, envFor, pairByQr as pairWith, helloLive, linkByCode, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
+import { otherAppAttest } from "./harness";
 
 let w: World;
 beforeAll(async () => {
@@ -172,12 +174,77 @@ describe("QR pairing (§9.6)", () => {
   });
 });
 
+describe("App Attest (§9.8): an iPhone Apple didn't vouch for is a browser", () => {
+  test("paired by QR, it is listed as web; it says hello as web, and has no push", async () => {
+    newUser(w);
+    const d = await signedInDesktop();
+    const p = await aPhone({ attest: false });
+    const { desk } = await pairByQr(d, p);
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform])).toEqual([["web", "ios"]]);
+    expect(p.client.role(desk.device_id)).toBe("web");
+    const live = await p.client.openLive(desk.device_id);
+    await expect(helloLive(live, p.client.deviceId, "ios")).rejects.toBeInstanceOf(RpcCallError);
+    const web = await p.client.openLive(desk.device_id);
+    expect(((await helloLive(web, p.client.deviceId, "web")) as { role: string }).role).toBe("web");
+    web.close();
+    await expect(p.client.registerPushToken(fakeDeviceToken(), "sandbox")).rejects.toThrow();
+  });
+
+  test("linking by code: the prompt says what it claimed, and it links as web", async () => {
+    newUser(w);
+    const d = await signedInDesktop();
+    const p = await aPhone({ attest: false });
+    const linked = linkByCode(d.sh, p.client);
+    await until(() => d.sh.prompts.length === 1, 5000, "link prompt");
+    expect(d.sh.prompts[0]).toMatchObject({ platform: "web", claimed_platform: "ios" });
+    await linked;
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform, x.method])).toEqual([["web", "ios", "code"]]);
+  });
+
+  // The relay checked the phone's attestation against one root and this desktop against another
+  // (as a production desktop would a test root, or a phone's App Attest failing for one desktop):
+  // it pairs with a browser's role instead of being refused (§18 row 102).
+  const unverifiedHere = { remote: { appAttest: otherAppAttest.policy() } };
+
+  test("an iPhone the relay registered but this desktop can't verify pairs by QR as web", async () => {
+    newUser(w);
+    const d = await signedInDesktop(unverifiedHere);
+    const p = await aPhone();
+    const { desk } = await pairByQr(d, p);
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform])).toEqual([["web", "ios"]]);
+    expect(p.client.role(desk.device_id)).toBe("web");
+    const web = await p.client.openLive(desk.device_id);
+    expect(((await helloLive(web, p.client.deviceId, "web")) as { role: string }).role).toBe("web");
+    web.close();
+  });
+
+  test("and links by code as web", async () => {
+    newUser(w);
+    const d = await signedInDesktop(unverifiedHere);
+    const p = await aPhone();
+    const linked = linkByCode(d.sh, p.client);
+    await until(() => d.sh.prompts.length === 1, 5000, "link prompt");
+    expect(d.sh.prompts[0]).toMatchObject({ platform: "web", claimed_platform: "ios" });
+    await linked;
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform, x.method])).toEqual([["web", "ios", "code"]]);
+  });
+
+  test("an attested iPhone keeps its role", async () => {
+    newUser(w);
+    const d = await signedInDesktop();
+    const p = await aPhone();
+    const { desk } = await pairByQr(d, p);
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform])).toEqual([["ios", "ios"]]);
+    expect(p.client.role(desk.device_id)).toBe("ios");
+  });
+});
+
 describe("keys the keychain hasn't stored yet (§5.2)", () => {
   test("aren't used for pairing or linking until the shell confirms them", async () => {
     newUser(w);
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
-    const srt = await socketRuntime({ env: envFor(w), remote: { linkBackoff: { initialMs: 50, maxMs: 500 } } });
+    const srt = await socketRuntime({ env: envFor(w), remote: { linkBackoff: { initialMs: 50, maxMs: 500 }, appAttest: appAttest.policy() } });
     cleanup.push(() => srt.close());
     const sh = await shellFor(srt, w.issuer, { hold });
     await sh.c.call("account.sign_in", {});
@@ -211,7 +278,7 @@ describe("linking by matching codes (§10.5)", () => {
     expect(prompt).toMatchObject({ name: "Firefox", platform: "web" });
     await until(() => shown !== "");
     expect(prompt.code).toBe(shown);
-    expect((await d.sh.status()).link_request).toEqual({ name: "Firefox", platform: "web" });
+    expect((await d.sh.status()).link_request).toEqual({ name: "Firefox", platform: "web", claimed_platform: "web" });
     await d.sh.c.call("devices.link.decide", { request_id: prompt.request_id, approve: true });
     const desk = await linked;
     expect(desk.device_id).toBe(deskId);
@@ -348,12 +415,14 @@ describe("the account (§10.4, §10.9)", () => {
   });
 
   test("deleting the account wipes the relay's data, unpairs everything and signs out", async () => {
-    newUser(w);
+    const sub = newUser(w);
     const d = await signedInDesktop();
     const p = await aPhone();
     await pairByQr(d, p);
     const r = await d.sh.c.call("account.delete", {});
     expect(r.status).toMatchObject({ state: "signed_out", email: null, relay: { state: "off" } });
+    expect(r.provider).toBe("deleted");
+    expect(w.issuer.deletedUsers.has(sub)).toBe(true);
     expect(await list(d)).toEqual([]);
     expect(d.sh.keychain.has("refresh_token")).toBe(false);
     expect(d.sh.keychain.has("device_static_key")).toBe(false);

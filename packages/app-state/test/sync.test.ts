@@ -119,6 +119,46 @@ describe("ThreadSync (§5.2)", () => {
     expect(sent.size).toBe(1);
   });
 
+  test("a remote client seals a message at the relay while its desktop is offline (§9.4)", async () => {
+    const { t, sent } = runtime();
+    const queued: any[] = [];
+    (t as any).queueInstruction = async (i: any) => {
+      queued.push(i);
+      return { expires_at: env.t + 12 * 3600_000 };
+    };
+    t.setStatus({ state: "offline", reason: "desktop", last_seen_at: env.t - 60_000 });
+    const c = new AppClient(t, { env, role: "web" });
+    c.start();
+    const { sync } = c.retainThread(THREAD);
+    await sync.send("hello");
+    expect(queued).toEqual([{ thread_id: THREAD, client_msg_id: expect.any(String), text: "hello" }]);
+    const item = sync.store.get().outbox[0]!;
+    expect(item).toMatchObject({ state: "relayed", expires_at: env.t + 12 * 3600_000 });
+    expect(threadView(sync.store.get()).items.at(-1)).toMatchObject({ kind: "user", delivery: "relayed", expires_at: item.expires_at });
+    // Back online: the desktop applies the sealed copy itself, so this client doesn't send it again.
+    t.ready();
+    await flush();
+    await flush();
+    expect(t.called("messages.send")).toHaveLength(0);
+    expect(sent.size).toBe(0);
+  });
+
+  test("if the relay refuses too, the message stays queued and goes out on reconnect", async () => {
+    const { t, sent } = runtime();
+    (t as any).queueInstruction = async () => {
+      throw new Error("relay unreachable");
+    };
+    const c = new AppClient(t, { env, role: "ios" });
+    c.start();
+    const { sync } = c.retainThread(THREAD);
+    await sync.send("hello");
+    expect(sync.store.get().outbox[0]).toMatchObject({ state: "queued" });
+    t.ready();
+    await flush();
+    await flush();
+    expect(sent.size).toBe(1);
+  });
+
   test("a rejected send is failed with its reason and can be resent", async () => {
     const { t } = runtime();
     t.handlers["messages.send"] = () => {

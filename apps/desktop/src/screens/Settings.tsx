@@ -2,13 +2,24 @@ import { useCallback, useEffect, useState } from "react";
 import { errorMessage } from "@homerun/app-state";
 import type { HealthSettings } from "@homerun/core";
 import type { CliToolStatus, LoginItemStatus, NotificationPermission, UpdateState } from "../platform/types";
-import { useAction, useApp, useLoad, useStore } from "../hooks";
+import { useAction, useApp, useLoad, useStore, useShell } from "../hooks";
 import { ConfirmButton, Empty, ErrorText, Page, Time } from "../ui/bits";
 import { runtimeText } from "./Layout";
 import { KeyForm } from "./Onboarding";
 import { RemoteSection } from "./Remote";
 
 export function Settings() {
+  const app = useApp();
+  // The web client has no shell: its own sign-in and desktops, and the digest to read (§9.9).
+  if (!app.shell) {
+    const Own = app.settings;
+    return (
+      <Page title="Settings">
+        {Own && <Own />}
+        <DigestSection />
+      </Page>
+    );
+  }
   return (
     <Page title="Settings">
       <KeySection />
@@ -25,10 +36,11 @@ export function Settings() {
 /** The API key lives in the keychain; the shell hands it to the runtime (§7.2, §18 row 7). */
 function KeySection() {
   const app = useApp();
+  const shell = useShell();
   const key = useStore(app.key);
   const [replacing, setReplacing] = useState(false);
   const clear = useAction(async () => {
-    await app.shell.clearKey();
+    await shell.clearKey();
     await app.refreshKey();
   });
   return (
@@ -71,10 +83,11 @@ function useOnFocus<T>(read: () => Promise<T>): [T | null, (v: T) => void] {
 /** Menu-bar residency, open at login and notifications (§5.1, §8.2). */
 function BackgroundSection() {
   const app = useApp();
-  const [login, setLogin] = useOnFocus<LoginItemStatus>(useCallback(() => app.shell.loginItem(), [app]));
-  const [notify, setNotify] = useOnFocus<NotificationPermission>(useCallback(() => app.shell.notifications(), [app]));
-  const setAtLogin = useAction(async (on: boolean) => setLogin(await app.shell.setLoginItem(on)));
-  const ask = useAction(async () => setNotify(await app.shell.requestNotifications()));
+  const shell = useShell();
+  const [login, setLogin] = useOnFocus<LoginItemStatus>(useCallback(() => shell.loginItem(), [app]));
+  const [notify, setNotify] = useOnFocus<NotificationPermission>(useCallback(() => shell.notifications(), [app]));
+  const setAtLogin = useAction(async (on: boolean) => setLogin(await shell.setLoginItem(on)));
+  const ask = useAction(async () => setNotify(await shell.requestNotifications()));
   return (
     <section aria-label="Running in the background">
       <h2>Running in the background</h2>
@@ -91,7 +104,7 @@ function BackgroundSection() {
       {login === "needs_approval" && (
         <p className="notice warn">
           Turned off in System Settings, so Homerun won't open at login.{" "}
-          <button type="button" className="link" onClick={() => void app.shell.openLoginItems()}>
+          <button type="button" className="link" onClick={() => void shell.openLoginItems()}>
             Open Login Items
           </button>
         </p>
@@ -108,7 +121,7 @@ function BackgroundSection() {
       {(notify === "allowed" || notify === "denied") && (
         <p>
           {notify === "allowed" ? "On." : "Off in System Settings."}{" "}
-          <button type="button" className="link" onClick={() => void app.shell.openNotificationSettings()}>
+          <button type="button" className="link" onClick={() => void shell.openNotificationSettings()}>
             Notification settings
           </button>
         </p>
@@ -143,8 +156,9 @@ export function updateText(u: UpdateState): string {
 /** The signed updater (§11): downloads in the background, installs when Homerun quits. */
 function UpdatesSection() {
   const app = useApp();
+  const shell = useShell();
   const u = useStore(app.update);
-  const prefs = useLoad(() => app.shell.prefs(), []);
+  const prefs = useLoad(() => shell.prefs(), []);
   const [auto, setAuto] = useState<boolean | null>(null);
   useEffect(() => {
     if (prefs.data) setAuto(prefs.data.auto_download_updates);
@@ -163,22 +177,22 @@ function UpdatesSection() {
               checked={auto ?? true}
               onChange={(e) => {
                 setAuto(e.target.checked);
-                void app.shell.setAutoUpdate(e.target.checked);
+                void shell.setAutoUpdate(e.target.checked);
               }}
             />
             Check for and download updates automatically
           </label>
           <div className="row">
             {u.state === "ready" ? (
-              <button type="button" className="primary" onClick={() => void app.shell.restartToUpdate()}>
+              <button type="button" className="primary" onClick={() => void shell.restartToUpdate()}>
                 Restart to update
               </button>
             ) : u.state === "manual" ? (
-              <button type="button" onClick={() => void app.shell.openExternal(DOWNLOAD_PAGE)}>
+              <button type="button" onClick={() => void shell.openExternal(DOWNLOAD_PAGE)}>
                 Download
               </button>
             ) : (
-              <button type="button" disabled={u.state === "checking" || u.state === "downloading"} onClick={() => void app.shell.checkForUpdates()}>
+              <button type="button" disabled={u.state === "checking" || u.state === "downloading"} onClick={() => void shell.checkForUpdates()}>
                 Check now
               </button>
             )}
@@ -202,6 +216,7 @@ function DigestSection() {
     if (s.data) setDraft(s.data);
   }, [s.data]);
   if (!draft) return <ErrorText error={s.error} />;
+  const canSet = app.client.may("health.settings.set");
   const save = async (next: HealthSettings) => {
     setDraft(next);
     setError(null);
@@ -218,14 +233,15 @@ function DigestSection() {
     <section aria-label="Daily summary">
       <h2>Daily summary</h2>
       <label className="check">
-        <input type="checkbox" checked={draft.enabled} onChange={(e) => void save({ ...draft, enabled: e.target.checked })} />
+        <input type="checkbox" checked={draft.enabled} disabled={!canSet} onChange={(e) => void save({ ...draft, enabled: e.target.checked })} />
         Send a daily summary of how monitors did
       </label>
       <label className="field inline">
         <span className="field-name">At</span>
-        <input type="time" value={draft.time} disabled={!draft.enabled} onChange={(e) => e.target.value && void save({ ...draft, time: e.target.value })} />
+        <input type="time" value={draft.time} disabled={!canSet || !draft.enabled} onChange={(e) => e.target.value && void save({ ...draft, time: e.target.value })} />
         <span className="muted">{draft.timezone}</span>
       </label>
+      {!canSet && <p className="muted small">Change this on your Mac.</p>}
       {saved && <span className="muted small">Saved.</span>}
       <ErrorText error={error} />
     </section>
@@ -273,9 +289,10 @@ const PATH_HINT = 'export PATH="$HOME/.local/bin:$PATH"';
 /** A symlink in ~/.local/bin to the CLI inside this app; no admin rights (§5.2). */
 function CliTool() {
   const app = useApp();
-  const [s, setS] = useOnFocus<CliToolStatus>(useCallback(() => app.shell.cliTool(), [app]));
-  const install = useAction(async () => setS(await app.shell.installCliTool()));
-  const remove = useAction(async () => setS(await app.shell.removeCliTool()));
+  const shell = useShell();
+  const [s, setS] = useOnFocus<CliToolStatus>(useCallback(() => shell.cliTool(), [app]));
+  const install = useAction(async () => setS(await shell.installCliTool()));
+  const remove = useAction(async () => setS(await shell.removeCliTool()));
   const busy = install.busy || remove.busy;
   const installButton = (label: string) => (
     <button type="button" disabled={busy} onClick={() => void install.run()}>
@@ -326,10 +343,11 @@ function CliTool() {
 
 function RuntimeSection() {
   const app = useApp();
+  const shell = useShell();
   const s = useStore(app.client.runtime);
-  const info = useLoad(() => app.shell.appInfo(), []);
-  const restart = useAction(() => app.shell.restartRuntime());
-  const logs = useAction(() => app.shell.revealLogs());
+  const info = useLoad(() => shell.appInfo(), []);
+  const restart = useAction(() => shell.restartRuntime());
+  const logs = useAction(() => shell.revealLogs());
   return (
     <section aria-label="Homerun">
       <h2>Homerun</h2>

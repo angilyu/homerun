@@ -2,6 +2,7 @@ import { closeSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { Device } from "@homerun/core";
+import { productionAppAttestPolicy } from "@homerun/protocol";
 import { ClaudeEngine } from "./agent/claude/engine";
 import { prepareShellHome } from "./agent/claude/env";
 import { McpLauncher } from "./agent/claude/mcp";
@@ -234,6 +235,8 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         return server.adopt(sink, peer);
       },
       hostname: device.hostname,
+      // A development build also trusts the App Attest development environment (Xcode builds).
+      appAttest: productionAppAttestPolicy(config.build === "development"),
       effects: {
         sendMessage: (p, origin) => manager.sendMessage(p, origin),
         createThread: (title, taskId) => manager.createThread(title, taskId),

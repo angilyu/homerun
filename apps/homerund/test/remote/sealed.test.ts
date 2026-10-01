@@ -78,10 +78,10 @@ const PUSH_TOKEN = "ab".repeat(32);
 /** Seals an answer the phone's UI would never offer, to check the desktop refuses it anyway. */
 async function forceAnswer(client: RemoteClient, desktopId: string, requestId: string, decision: "allow" | "deny") {
   const c = client as unknown as {
-    sealTo(to: string, body: unknown, ms: number): SealedEnvelope;
+    sealTo(to: string, body: unknown, ms: number): Promise<SealedEnvelope>;
     postSealed(env: SealedEnvelope): Promise<{ msg_id: string; status: string }>;
   };
-  return c.postSealed(c.sealTo(desktopId, { type: "answer", request_id: requestId, response: { type: "approval", decision }, via: "notification" }, 60 * 60 * 1000));
+  return c.postSealed(await c.sealTo(desktopId, { type: "answer", request_id: requestId, response: { type: "approval", decision }, via: "notification" }, 60 * 60 * 1000));
 }
 
 describe("instructions while the desktop is away (§9.4)", () => {

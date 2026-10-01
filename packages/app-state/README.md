@@ -1,16 +1,18 @@
 # `@homerun/app-state`
 
-The client state layer (docs/design.md §9.8). The desktop app renders it with React DOM today.
-The web and iOS clients (milestone 10) will render the same stores with React DOM and React
-Native. Nothing here imports React, the DOM, Tauri or Bun: `tsconfig.json` builds with
+The client state layer (docs/design.md §9.8). The desktop app and the web client render it with
+React DOM; the iOS app (milestone 10b) renders the same stores with React Native. Nothing here imports React, the DOM, Tauri or Bun: `tsconfig.json` builds with
 `types: []` and `lib: ES2023`, so a platform API can't sneak in.
 
 **The seams.** A client supplies two things:
 
 - `Transport` (`transport.ts`): `call(method, params)`, `listen(fn)` and `status()`. The desktop
-  implements it over Tauri commands and a Channel; the tests use a fake. The status says whether
-  the runtime is `ready` (with a connection number that changes on every reconnect), `starting`,
-  `restarting`, in a `crash_loop`, `blocked` or `stopping` (§5.1).
+  implements it over Tauri commands and a Channel; the web and iOS clients use `RelayTransport`
+  from `@homerun/remote`; the tests use a fake. The status says whether the runtime is `ready`
+  (with a connection number that changes on every reconnect), `starting`, `restarting`, in a
+  `crash_loop`, `blocked` or `stopping` (§5.1), or, for a remote client, `offline` because the
+  desktop or the relay is out of reach (§9.4). A remote transport also has `queueInstruction`,
+  which seals a message at the relay for an offline desktop.
 - `Env` (`env.ts`): the clock, timers and id generation. The tests drive them by hand.
 
 **The pieces.**
@@ -36,6 +38,9 @@ Native. Nothing here imports React, the DOM, Tauri or Bun: `tsconfig.json` build
   - It subscribes again after a gap or a reconnect.
   - Sending goes through the outbox. `messages.send` is idempotent on `client_msg_id`, so a
     message queued offline goes out once, with its original time.
+  - A remote client whose desktop is offline seals the message at the relay instead: the bubble
+    is `relayed` until the desktop applies it, with its expiry (§9.4). It is not sent again on
+    reconnect; the desktop's copy is idempotent on the same `client_msg_id`.
 - `threads/list.ts`: the thread list, patched by `threads.changed`. `groupThreads` sorts it into
   "Needs you", "Running" and "Recent".
 - `inbox.ts`: every pending request, with its thread.
@@ -43,10 +48,19 @@ Native. Nothing here imports React, the DOM, Tauri or Bun: `tsconfig.json` build
   - Approvals: the Always-allow editor and `checkGrant`, which uses core's `grantCovers` so an
     edited pattern must still cover the call.
   - Questions: single and multiple choice plus freeform.
-  - The resolution text, for example "Allowed once on iPhone".
+  - The resolution text, for example "Allowed once on iPhone". This client's own answers say
+    "on this Mac", "on this iPhone" or "on this browser" by its role (`THIS_DEVICE`); the
+    transport's `device_id` is this client's own device, which `answered_by` names.
+  - `cantAnswer(prompt, role)`: the web client's reduced authority (§9.9). It answers questions
+    and `read`-class approvals only, never with Always allow; the rest say "Approve on your phone
+    or Mac". The runtime enforces the same rule with core's `checkResponse`, which the drafts
+    call with the client's role (`AppClient.role`).
 - `tasks.ts`: tasks with their schedules, the spec editor helpers (`checkSpec` uses the core
   schema) and the schedule state text (§8.1).
 - `monitors.ts`: weekly coverage and its sentence (§8.4), and the digest's health lines (§8.3).
+- `offline.ts`: what a remote client says while its desktop is away: `offlineText` ("Your Mac is
+  offline — questions and approvals can be answered when it's back") and `relayedText` ("Will send
+  when your Mac is back — expires in 12 h").
 - `grants.ts`, `format.ts`: display text.
 - `markdown.ts`: model markdown as a neutral block and inline tree, never HTML. Raw HTML stays
   text. Only http(s) and mailto links keep a target, and images become links (§13).
@@ -61,6 +75,8 @@ Native. Nothing here imports React, the DOM, Tauri or Bun: `tsconfig.json` build
   - It keeps open threads alive while a view retains them, plus a linger.
   - On every new connection it reloads the list, the inbox and the tasks, and resubscribes open
     threads.
+  - `may(method)` says whether its role may call a method, from core's allowlists. The views
+    hide what the runtime would refuse; the web client doesn't edit tasks, schedules or grants.
 
 **Dependencies.** `@homerun/core`, and `marked` for its lexer only; its HTML renderer is never
 used.

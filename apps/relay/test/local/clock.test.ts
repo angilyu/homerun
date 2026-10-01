@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { newPairingCode, offerTag, RELAY_PATHS } from "@homerun/protocol";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
 import type { RelayLimits } from "../../src/config";
+import { WorkosAdmin } from "../../src/core/provider-admin";
 import { type LocalRelay, type LocalRelayOptions, startLocalRelay } from "../../src/local";
-import { instruction, sessionId, statement, TestDevice } from "../helpers";
+import { appAttest, instruction, sessionId, statement, TestDevice } from "../helpers";
 import { account, type Ctx, linkedPair } from "../scenarios";
 
 /** What needs a clock or small limits: expiry, token lifetimes, rate limits, queue bounds, restarts. */
@@ -34,7 +35,7 @@ afterAll(async () => {
 
 async function start(limits: Partial<RelayLimits> = {}, extra: Partial<LocalRelayOptions> = {}): Promise<Ctx> {
   clock = Date.now();
-  relay = await startLocalRelay({ issuer: issuer.url, clientId: issuer.clientId, now: () => clock, limits, ...extra });
+  relay = await startLocalRelay({ issuer: issuer.url, clientId: issuer.clientId, now: () => clock, limits, appAttest: appAttest.policy(), ...extra });
   return { t: { url: relay.url, wsUrl: relay.wsUrl, now: () => clock }, issuer, apns };
 }
 async function advance(ms: number) {
@@ -48,7 +49,7 @@ describe("expiry", () => {
     const p = await linkedPair(c);
     p.dc.close();
     await p.pc.next("presence", (f) => !f.online);
-    const env = p.phone.seal(p.desktop, instruction(), { now: clock, ttl: 12 * HOUR });
+    const env = await p.phone.seal(p.desktop, instruction(), { now: clock, ttl: 12 * HOUR });
     p.pc.send({ type: "sealed", envelope: env });
     await p.pc.next("receipt", (f) => f.status === "queued");
     // Keep the phone's connection alive across the jump.
@@ -106,8 +107,8 @@ describe("expiry", () => {
   test("expiry is checked against the relay's clock with the skew allowance", async () => {
     const c = await start();
     const p = await linkedPair(c);
-    const post = (ttl: number, now = clock) =>
-      p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: p.phone.seal(p.desktop, instruction(), { now, ttl }) }).then((r) => r.status);
+    const post = async (ttl: number, now = clock) =>
+      p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: await p.phone.seal(p.desktop, instruction(), { now, ttl }) }).then((r) => r.status);
     expect(await post(72 * HOUR)).toBe(202);
     expect(await post(72 * HOUR + SKEW + 1000)).toBe(400);
     expect(await post(HOUR, clock - HOUR - SKEW + 5000)).toBe(202);
@@ -121,8 +122,8 @@ describe("limits", () => {
     const p = await linkedPair(c);
     p.dc.close();
     await p.pc.next("presence", (f) => !f.online);
-    const send = (text = "x") =>
-      p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: p.phone.seal(p.desktop, instruction(text), { now: clock, ttl: HOUR }) });
+    const send = async (text = "x") =>
+      p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: await p.phone.seal(p.desktop, instruction(text), { now: clock, ttl: HOUR }) });
     for (let i = 0; i < 3; i++) expect((await send()).status).toBe(202);
     const full = await send();
     expect(full.status).toBe(429);
@@ -131,8 +132,8 @@ describe("limits", () => {
     const q = await linkedPair(c);
     q.dc.close();
     await q.pc.next("presence", (f) => !f.online);
-    const big = (n: number) =>
-      q.phone.req(c.t, q.tok, "POST", RELAY_PATHS.sealed, { envelope: q.phone.seal(q.desktop, instruction("y".repeat(n)), { now: clock, ttl: HOUR }) });
+    const big = async (n: number) =>
+      q.phone.req(c.t, q.tok, "POST", RELAY_PATHS.sealed, { envelope: await q.phone.seal(q.desktop, instruction("y".repeat(n)), { now: clock, ttl: HOUR }) });
     expect((await big(40_000)).status).toBe(202);
     expect((await big(40_000)).status).toBe(429);
     expect((await big(5_000)).status).toBe(202);
@@ -141,7 +142,7 @@ describe("limits", () => {
   test("sealed messages per minute, per account", async () => {
     const c = await start({ sealedPerMinute: 2 });
     const p = await linkedPair(c);
-    const send = () => p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: p.phone.seal(p.desktop, instruction(), { now: clock, ttl: HOUR }) });
+    const send = async () => p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.sealed, { envelope: await p.phone.seal(p.desktop, instruction(), { now: clock, ttl: HOUR }) });
     expect((await send()).status).toBe(202);
     expect((await send()).status).toBe(202);
     expect((await send()).status).toBe(429);
@@ -236,7 +237,7 @@ describe("restarts", () => {
       const p = await linkedPair(c);
       p.dc.close();
       await p.pc.next("presence", (f) => !f.online);
-      const env = p.phone.seal(p.desktop, instruction(), { now: clock, ttl: HOUR });
+      const env = await p.phone.seal(p.desktop, instruction(), { now: clock, ttl: HOUR });
       p.pc.send({ type: "sealed", envelope: env });
       await p.pc.next("receipt");
       await relay!.stop();
@@ -290,8 +291,52 @@ describe("statement", () => {
     await desktop.register(c.t, tok);
     await web.register(c.t, tok);
     const dc = await desktop.connect(c.t, tok);
-    const s = statement(desktop, web, sub, clock);
+    const s = await statement(desktop, web, sub, clock);
     dc.send({ type: "link_add", statement: { ...s, platform: "ios" } });
     expect((await dc.next("error")).code).toBe("invalid");
+  });
+});
+
+describe("account deletion at the provider (§10.9)", () => {
+  /** A token issued now by the relay's clock, `ahead` seconds on. */
+  const tokenAt = (sub: string, ahead = 1, ttlSec = 600) => issuer.mint({ sub, skewSec: Math.ceil((clock - Date.now()) / 1000) + ahead, ttlSec });
+
+  test("the provider failing: refused meanwhile, retried with backoff until the user is gone; the tombstone lasts a day", async () => {
+    const c = await start({}, { providerAdmin: new WorkosAdmin(issuer.adminKey, issuer.url) });
+    const p = await linkedPair(c);
+    const old = await issuer.mint({ sub: p.sub, ttlSec: 3 * 24 * 3600 });
+    await advance(2000);
+    issuer.failAdmin = [503, 500];
+    const r = await p.desktop.req(c.t, p.tok, "DELETE", RELAY_PATHS.account);
+    expect(await r.json()).toEqual({ provider: "pending" });
+    expect(issuer.deletedUsers.has(p.sub)).toBe(false);
+    // Until the provider's user is gone, even a fresh token is refused.
+    const web = new TestDevice("web");
+    expect((await web.register(c.t, await tokenAt(p.sub))).status).toBe(401);
+    await advance(60_000);
+    expect(issuer.deletedUsers.has(p.sub)).toBe(false);
+    expect(issuer.failAdmin).toEqual([]);
+    await advance(60_000);
+    expect(issuer.deletedUsers.has(p.sub)).toBe(false);
+    await advance(60_000);
+    expect(issuer.deletedUsers.has(p.sub)).toBe(true);
+    expect((await web.register(c.t, old)).status).toBe(401);
+    await advance(24 * HOUR);
+    // No token from before lives this long in practice; the relay has forgotten the account.
+    expect((await web.register(c.t, old)).status).toBe(200);
+  });
+
+  test("with no provider configured, the user deletes it by hand, and only tokens from before are refused", async () => {
+    const c = await start();
+    const p = await linkedPair(c);
+    await advance(2000);
+    const r = await p.desktop.req(c.t, p.tok, "DELETE", RELAY_PATHS.account);
+    expect(r.status).toBe(202);
+    expect(await r.json()).toEqual({ provider: "manual" });
+    expect((await p.desktop.register(c.t, p.tok)).status).toBe(401);
+    // Signing in again (the provider's user still exists) starts afresh.
+    expect((await p.desktop.register(c.t, await tokenAt(p.sub))).status).toBe(200);
+    await advance(24 * HOUR);
+    expect((await p.desktop.register(c.t, await tokenAt(p.sub, 1, 600))).status).toBe(200);
   });
 });

@@ -13,7 +13,10 @@ use serde_json::Value;
 pub struct LinkRequest {
     pub id: String,
     pub name: String,
+    /// The role the runtime gives it: `Ios` only when its App Attest attestation verified.
     pub platform: Platform,
+    /// What it said it was; an `Ios` claim with a `Web` role is an iPhone Apple didn't vouch for.
+    pub claimed: Platform,
     pub code: String,
     pub expires_at_ms: i64,
 }
@@ -29,12 +32,18 @@ impl LinkRequest {
     pub fn parse(p: &Value) -> Option<LinkRequest> {
         let s = |v: &Value| v.as_str().filter(|s| !s.is_empty()).map(str::to_string);
         let code = s(&p["code"]).filter(|c| c.len() == 6 && c.bytes().all(|b| b.is_ascii_digit()))?;
-        let platform = match p["platform"].as_str()? {
-            "ios" => Platform::Ios,
-            "web" => Platform::Web,
-            _ => return None,
+        let platform_of = |v: &Value| match v.as_str()? {
+            "ios" => Some(Platform::Ios),
+            "web" => Some(Platform::Web),
+            _ => None,
         };
-        Some(LinkRequest { id: s(&p["request_id"])?, name: s(&p["name"])?, platform, code, expires_at_ms: p["expires_at"].as_i64()? })
+        let platform = platform_of(&p["platform"])?;
+        let claimed = if p["claimed_platform"].is_null() { platform } else { platform_of(&p["claimed_platform"])? };
+        // The runtime never makes a browser an iPhone.
+        if platform == Platform::Ios && claimed != Platform::Ios {
+            return None;
+        }
+        Some(LinkRequest { id: s(&p["request_id"])?, name: s(&p["name"])?, platform, claimed, code, expires_at_ms: p["expires_at"].as_i64()? })
     }
 }
 
@@ -44,9 +53,10 @@ fn grouped(code: &str) -> String {
 }
 
 pub fn prompt(r: &LinkRequest) -> Prompt {
-    let what = match r.platform {
-        Platform::Ios => "An iPhone",
-        Platform::Web => "A web browser",
+    let what = match (r.platform, r.claimed) {
+        (Platform::Ios, _) => "An iPhone",
+        (Platform::Web, Platform::Ios) => "A device that says it is an iPhone, which Apple couldn\u{2019}t verify, so it would link like a web browser,",
+        (Platform::Web, Platform::Web) => "A web browser",
     };
     let reach = match r.platform {
         Platform::Ios => "see and steer your agents, send instructions and answer questions, including from notifications",
@@ -75,19 +85,30 @@ mod tests {
     use serde_json::json;
 
     fn req() -> LinkRequest {
-        LinkRequest { id: "l1".into(), name: "Wenjing\u{2019}s iPhone".into(), platform: Platform::Ios, code: "042917".into(), expires_at_ms: 300_000 }
+        LinkRequest {
+            id: "l1".into(),
+            name: "Wenjing\u{2019}s iPhone".into(),
+            platform: Platform::Ios,
+            claimed: Platform::Ios,
+            code: "042917".into(),
+            expires_at_ms: 300_000,
+        }
     }
 
     #[test]
     fn parses_the_notification() {
-        let p = json!({"request_id": "l1", "name": "Wenjing\u{2019}s iPhone", "platform": "ios", "code": "042917", "requested_at": 0, "expires_at": 300_000});
+        let p = json!({"request_id": "l1", "name": "Wenjing\u{2019}s iPhone", "platform": "ios", "claimed_platform": "ios", "code": "042917", "requested_at": 0, "expires_at": 300_000});
         assert_eq!(LinkRequest::parse(&p), Some(req()));
+        let unverified = json!({"request_id": "l1", "name": "x", "platform": "web", "claimed_platform": "ios", "code": "042917", "expires_at": 1});
+        assert_eq!(LinkRequest::parse(&unverified).map(|r| (r.platform, r.claimed)), Some((Platform::Web, Platform::Ios)));
         for bad in [
             json!({}),
             json!({"request_id": "l1", "name": "x", "platform": "android", "code": "042917", "expires_at": 1}),
             json!({"request_id": "l1", "name": "x", "platform": "ios", "code": "04291", "expires_at": 1}),
             json!({"request_id": "l1", "name": "x", "platform": "ios", "code": "04291a", "expires_at": 1}),
             json!({"request_id": "l1", "name": "", "platform": "web", "code": "042917", "expires_at": 1}),
+            json!({"request_id": "l1", "name": "x", "platform": "ios", "claimed_platform": "web", "code": "042917", "expires_at": 1}),
+            json!({"request_id": "l1", "name": "x", "platform": "web", "claimed_platform": "android", "code": "042917", "expires_at": 1}),
         ] {
             assert_eq!(LinkRequest::parse(&bad), None, "{bad}");
         }
@@ -101,9 +122,12 @@ mod tests {
         assert!(p.message.starts_with("An iPhone signed in to your account is asking to link. It shows the code 042 917."), "{}", p.message);
         assert!(p.message.contains("including from notifications"));
         assert_eq!((p.deny.as_str(), p.allow.as_str(), p.deadline_ms), ("Don\u{2019}t Link", "Link", 300_000));
-        let web = prompt(&LinkRequest { platform: Platform::Web, ..req() });
+        let web = prompt(&LinkRequest { platform: Platform::Web, claimed: Platform::Web, ..req() });
         assert!(web.message.starts_with("A web browser"));
         assert!(!web.message.contains("notifications"));
+        let unverified = prompt(&LinkRequest { platform: Platform::Web, ..req() });
+        assert!(unverified.message.starts_with("A device that says it is an iPhone, which Apple couldn\u{2019}t verify"), "{}", unverified.message);
+        assert!(!unverified.message.contains("notifications"));
     }
 
     #[test]

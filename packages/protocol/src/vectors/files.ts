@@ -7,6 +7,7 @@ import statement from "../../vectors/link-statement.json";
 import apns from "../../vectors/apns-payload.json";
 import wire from "../../vectors/relay-wire.json";
 import encoding from "../../vectors/encoding.json";
+import appAttest from "../../vectors/app-attest.json";
 
 /** Every vector file, bundled, for environments without a file system (workerd). */
 export const VECTOR_FILES: Record<string, unknown> = {
@@ -19,4 +20,5 @@ export const VECTOR_FILES: Record<string, unknown> = {
   "apns-payload.json": apns,
   "relay-wire.json": wire,
   "encoding.json": encoding,
+  "app-attest.json": appAttest,
 };

@@ -1,9 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
-import { RELAY_PATHS, WS_SUBPROTOCOL } from "@homerun/protocol";
+import { type AppAttestPolicy, fromB64url, productionAppAttestPolicy, RELAY_PATHS, WS_SUBPROTOCOL } from "@homerun/protocol";
 import { ApnsClient, type PushSender } from "./apns";
 import { AuthError, bearerToken, TokenVerifier } from "./auth";
 import { DEFAULT_LIMITS } from "./config";
 import { AccountRelay, errorResponse, type RelaySocket, type SocketState } from "./core/account";
+import { checkOrigin, parseWebOrigins, preflight, withCors } from "./core/cors";
+import { providerAdminFrom, type ProviderAdminConfig } from "./core/provider-admin";
 import { dropAll, type Sql, type SqlValue } from "./core/sql";
 
 /**
@@ -13,11 +15,13 @@ import { dropAll, type Sql, type SqlValue } from "./core/sql";
  * nothing. Configuration is in wrangler.jsonc (vars) and `wrangler secret put` (the APNs key).
  */
 
-export interface Env {
+export interface Env extends ProviderAdminConfig {
   ACCOUNTS: DurableObjectNamespace<AccountDurableObject>;
   OIDC_ISSUER: string;
   OIDC_AUDIENCE?: string;
   OIDC_CLIENT_ID?: string;
+  /** The web client's origins, comma-separated and exact (§9.9). Other pages can't call the relay. */
+  WEB_ORIGINS?: string;
   /** Secrets: the contents of AuthKey_<id>.p8, its key id and the team id. */
   APNS_KEY_P8?: string;
   APNS_KEY_ID?: string;
@@ -25,10 +29,32 @@ export interface Env {
   APNS_TOPIC?: string;
   /** Tests only: send pushes to a mock instead of Apple. */
   APNS_ENDPOINT?: string;
+  /** "1": accept development-signed iPhone builds' App Attest (`appattestdevelop`). */
+  APP_ATTEST_ALLOW_DEVELOP?: string;
+  /**
+   * Tests only: a root (DER, base64url) trusted instead of Apple's for App Attest. It only
+   * decides pushes and lock-screen answers here; desktops verify attestations themselves (§13).
+   */
+  APP_ATTEST_TEST_ROOT?: string;
+  // PROVIDER_ADMIN ("workos" or "none"), the secret WORKOS_API_KEY and, for tests, WORKOS_API_BASE:
+  // who deletes the user at the identity provider when the account is deleted (§10.9).
+}
+
+let cachedOrigins: { raw: string; list: string[] } | null = null;
+function webOrigins(env: Env): string[] {
+  const raw = env.WEB_ORIGINS ?? "";
+  if (cachedOrigins?.raw !== raw) cachedOrigins = { raw, list: parseWebOrigins(raw) };
+  return cachedOrigins.list;
+}
+
+function appAttest(env: Env): AppAttestPolicy {
+  const policy = productionAppAttestPolicy(env.APP_ATTEST_ALLOW_DEVELOP === "1");
+  return env.APP_ATTEST_TEST_ROOT ? { ...policy, roots: [fromB64url(env.APP_ATTEST_TEST_ROOT)] } : policy;
 }
 
 const SUB_HEADER = "x-homerun-sub";
 const EXP_HEADER = "x-homerun-exp";
+const IAT_HEADER = "x-homerun-iat";
 
 let cached: { key: string; verifier: TokenVerifier } | null = null;
 function verifier(env: Env): TokenVerifier {
@@ -49,21 +75,32 @@ function verifier(env: Env): TokenVerifier {
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
-    if (url.pathname === RELAY_PATHS.health) return Response.json({ ok: true });
+    let origins: string[];
+    try {
+      origins = webOrigins(env);
+      providerAdminFrom(env);
+    } catch {
+      return errorResponse("internal", "the relay is not configured");
+    }
+    const origin = checkOrigin(req, origins);
+    if (!origin.ok) return errorResponse("forbidden", "this origin may not call the relay");
+    if (req.method === "OPTIONS") return origin.origin ? preflight(origin.origin) : errorResponse("not_found", "no such endpoint");
+    if (url.pathname === RELAY_PATHS.health) return withCors(Response.json({ ok: true }), origin.origin);
     if (!env.OIDC_ISSUER) return errorResponse("internal", "the relay is not configured");
     const token = bearerToken(req);
-    if (!token) return errorResponse("unauthenticated", "no access token");
+    if (!token) return withCors(errorResponse("unauthenticated", "no access token"), origin.origin);
     let auth;
     try {
       auth = await verifier(env).verify(token);
     } catch (e) {
-      return e instanceof AuthError ? errorResponse(e.code, e.message) : errorResponse("internal", "token check failed");
+      return withCors(e instanceof AuthError ? errorResponse(e.code, e.message) : errorResponse("internal", "token check failed"), origin.origin);
     }
     const headers = new Headers(req.headers);
     headers.set(SUB_HEADER, auth.sub);
     headers.set(EXP_HEADER, String(auth.exp));
+    headers.set(IAT_HEADER, String(auth.iat));
     const stub = env.ACCOUNTS.get(env.ACCOUNTS.idFromName(auth.sub));
-    return stub.fetch(new Request(req, { headers }));
+    return withCors(await stub.fetch(new Request(req, { headers })), origin.origin);
   },
 } satisfies ExportedHandler<Env>;
 
@@ -82,6 +119,8 @@ export class AccountDurableObject extends DurableObject<Env> {
       verifyToken: (t) => verifier(env).verify(t),
       push: apns(env),
       limits: DEFAULT_LIMITS,
+      appAttest: appAttest(env),
+      providerAdmin: providerAdminFrom(env),
       wipe: () => dropAll(sql),
       log: (event, fields) => console.log(JSON.stringify({ event, ...fields })),
     });
@@ -91,8 +130,9 @@ export class AccountDurableObject extends DurableObject<Env> {
     // Only the Worker reaches this object, and it always sets these.
     const sub = req.headers.get(SUB_HEADER);
     const exp = Number(req.headers.get(EXP_HEADER));
-    if (!sub || !Number.isFinite(exp)) return errorResponse("unauthenticated", "no account");
-    const auth = { sub, exp };
+    const iat = Number(req.headers.get(IAT_HEADER));
+    if (!sub || !Number.isFinite(exp) || !Number.isFinite(iat)) return errorResponse("unauthenticated", "no account");
+    const auth = { sub, exp, iat };
     const url = new URL(req.url);
     if (url.pathname === RELAY_PATHS.connect) {
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return errorResponse("invalid", "expected a WebSocket upgrade");

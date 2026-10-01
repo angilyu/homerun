@@ -22,7 +22,7 @@ export interface CacophonyVector {
 export type VectorResult = { ok: true } | { ok: false; error: string };
 
 /** Replays a cacophony transcript with both sides and compares every byte. */
-export function verifyCacophony(v: CacophonyVector): VectorResult {
+export async function verifyCacophony(v: CacophonyVector): Promise<VectorResult> {
   const pattern = (Object.keys(PATTERNS) as PatternName[]).find((p) => protocolName(p) === v.protocol_name);
   if (!pattern) return { ok: false, error: `unsupported protocol ${v.protocol_name}` };
   const key = (hex?: string) => (hex ? x25519Key(fromHex(hex)) : undefined);
@@ -56,8 +56,8 @@ export function verifyCacophony(v: CacophonyVector): VectorResult {
       let pt: Uint8Array;
       if (!init.finished) {
         const [w, r] = fromInit ? [init, resp] : [resp, init];
-        ct = w.writeMessage(payload);
-        pt = r.readMessage(ct);
+        ct = await w.writeMessage(payload);
+        pt = await r.readMessage(ct);
         if (init.finished && resp.finished) {
           const a = init.split();
           const b = resp.split();

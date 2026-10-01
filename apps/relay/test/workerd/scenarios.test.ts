@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
+import { appAttestRoot, WEB_ORIGIN } from "../helpers";
 import { type Ctx, sharedScenarios } from "../scenarios";
 import { startWorkerd } from "./host";
 
@@ -20,6 +21,11 @@ beforeAll(async () => {
     APNS_TEAM_ID: apns.teamId,
     APNS_TOPIC: apns.topic,
     APNS_ENDPOINT: apns.url,
+    APP_ATTEST_TEST_ROOT: appAttestRoot,
+    WEB_ORIGINS: `https://other.homerun.test, ${WEB_ORIGIN}`,
+    PROVIDER_ADMIN: "workos",
+    WORKOS_API_KEY: issuer.adminKey,
+    WORKOS_API_BASE: issuer.url,
   });
 }, 60_000);
 afterAll(async () => {
@@ -34,4 +40,4 @@ describe("workerd", () => {
   });
 });
 
-sharedScenarios((): Ctx => ({ t: { url: host.url, wsUrl: `${host.url.replace(/^http/, "ws")}/v1/connect`, now: Date.now }, issuer, apns }));
+sharedScenarios((): Ctx => ({ t: { url: host.url, wsUrl: `${host.url.replace(/^http/, "ws")}/v1/connect`, now: Date.now }, issuer, apns, webOrigin: WEB_ORIGIN }));

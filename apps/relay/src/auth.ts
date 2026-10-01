@@ -27,6 +27,8 @@ export interface VerifiedToken {
   sub: string;
   /** Milliseconds since the epoch. */
   exp: number;
+  /** When it was issued, in milliseconds since the epoch; 0 if it doesn't say. */
+  iat: number;
 }
 
 export class AuthError extends Error {
@@ -72,7 +74,7 @@ export class TokenVerifier {
         throw new AuthError("unauthenticated", "the access token is for another client");
       }
     }
-    return { sub: payload.sub!, exp: payload.exp! * 1000 };
+    return { sub: payload.sub!, exp: payload.exp! * 1000, iat: typeof payload.iat === "number" ? payload.iat * 1000 : 0 };
   }
 
   private async keys() {

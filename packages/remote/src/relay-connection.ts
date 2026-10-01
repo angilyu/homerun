@@ -80,7 +80,7 @@ export class RelayConnection {
       const bytes = body === undefined ? new Uint8Array() : utf8(JSON.stringify(body));
       const headers: Record<string, string> = {
         authorization: `Bearer ${token}`,
-        [DEVICE_PROOF_HEADER]: signRequest(this.o.identity.signing, this.o.identity.deviceId, this.now(), method, path, bytes),
+        [DEVICE_PROOF_HEADER]: await signRequest(this.o.identity.signing, this.o.identity.deviceId, this.now(), method, path, bytes),
       };
       if (body !== undefined) headers["content-type"] = "application/json";
       return (this.o.fetch ?? fetch)(this.o.url + path, { method, headers, ...(body !== undefined ? { body: bytes as Uint8Array<ArrayBuffer> } : {}) });
@@ -192,7 +192,12 @@ export class RelayConnection {
   private handle(ws: WebSocket, f: ServerFrame): void {
     if (f.type === "challenge") {
       const id = this.o.identity;
-      ws.send(JSON.stringify({ type: "auth", device_id: id.deviceId, signature: signChallenge(id.signing, f.nonce, id.deviceId) }));
+      void signChallenge(id.signing, f.nonce, id.deviceId).then(
+        (signature) => {
+          if (ws === this.ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "auth", device_id: id.deviceId, signature }));
+        },
+        () => ws.close(),
+      );
       return;
     }
     if (f.type === "ready") {

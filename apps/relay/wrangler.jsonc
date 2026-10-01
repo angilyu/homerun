@@ -19,8 +19,13 @@
     "OIDC_ISSUER": "",
     "OIDC_CLIENT_ID": "",
     "OIDC_AUDIENCE": "",
+    // The web client's origins, comma-separated and exact, e.g. "https://app.homerun.app" (README.md).
+    "WEB_ORIGINS": "",
+    // Who deletes the user at the identity provider when the account is deleted: "workos" (with
+    // the WORKOS_API_KEY secret) or "none", the user deleting it by hand (README.md).
+    "PROVIDER_ADMIN": "workos",
     "APNS_TOPIC": "com.angilyu.homerun.ios"
   },
-  // Secrets, set with `wrangler secret put`: APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID.
+  // Secrets, set with `wrangler secret put`: APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID, WORKOS_API_KEY.
   "observability": { "enabled": true }
 }

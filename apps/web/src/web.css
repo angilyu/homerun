@@ -1,0 +1,4 @@
+/* The web client's own screens; everything else is the desktop's styles.css. */
+.front-door .row-card { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); cursor: pointer; }
+.front-door .row-card:hover { background: var(--bg-2); }
+.link-code { font-size: 2.2em; font-weight: 600; letter-spacing: 0.12em; font-variant-numeric: tabular-nums; text-align: center; margin: 16px 0; }

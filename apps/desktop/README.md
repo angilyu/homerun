@@ -120,6 +120,12 @@ signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
   editor, monitors (on the task page), health, and settings.
 - `ui/Markdown.tsx` renders app-state's markdown tree. It never renders HTML, and images are
   shown as links (§13).
+- The web client (`apps/web`, milestone 10a) renders these same views with no shell
+  (`Platform.shell` is null) and the `web` role. Root skips key onboarding. Settings shows only
+  the web client's own section and a read-only daily summary. `AppClient.may` hides what core's
+  allowlists refuse the web: creating, editing or archiving tasks, pausing schedules, editing
+  monitor state. Input cards it can't answer say *Approve on your phone or Mac*, and every card
+  waits while the desktop is offline (§9.9; `test/components/web.test.tsx`).
 
 ## In the background (milestone 8)
 
@@ -640,3 +646,29 @@ issuer)
     *Paired devices*. Quit Homerun while an alert is up: the alert closes and nothing links.
 32. **Sign out**: the relay status goes, and the keychain has no `refresh_token`; sign in again
     as the same person and the paired device is still there.
+
+**The web client (milestone 10a)** (the production relay and WorkOS, and the web client deployed
+to Pages: [`apps/web`](../web/README.md#deploying))
+33. **WorkOS for the browser.** The redirect URI `https://homerun-web.pages.dev/auth/callback`
+    is registered, and the token endpoint answers CORS for `https://homerun-web.pages.dev`: in
+    the page's developer tools, the token request after sign-in succeeds with
+    `Access-Control-Allow-Origin` naming the page. If WorkOS refuses it, stop: §17 item 11.
+34. **Pages and its headers.** `curl -sI https://homerun-web.pages.dev/` shows the
+    Content-Security-Policy with `require-trusted-types-for 'script'`, HSTS, `X-Frame-Options:
+    DENY` and `Cache-Control: no-cache`; a file under `/assets/` is `immutable`; `/_headers`
+    is not served. The console shows no CSP or Trusted Types violations through checks 35–36.
+35. **The relay for the browser and deletion.** `WEB_ORIGINS` names the page and
+    `PROVIDER_ADMIN=workos` is set with the `WORKOS_API_KEY` secret. From another origin (any
+    other site's console), `fetch("https://<relay>/v1/health")` is refused. Make a throwaway
+    account, sign in with Apple, and delete it from the page's Settings → *This browser*: it
+    says the sign-in was deleted, the user is gone in the WorkOS dashboard, and *Sign in with
+    Apple* under the Apple ID's settings no longer lists the app. If it is still listed, note
+    it in §17 item 10.
+36. **A real browser, end to end.** In Chrome and Safari: sign in, choose this Mac, and the
+    Mac's alert names *Chrome on macOS* (or Safari) with the same six digits; **Link**. Chat,
+    steer and stop. Ask for something that needs a command: the card says *Approve on your
+    phone or Mac* and has no buttons, and approving it on the Mac lets the run go on. Reload:
+    still linked, no sign-in. Open a second tab: it says Homerun is open in another tab.
+    Quit Homerun: the page says the Mac is offline, and a message sent then says it will send
+    when the Mac is back; reopen Homerun and it arrives once. Unlink the browser in the Mac's
+    Settings: the page says it was unlinked.

@@ -13,6 +13,7 @@ const phone = (over: Record<string, unknown> = {}) => ({
   device_id: PHONE,
   name: "Wenjing’s iPhone",
   platform: "ios",
+  claimed_platform: "ios",
   method: "qr",
   paired_at: T0,
   online: true,
@@ -29,7 +30,7 @@ function remoteTransport(status = accountStatus(), devices: unknown[] = []) {
   t.handlers["account.sign_in"] = () => ({ status: accountStatus({ state: "signing_in" }) });
   t.handlers["account.cancel_sign_in"] = () => ({ status: accountStatus() });
   t.handlers["account.sign_out"] = () => ({ status: accountStatus() });
-  t.handlers["account.delete"] = () => ({ status: accountStatus() });
+  t.handlers["account.delete"] = () => ({ status: accountStatus(), provider: "deleted" });
   t.handlers["devices.pairing.start"] = () => ({ offer_id: OFFER, qr_url: QR, expires_at: Date.now() + 300_000 });
   t.handlers["devices.pairing.cancel"] = () => ({ ok: true });
   t.handlers["devices.unpair"] = () => ({ ok: true });
@@ -128,12 +129,20 @@ describe("Settings → Remote access (§10)", () => {
   });
 
   test("a device linking by code is confirmed in the shell's dialog, not here", async () => {
-    const t = remoteTransport(signedIn({ link_request: { name: "Work laptop", platform: "web" } }));
+    const t = remoteTransport(signedIn({ link_request: { name: "Work laptop", platform: "web", claimed_platform: "web" } }));
     await renderApp({ t, route: { name: "settings" } });
     const s = await section();
     const note = await within(s).findByText(/A web browser called “Work laptop” is asking to link/);
     expect(note.textContent).toContain("Compare the code in the Homerun dialog");
     expect(within(s).queryByRole("button", { name: /Link|Allow/ })).toBeNull();
+  });
+
+  test("an iPhone App Attest didn't vouch for is named as one, with a browser's access (§12)", async () => {
+    const t = remoteTransport(signedIn({ link_request: { name: "Old phone", platform: "web", claimed_platform: "ios" } }), [phone({ platform: "web" })]);
+    await renderApp({ t, route: { name: "settings" } });
+    const s = await section();
+    expect((await within(s).findByText(/is asking to link/)).textContent).toContain("An iPhone that Apple couldn’t verify (it would link with a browser’s access)");
+    expect(within(within(s).getByRole("group", { name: "Paired devices" })).getByText("Unverified iPhone")).toBeTruthy();
   });
 
   test("sign out and delete account ask first", async () => {
@@ -144,8 +153,19 @@ describe("Settings → Remote access (§10)", () => {
     const ask = within(s).getByRole("group", { name: /Delete your account\?/ });
     fireEvent.click(within(ask).getByRole("button", { name: "Delete account" }));
     await within(s).findByRole("button", { name: "Sign in" });
+    expect(within(s).getByRole("status").textContent).toBe("Your account was deleted, including your sign-in.");
     expect(t.called("account.delete")).toHaveLength(1);
     expect(t.called("account.sign_out")).toEqual([]);
+  });
+
+  test("after deleting, says when the sign-in itself must be deleted by hand (§10.9)", async () => {
+    const t = remoteTransport(signedIn(), [phone()]);
+    t.handlers["account.delete"] = () => ({ status: accountStatus(), provider: "manual" });
+    await renderApp({ t, route: { name: "settings" } });
+    const s = await section();
+    fireEvent.click(await within(s).findByRole("button", { name: "Delete account" }));
+    fireEvent.click(within(within(s).getByRole("group", { name: /Delete your account\?/ })).getByRole("button", { name: "Delete account" }));
+    expect((await within(s).findByRole("status")).textContent).toContain("delete it with the service you signed in with");
   });
 });
 

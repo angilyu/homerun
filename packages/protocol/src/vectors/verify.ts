@@ -7,6 +7,7 @@ import { decodePairingUrl, encodePairingUrl, offerTag, pairingPsk, PairInitiator
 import { openSealed, seal, sealRaw } from "../sealed";
 import { linkStatementBytes, signLinkStatement, verifyLinkStatement } from "../statement";
 import { ClientFrame, challengeBytes, requestBytes, ServerFrame, signChallenge, signRequest, verifySignature } from "../wire";
+import { attestationClientDataHash, IOS_APP_ID, verifyAssertion, verifyAttestation } from "../app-attest";
 import { identityOf, type VectorDeviceKeys } from "./fixtures";
 import { type CacophonyVector, verifyCacophony } from "./cacophony";
 
@@ -29,46 +30,46 @@ const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const idOf = (k: VectorDeviceKeys) => identityOf(k, fromHex);
 const eph = (hex: string) => x25519Key(fromHex(hex));
 
-function run(file: string, name: string, f: () => void | string): CaseResult {
+async function run(file: string, name: string, f: () => Promise<void | string> | void | string): Promise<CaseResult> {
   try {
-    const err = f();
+    const err = await f();
     return err ? { file, name, ok: false, error: err } : { file, name, ok: true };
   } catch (e) {
     return { file, name, ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-function expectThrow(f: () => unknown): string | undefined {
+async function expectThrow(f: () => unknown): Promise<string | undefined> {
   try {
-    f();
+    await f();
   } catch {
     return undefined;
   }
   return "expected a failure";
 }
 
-export function verifySealedVectors(v: Json): CaseResult[] {
+export async function verifySealedVectors(v: Json): Promise<CaseResult[]> {
   const F = "sealed.json";
   const out: CaseResult[] = [];
   const devices = v.devices as Record<string, VectorDeviceKeys>;
   const byId = new Map(Object.values(devices).map((d) => [d.device_id, d]));
   for (const c of v.seal as Json[]) {
     out.push(
-      run(F, `seal: ${c.name}`, () => {
+      await run(F, `seal: ${c.name}`, async () => {
         const sender = idOf(devices[c.sender]!);
         const common = { sender: sender.noise, recipientStatic: fromB64url(c.recipient_static), e: eph(c.ephemeral_secret) };
         const env = c.inner
-          ? seal({ ...common, inner: c.inner, to: c.to_device_id, maxChunk: c.max_chunk ?? undefined })
-          : sealRaw({ ...common, header: c.header, plaintext: utf8(c.plaintext) });
+          ? await seal({ ...common, inner: c.inner, to: c.to_device_id, maxChunk: c.max_chunk ?? undefined })
+          : await sealRaw({ ...common, header: c.header, plaintext: utf8(c.plaintext) });
         return eq(env, c.envelope) ? undefined : "envelope differs";
       }),
     );
   }
   for (const c of v.open as Json[]) {
     out.push(
-      run(F, `open: ${c.name}`, () => {
+      await run(F, `open: ${c.name}`, async () => {
         const me = idOf(devices[c.recipient]!);
-        const r = openSealed(c.envelope, {
+        const r = await openSealed(c.envelope, {
           me,
           senderStatic: (d) => (c.pinned[d] ? fromB64url(c.pinned[d]) : null),
           now: c.now,
@@ -83,21 +84,21 @@ export function verifySealedVectors(v: Json): CaseResult[] {
   return out;
 }
 
-export function verifyLiveVectors(v: Json): CaseResult[] {
+export async function verifyLiveVectors(v: Json): Promise<CaseResult[]> {
   const F = "live.json";
   const out: CaseResult[] = [];
   const phone = idOf(v.devices.initiator);
   const desktop = idOf(v.devices.responder);
   const common = { initiatorId: phone.deviceId, responderId: desktop.deviceId, sessionId: v.session_id, maxChunk: v.max_chunk };
-  out.push(run(F, "prologue", () => (toHex(livePrologue(phone.deviceId, desktop.deviceId, v.session_id)) === v.prologue ? undefined : "prologue differs")));
+  out.push(await run(F, "prologue", async () => (toHex(livePrologue(phone.deviceId, desktop.deviceId, v.session_id)) === v.prologue ? undefined : "prologue differs")));
   out.push(
-    run(F, "transcript", () => {
+    await run(F, "transcript", async () => {
       const init = new LiveInitiator({ ...common, me: phone.noise, peer: desktop.noise.publicKey, e: eph(v.initiator_ephemeral) });
-      const m1 = init.start();
+      const m1 = await init.start();
       if (toB64url(m1) !== v.messages[0].data) return "message 1 differs";
-      const { reply, session: d } = liveRespond({ ...common, me: desktop.noise, peer: phone.noise.publicKey, e: eph(v.responder_ephemeral) }, fromB64url(v.messages[0].data));
+      const { reply, session: d } = await liveRespond({ ...common, me: desktop.noise, peer: phone.noise.publicKey, e: eph(v.responder_ephemeral) }, fromB64url(v.messages[0].data));
       if (toB64url(reply) !== v.messages[1].data) return "message 2 differs";
-      const p = init.finish(reply);
+      const p = await init.finish(reply);
       if (toHex(p.handshakeHash) !== v.handshake_hash || toHex(d.handshakeHash) !== v.handshake_hash) return "handshake hash differs";
       for (const [i, m] of (v.messages as Json[]).slice(2).entries()) {
         const [tx, rx] = m.from === "initiator" ? [p, d] : [d, p];
@@ -111,7 +112,7 @@ export function verifyLiveVectors(v: Json): CaseResult[] {
   );
   for (const r of v.reject as Json[]) {
     out.push(
-      run(F, `reject: ${r.name}`, () =>
+      await run(F, `reject: ${r.name}`, async () =>
         expectThrow(() => liveRespond({ ...common, me: desktop.noise, peer: phone.noise.publicKey }, fromB64url(r.data))),
       ),
     );
@@ -119,48 +120,48 @@ export function verifyLiveVectors(v: Json): CaseResult[] {
   return out;
 }
 
-export function verifyStatementVectors(v: Json): CaseResult[] {
+export async function verifyStatementVectors(v: Json): Promise<CaseResult[]> {
   const F = "link-statement.json";
   const out: CaseResult[] = [];
   const desktop = idOf(v.devices.desktop);
   for (const c of v.sign as Json[]) {
     out.push(
-      run(F, `sign: ${c.name}`, () => {
+      await run(F, `sign: ${c.name}`, async () => {
         if (toHex(linkStatementBytes(c.body)) !== c.bytes) return "bytes differ";
-        return eq(signLinkStatement(c.body, desktop.signing), c.statement) ? undefined : "signature differs";
+        return eq(await signLinkStatement(c.body, desktop.signing), c.statement) ? undefined : "signature differs";
       }),
     );
   }
   for (const c of v.verify as Json[]) {
-    out.push(run(F, `verify: ${c.name}`, () => ((verifyLinkStatement(c.statement, c.signer) !== null) === c.valid ? undefined : `expected valid=${c.valid}`)));
+    out.push(await run(F, `verify: ${c.name}`, async () => ((verifyLinkStatement(c.statement, c.signer) !== null) === c.valid ? undefined : `expected valid=${c.valid}`)));
   }
   return out;
 }
 
-export function verifyPairingVectors(v: Json): CaseResult[] {
+export async function verifyPairingVectors(v: Json): Promise<CaseResult[]> {
   const F = "pairing.json";
   const out: CaseResult[] = [];
   const phone = idOf(v.devices.phone);
   const desktop = idOf(v.devices.desktop);
-  out.push(run(F, "url", () => (encodePairingUrl(v.qr) === v.url && eq(decodePairingUrl(v.url), v.qr) ? undefined : "url differs")));
-  out.push(run(F, "psk", () => (toHex(pairingPsk(v.qr.pairing_code, desktop.deviceId)) === v.psk ? undefined : "psk differs")));
-  out.push(run(F, "offer tag", () => (offerTag(v.qr.pairing_code) === v.offer_tag ? undefined : "offer tag differs")));
+  out.push(await run(F, "url", async () => (encodePairingUrl(v.qr) === v.url && eq(decodePairingUrl(v.url), v.qr) ? undefined : "url differs")));
+  out.push(await run(F, "psk", async () => (toHex(pairingPsk(v.qr.pairing_code, desktop.deviceId)) === v.psk ? undefined : "psk differs")));
+  out.push(await run(F, "offer tag", async () => (offerTag(v.qr.pairing_code) === v.offer_tag ? undefined : "offer tag differs")));
   out.push(
-    run(F, "transcript", () => {
+    await run(F, "transcript", async () => {
       const init = new PairInitiator({ qr: v.qr, me: phone.noise, hello: v.hello, sessionId: v.session_id, e: eph(v.initiator_ephemeral) });
-      const m1 = init.start();
+      const m1 = await init.start();
       if (toB64url(m1) !== v.message1) return "message 1 differs";
       const resp = new PairResponder({ desktopId: desktop.deviceId, deviceId: phone.deviceId, sessionId: v.session_id, code: v.qr.pairing_code, me: desktop.noise, e: eph(v.responder_ephemeral) });
-      const { hello, remoteStatic } = resp.read(m1);
+      const { hello, remoteStatic } = await resp.read(m1);
       if (!eq(hello, v.hello) || toB64url(remoteStatic) !== v.devices.phone.x25519_public) return "hello differs";
-      const m2 = resp.reply(v.welcome);
+      const m2 = await resp.reply(v.welcome);
       if (toB64url(m2) !== v.message2) return "message 2 differs";
-      return eq(init.finish(m2), v.welcome) ? undefined : "welcome differs";
+      return eq(await init.finish(m2), v.welcome) ? undefined : "welcome differs";
     }),
   );
   for (const r of v.reject_message1 as Json[]) {
     out.push(
-      run(F, `reject: ${r.name}`, () =>
+      await run(F, `reject: ${r.name}`, async () =>
         expectThrow(() =>
           new PairResponder({ desktopId: desktop.deviceId, deviceId: phone.deviceId, sessionId: v.session_id, code: v.qr.pairing_code, me: desktop.noise }).read(fromB64url(r.data)),
         ),
@@ -168,33 +169,33 @@ export function verifyPairingVectors(v: Json): CaseResult[] {
     );
   }
   for (const [i, u] of (v.urls as Json[]).entries()) {
-    out.push(run(F, `url ${i}`, () => ((decodePairingUrl(u.url) !== null) === u.valid ? undefined : `expected valid=${u.valid}`)));
+    out.push(await run(F, `url ${i}`, async () => ((decodePairingUrl(u.url) !== null) === u.valid ? undefined : `expected valid=${u.valid}`)));
   }
   return out;
 }
 
-export function verifyLinkingVectors(v: Json): CaseResult[] {
+export async function verifyLinkingVectors(v: Json): Promise<CaseResult[]> {
   const F = "linking.json";
   const out: CaseResult[] = [];
   const phone = idOf(v.devices.phone);
   const desktop = idOf(v.devices.desktop);
-  out.push(run(F, "commit", () => (toB64url(sasCommit(fromHex(v.phone_nonce))) === v.commit ? undefined : "commit differs")));
+  out.push(await run(F, "commit", async () => (toB64url(sasCommit(fromHex(v.phone_nonce))) === v.commit ? undefined : "commit differs")));
   for (const [i, c] of (v.codes as Json[]).entries()) {
-    out.push(run(F, `code ${i}`, () => (sasCode(fromHex(c.handshake_hash), fromHex(c.phone_nonce), fromHex(c.desktop_nonce)) === c.code ? undefined : "code differs")));
+    out.push(await run(F, `code ${i}`, async () => (sasCode(fromHex(c.handshake_hash), fromHex(c.phone_nonce), fromHex(c.desktop_nonce)) === c.code ? undefined : "code differs")));
   }
   out.push(
-    run(F, "transcript", () => {
+    await run(F, "transcript", async () => {
       const m = (v.messages as string[]).map(fromB64url);
       const p = new LinkInitiator({ deviceId: phone.deviceId, desktopId: desktop.deviceId, sessionId: v.session_id, me: phone.noise, info: v.phone_info, e: eph(v.initiator_ephemeral), nonce: fromHex(v.phone_nonce) });
       const d = new LinkResponder({ deviceId: phone.deviceId, desktopId: desktop.deviceId, sessionId: v.session_id, me: desktop.noise, info: v.desktop_info, e: eph(v.responder_ephemeral), nonce: fromHex(v.desktop_nonce) });
-      const steps: [string, () => Uint8Array][] = [
+      const steps: [string, () => Uint8Array | Promise<Uint8Array>][] = [
         ["xx 1", () => p.start()],
         ["xx 2", () => d.accept(m[0]!)],
         ["xx 3", () => p.answer(m[1]!)],
         ["nonce", () => d.commit(m[2]!)],
         ["reveal", () => p.reveal(m[3]!)],
       ];
-      for (const [i, [label, f]] of steps.entries()) if (toB64url(f()) !== v.messages[i]) return `${label} differs`;
+      for (const [i, [label, f]] of steps.entries()) if (toB64url(await f()) !== v.messages[i]) return `${label} differs`;
       if (d.verify(m[4]!) !== v.code || p.code !== v.code) return "code differs";
       if (toB64url(d.linked(v.statement)) !== v.messages[5]) return "linked message differs";
       const r = p.result(m[5]!);
@@ -202,84 +203,116 @@ export function verifyLinkingVectors(v: Json): CaseResult[] {
     }),
   );
   out.push(
-    run(F, "reject: reveal that doesn't match the commitment", () => {
+    await run(F, "reject: reveal that doesn't match the commitment", async () => {
       const m = (v.messages as string[]).map(fromB64url);
       const d = new LinkResponder({ deviceId: phone.deviceId, desktopId: desktop.deviceId, sessionId: v.session_id, me: desktop.noise, info: v.desktop_info, e: eph(v.responder_ephemeral), nonce: fromHex(v.desktop_nonce) });
-      d.accept(m[0]!);
-      d.commit(m[2]!);
+      await d.accept(m[0]!);
+      await d.commit(m[2]!);
       // A reveal of a different nonce, sealed in the right session by a fresh initiator run.
       const p = new LinkInitiator({ deviceId: phone.deviceId, desktopId: desktop.deviceId, sessionId: v.session_id, me: phone.noise, info: v.phone_info, e: eph(v.initiator_ephemeral), nonce: fromHex(v.desktop_nonce) });
-      p.start();
-      p.answer(m[1]!);
+      await p.start();
+      await p.answer(m[1]!);
       return expectThrow(() => d.verify(p.reveal(m[3]!)));
     }),
   );
   return out;
 }
 
-export function verifyApnsVectors(v: Json): CaseResult[] {
+export async function verifyApnsVectors(v: Json): Promise<CaseResult[]> {
   const F = "apns-payload.json";
-  return (v.cases as Json[]).map((c) =>
-    run(F, c.name, () => {
+  return Promise.all(
+    (v.cases as Json[]).map((c) =>
+    run(F, c.name, async () => {
       const r = buildApnsPayload(c.envelope, v.max_bytes);
       if (utf8(r.body).length > v.max_bytes) return "payload too big";
       return r.body === c.body && r.sealed === c.sealed && r.expiration === c.expiration ? undefined : "payload differs";
     }),
+    ),
   );
 }
 
-export function verifyWireVectors(v: Json): CaseResult[] {
+export async function verifyWireVectors(v: Json): Promise<CaseResult[]> {
   const F = "relay-wire.json";
   const out: CaseResult[] = [];
   const phone = idOf(v.devices.phone);
   out.push(
-    run(F, "challenge", () => {
+    await run(F, "challenge", async () => {
       const c = v.challenge;
       if (toHex(challengeBytes(c.nonce, c.device_id)) !== c.bytes) return "bytes differ";
-      if (signChallenge(phone.signing, c.nonce, c.device_id) !== c.signature) return "signature differs";
+      if ((await signChallenge(phone.signing, c.nonce, c.device_id)) !== c.signature) return "signature differs";
       return verifySignature(c.signature, fromHex(c.bytes), v.devices.phone.ed25519_public) ? undefined : "does not verify";
     }),
   );
   out.push(
-    run(F, "request", () => {
+    await run(F, "request", async () => {
       const r = v.request;
       if (toHex(requestBytes(r.device_id, r.ts, r.method, r.path, utf8(r.body))) !== r.bytes) return "bytes differ";
-      return signRequest(phone.signing, r.device_id, r.ts, r.method, r.path, utf8(r.body)) === r.header ? undefined : "header differs";
+      return (await signRequest(phone.signing, r.device_id, r.ts, r.method, r.path, utf8(r.body))) === r.header ? undefined : "header differs";
     }),
   );
   for (const [i, c] of (v.client_frames as Json[]).entries()) {
-    out.push(run(F, `client frame ${i}`, () => (ClientFrame.safeParse(c.frame).success === c.valid ? undefined : `expected valid=${c.valid}`)));
+    out.push(await run(F, `client frame ${i}`, async () => (ClientFrame.safeParse(c.frame).success === c.valid ? undefined : `expected valid=${c.valid}`)));
   }
   for (const [i, c] of (v.server_frames as Json[]).entries()) {
-    out.push(run(F, `server frame ${i}`, () => (ServerFrame.safeParse(c.frame).success === c.valid ? undefined : `expected valid=${c.valid}`)));
+    out.push(await run(F, `server frame ${i}`, async () => (ServerFrame.safeParse(c.frame).success === c.valid ? undefined : `expected valid=${c.valid}`)));
   }
   return out;
 }
 
-export function verifyEncodingVectors(v: Json): CaseResult[] {
+export async function verifyEncodingVectors(v: Json): Promise<CaseResult[]> {
   const F = "encoding.json";
   const out: CaseResult[] = [];
   for (const c of v.base64url as Json[]) {
     out.push(
-      run(F, `base64url ${JSON.stringify(c.b64url)}`, () => {
+      await run(F, `base64url ${JSON.stringify(c.b64url)}`, async () => {
         if (c.hex === null) return expectThrow(() => fromB64url(c.b64url));
         if (toHex(fromB64url(c.b64url)) !== c.hex) return "decode differs";
         return toB64url(fromHex(c.hex)) === c.b64url ? undefined : "encode differs";
       }),
     );
   }
-  for (const c of v.framed as Json[]) out.push(run(F, "framed", () => (toHex(framed(...(c.parts as string[]))) === c.hex ? undefined : "differs")));
+  for (const c of v.framed as Json[]) out.push(await run(F, "framed", async () => (toHex(framed(...(c.parts as string[]))) === c.hex ? undefined : "differs")));
   return out;
 }
 
-export function verifyCacophonyVectors(v: Json): CaseResult[] {
-  return (v.vectors as CacophonyVector[]).map((c) => {
-    const r = verifyCacophony(c);
-    return { file: "noise-cacophony.json", name: c.protocol_name, ok: r.ok, ...(r.ok ? {} : { error: r.error }) };
-  });
+export async function verifyAppAttestVectors(v: Json): Promise<CaseResult[]> {
+  const F = "app-attest.json";
+  const out: CaseResult[] = [];
+  for (const c of v.client_data_hash as Json[]) {
+    out.push(await run(F, `client data hash: ${c.name}`, () => (toHex(attestationClientDataHash(c.identity, c.approval_key ?? undefined)) === c.hex ? undefined : "differs")));
+  }
+  const roots = [fromB64url(v.root)];
+  for (const c of v.attestation as Json[]) {
+    out.push(
+      await run(F, `attestation: ${c.name}`, () => {
+        const r = verifyAttestation(c.attestation, c.identity, { appId: v.app_id, allowDevelopment: c.allow_development, roots }, v.now);
+        if (r.ok !== c.valid) return `expected valid=${c.valid}${r.ok ? "" : ` (${r.reason})`}`;
+        if (r.ok && toB64url(r.credentialPublicKey) !== c.credential_public_key) return "credential key differs";
+      }),
+    );
+  }
+  for (const c of v.assertion as Json[]) {
+    out.push(
+      await run(F, `assertion: ${c.name}`, () => {
+        const r = verifyAssertion(fromB64url(c.assertion), fromHex(c.client_data_hash), fromB64url(c.credential_public_key), c.last_counter, { appId: v.app_id ?? IOS_APP_ID });
+        if (r.ok !== c.valid) return `expected valid=${c.valid}`;
+        if (r.ok && r.counter !== c.counter) return "counter differs";
+      }),
+    );
+  }
+  return out;
 }
 
-export const VERIFIERS: Record<string, (v: Json) => CaseResult[]> = {
+export async function verifyCacophonyVectors(v: Json): Promise<CaseResult[]> {
+  const out: CaseResult[] = [];
+  for (const c of v.vectors as CacophonyVector[]) {
+    const r = await verifyCacophony(c);
+    out.push({ file: "noise-cacophony.json", name: c.protocol_name, ok: r.ok, ...(r.ok ? {} : { error: r.error }) });
+  }
+  return out;
+}
+
+export const VERIFIERS: Record<string, (v: Json) => Promise<CaseResult[]>> = {
   "noise-cacophony.json": verifyCacophonyVectors,
   "sealed.json": verifySealedVectors,
   "live.json": verifyLiveVectors,
@@ -289,15 +322,16 @@ export const VERIFIERS: Record<string, (v: Json) => CaseResult[]> = {
   "apns-payload.json": verifyApnsVectors,
   "relay-wire.json": verifyWireVectors,
   "encoding.json": verifyEncodingVectors,
+  "app-attest.json": verifyAppAttestVectors,
 };
 
 /** Runs every verifier over the given files (name → parsed JSON). Missing files fail. */
-export function verifyAllVectors(files: Record<string, unknown>): CaseResult[] {
+export async function verifyAllVectors(files: Record<string, unknown>): Promise<CaseResult[]> {
   const out: CaseResult[] = [];
   for (const [name, verify] of Object.entries(VERIFIERS)) {
     const v = files[name];
     if (v === undefined) out.push({ file: name, name: "(file)", ok: false, error: "missing" });
-    else out.push(...verify(v));
+    else out.push(...(await verify(v)));
   }
   return out;
 }

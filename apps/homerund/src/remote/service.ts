@@ -1,5 +1,5 @@
-import type { AccountStatus, PairedDevice } from "@homerun/core";
-import { type DeviceIdentity, type LinkedDevice, RELAY_PATHS, type ServerFrame } from "@homerun/protocol";
+import type { AccountStatus, PairedDevice, ProviderDeletion } from "@homerun/core";
+import { AccountDeleted, type AppAttestPolicy, type DeviceIdentity, type LinkedDevice, productionAppAttestPolicy, RELAY_PATHS, type ServerFrame } from "@homerun/protocol";
 import { log } from "../log";
 import type { FrameSink, RemotePeer } from "../rpc/server";
 import { RemoteAccount, SignedOutError, TOKEN_HANDOVER_MS, type AccountDeps } from "./account";
@@ -39,10 +39,12 @@ export interface RemoteDeps extends Omit<AccountDeps, "openBrowser" | "accountSw
   linkRequestTtlMs?: number;
   /** What sealed instructions and lock-screen answers do (the run manager). */
   effects?: SealedEffects;
+  /** Whose App Attest attestations make a device an iPhone; Apple's production root by default. */
+  appAttest?: AppAttestPolicy;
 }
 
 /** What tests may shorten or replace. */
-export type RemoteTuning = Pick<RemoteDeps, "fetch" | "signInTimeoutMs" | "handoverMs" | "linkBackoff" | "wakePingMs" | "pairingTtlMs" | "linkRequestTtlMs">;
+export type RemoteTuning = Pick<RemoteDeps, "fetch" | "signInTimeoutMs" | "handoverMs" | "linkBackoff" | "wakePingMs" | "pairingTtlMs" | "linkRequestTtlMs" | "appAttest">;
 
 /** A remote-access call that can't be done as asked. */
 export class RemoteError extends Error {
@@ -83,6 +85,7 @@ export class RemoteService {
     const send = (f: Parameters<RelayLink["send"]>[0]) => this.link?.send(f) ?? false;
     const me = () => this.identity();
     const account = () => this.account.subject;
+    const attest = d.appAttest ?? productionAppAttestPolicy(false);
     this.pairing = new Pairing({
       me,
       name: this.name,
@@ -90,6 +93,7 @@ export class RemoteService {
       send,
       now: d.now,
       ttlMs: d.pairingTtlMs,
+      attest,
       paired: (offerId, row) => {
         this.added(row);
         const device = this.devices.view(row.device_id);
@@ -103,6 +107,7 @@ export class RemoteService {
       send,
       now: d.now,
       ttlMs: d.linkRequestTtlMs,
+      attest,
       toShell: (m, p) => d.broadcast(m, p),
       linked: (row) => this.added(row),
       changed: () => this.changed(),
@@ -187,12 +192,19 @@ export class RemoteService {
    * message. Then this desktop forgets its pairings and keys and signs out. The provider's user
    * is deleted in its own dashboard (a manual step).
    */
-  async deleteAccount(): Promise<AccountStatus> {
+  /**
+   * Deletes the account at the relay, which deletes the user at the identity provider too
+   * (§10.9). `provider` says whether it did: "pending" means it is retrying, "manual" that the
+   * user must delete their sign-in there themselves (a relay with no provider admin, or older).
+   */
+  async deleteAccount(): Promise<{ status: AccountStatus; provider: ProviderDeletion }> {
     if (!this.link || !this.account.usable) throw new RemoteError("unavailable", "Sign in to delete the account.");
     // Stopped first, so nothing reconnects and registers this desktop again meanwhile.
     this.link.stop();
+    let provider: ProviderDeletion;
     try {
-      await this.link.call("DELETE", RELAY_PATHS.account);
+      const r = AccountDeleted.safeParse(await this.link.call("DELETE", RELAY_PATHS.account));
+      provider = r.success ? r.data.provider : "manual";
     } catch (e) {
       this.sync();
       log.info("couldn't delete the account at the relay", { error: (e as Error).message });
@@ -200,7 +212,8 @@ export class RemoteService {
     }
     this.forgetEverything("the account was deleted");
     await this.account.signOut({ forgetAccount: true });
-    return this.status();
+    log.info("deleted the account", { provider });
+    return { status: this.status(), provider };
   }
 
   // ---------------------------------------------------------------- devices
@@ -229,8 +242,8 @@ export class RemoteService {
     this.pairing.cancel(offerId);
   }
 
-  decideLink(requestId: string, approve: boolean): void {
-    if (!this.linking.decide(requestId, approve)) throw new RemoteError("not_found", "That link request has ended.");
+  async decideLink(requestId: string, approve: boolean): Promise<void> {
+    if (!(await this.linking.decide(requestId, approve))) throw new RemoteError("not_found", "That link request has ended.");
   }
 
   // ---------------------------------------------------------------- runtime events
@@ -342,7 +355,7 @@ export class RemoteService {
       case "rendezvous_close":
         return this.linking.onClose(f.from, f.session);
       case "sealed":
-        return this.sealed.receive(f.id, f.envelope);
+        return void this.sealed.receive(f.id, f.envelope);
       case "error":
         log.info("relay error", { code: f.code, message: f.message });
         return;

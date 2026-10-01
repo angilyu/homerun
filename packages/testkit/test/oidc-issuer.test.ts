@@ -133,3 +133,46 @@ describe("minted tokens", () => {
     await expect(jwtVerify(before, fresh)).rejects.toThrow();
   });
 });
+
+describe("the management API", () => {
+  test("deletes a user with the admin key, once, and ends its refresh tokens", async () => {
+    const c = await client();
+    issuer.consent = { user: { sub: "user_to_delete", email: "gone@example.com" } };
+    const t = await signIn(c);
+    const del = (key: string) => fetch(`${issuer.url}/user_management/users/user_to_delete`, { method: "DELETE", headers: { authorization: `Bearer ${key}` } });
+    expect((await del("sk_test_wrong")).status).toBe(401);
+    expect(issuer.deletedUsers.has("user_to_delete")).toBe(false);
+    issuer.failAdmin = [503];
+    expect((await del(issuer.adminKey)).status).toBe(503);
+    expect((await del(issuer.adminKey)).status).toBe(202);
+    expect(issuer.deletedUsers.has("user_to_delete")).toBe(true);
+    expect((await del(issuer.adminKey)).status).toBe(404);
+    await expect(c.refresh(t.refreshToken!, t)).rejects.toThrow(OidcError);
+    issuer.consent = { user: { sub: "user_01TESTUSER000000000000000", email: "tester@example.com" } };
+  });
+});
+
+describe("browser CORS, as for a public web client (§9.9)", () => {
+  test("only the configured origins; never the management API", async () => {
+    const web = await OidcIssuer.start({ corsOrigins: ["https://web.example"] });
+    try {
+      const get = (origin: string, path = "/.well-known/openid-configuration") => fetch(`${web.url}${path}`, { headers: { origin } });
+      expect((await get("https://web.example")).headers.get("access-control-allow-origin")).toBe("https://web.example");
+      expect((await get("https://evil.example")).headers.get("access-control-allow-origin")).toBeNull();
+      const pre = await fetch(`${web.url}/token`, { method: "OPTIONS", headers: { origin: "https://web.example", "access-control-request-method": "POST" } });
+      expect(pre.status).toBe(204);
+      expect(pre.headers.get("access-control-allow-origin")).toBe("https://web.example");
+      expect((await fetch(`${web.url}/token`, { method: "OPTIONS", headers: { origin: "https://evil.example" } })).status).toBe(403);
+      const del = await fetch(`${web.url}/user_management/users/u1`, { method: "DELETE", headers: { origin: "https://web.example" } });
+      expect(del.headers.get("access-control-allow-origin")).toBeNull();
+      expect((await get("https://web.example")).status).toBe(200);
+    } finally {
+      await web.stop();
+    }
+  });
+
+  test("no origins by default", async () => {
+    const res = await fetch(`${issuer.url}/jwks`, { headers: { origin: "https://web.example" } });
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});

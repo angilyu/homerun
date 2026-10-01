@@ -2620,7 +2620,8 @@
           },
           "link_request": {
             "name": "Ada's iPhone",
-            "platform": "ios"
+            "platform": "ios",
+            "claimed_platform": "ios"
           }
         }
       }
@@ -2752,7 +2753,7 @@
     },
     {
       "schema": "AccountDeleteResult",
-      "name": "account.delete: signed out",
+      "name": "account.delete: provider user deleted",
       "valid": true,
       "value": {
         "status": {
@@ -2765,7 +2766,85 @@
             "error": null
           },
           "link_request": null
+        },
+        "provider": "deleted"
+      }
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: provider deletion pending",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        },
+        "provider": "pending"
+      }
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: provider user deleted by hand",
+      "valid": true,
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        },
+        "provider": "manual"
+      }
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: no provider outcome",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
         }
+      }
+    },
+    {
+      "schema": "AccountDeleteResult",
+      "name": "account.delete: unknown provider outcome",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "status": {
+          "state": "signed_out",
+          "email": null,
+          "error": null,
+          "relay": {
+            "state": "off",
+            "since": null,
+            "error": null
+          },
+          "link_request": null
+        },
+        "provider": "maybe"
       }
     },
     {
@@ -2791,6 +2870,7 @@
             "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
             "name": "Ada's iPhone",
             "platform": "ios",
+            "claimed_platform": "ios",
             "method": "qr",
             "paired_at": 1767225600000,
             "online": false,
@@ -2810,6 +2890,26 @@
             "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
             "name": "Ada's iPhone",
             "platform": "desktop",
+            "claimed_platform": "ios",
+            "method": "qr",
+            "paired_at": 1767225600000,
+            "online": false,
+            "last_seen_at": 1767225660000
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DevicesListResult",
+      "name": "devices.list: no claimed platform",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "devices": [
+          {
+            "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+            "name": "Ada's iPhone",
+            "platform": "ios",
             "method": "qr",
             "paired_at": 1767225600000,
             "online": false,
@@ -3542,6 +3642,26 @@
             "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
             "name": "Ada's iPhone",
             "platform": "ios",
+            "claimed_platform": "ios",
+            "method": "qr",
+            "paired_at": 1767225600000,
+            "online": false,
+            "last_seen_at": 1767225660000
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DevicesChangedNotification",
+      "name": "devices.changed: an unverified iPhone",
+      "valid": true,
+      "value": {
+        "devices": [
+          {
+            "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+            "name": "Ada's iPhone",
+            "platform": "web",
+            "claimed_platform": "ios",
             "method": "qr",
             "paired_at": 1767225600000,
             "online": false,
@@ -3575,6 +3695,7 @@
           "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
           "name": "Ada's iPhone",
           "platform": "ios",
+          "claimed_platform": "ios",
           "method": "qr",
           "paired_at": 1767225600000,
           "online": false,
@@ -3599,6 +3720,21 @@
         "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
         "name": "Ada's iPhone",
         "platform": "ios",
+        "claimed_platform": "ios",
+        "code": "482915",
+        "requested_at": 1767225600000,
+        "expires_at": 1767225720000
+      }
+    },
+    {
+      "schema": "DevicesLinkRequestedNotification",
+      "name": "devices.link_requested: unverified phone",
+      "valid": true,
+      "value": {
+        "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
+        "name": "Ada's iPhone",
+        "platform": "web",
+        "claimed_platform": "ios",
         "code": "482915",
         "requested_at": 1767225600000,
         "expires_at": 1767225720000
@@ -3613,6 +3749,7 @@
         "request_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d01",
         "name": "Ada's iPhone",
         "platform": "ios",
+        "claimed_platform": "ios",
         "code": "4821",
         "requested_at": 1767225600000,
         "expires_at": 1767225720000

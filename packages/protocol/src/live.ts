@@ -96,12 +96,12 @@ export class LiveInitiator {
     });
   }
 
-  start(): Uint8Array {
+  start(): Promise<Uint8Array> {
     return this.hs.writeMessage();
   }
 
-  finish(message2: Uint8Array): LiveSession {
-    const payload = this.hs.readMessage(message2);
+  async finish(message2: Uint8Array): Promise<LiveSession> {
+    const payload = await this.hs.readMessage(message2);
     if (payload.length !== 0) throw new NoiseError("handshake messages carry no data");
     const t = this.hs.split();
     return new LiveSession(t.send!, t.recv!, t.handshakeHash, MAX_FRAME_BYTES, this.o.maxChunk);
@@ -109,7 +109,7 @@ export class LiveInitiator {
 }
 
 /** The desktop's side: read message 1, write message 2, and the session is ready. */
-export function liveRespond(o: LiveHandshakeOptions, message1: Uint8Array): { reply: Uint8Array; session: LiveSession } {
+export async function liveRespond(o: LiveHandshakeOptions, message1: Uint8Array): Promise<{ reply: Uint8Array; session: LiveSession }> {
   const hs = new HandshakeState({
     pattern: "KK",
     initiator: false,
@@ -119,9 +119,9 @@ export function liveRespond(o: LiveHandshakeOptions, message1: Uint8Array): { re
     random: o.random,
     e: o.e,
   });
-  const payload = hs.readMessage(message1);
+  const payload = await hs.readMessage(message1);
   if (payload.length !== 0) throw new NoiseError("handshake messages carry no data");
-  const reply = hs.writeMessage();
+  const reply = await hs.writeMessage();
   const t = hs.split();
   return { reply, session: new LiveSession(t.send!, t.recv!, t.handshakeHash, MAX_FRAME_BYTES, o.maxChunk) };
 }

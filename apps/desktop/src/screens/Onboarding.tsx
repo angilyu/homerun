@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { errorMessage } from "@homerun/app-state";
-import { useApp } from "../hooks";
+import { useApp, useShell } from "../hooks";
 import type { LoginItemStatus, NotificationPermission } from "../platform/types";
 import { useAutofocus } from "../ui/bits";
 
@@ -36,6 +36,7 @@ export function Onboarding({ onSkip }: { onSkip?: () => void }) {
 /** The key field, shared by onboarding and Settings → Replace key. */
 export function KeyForm({ submitLabel, onDone }: { submitLabel: string; onDone?: () => void }) {
   const app = useApp();
+  const shell = useShell();
   const [value, setValue] = useState("");
   const [show, setShow] = useState(false);
   const [phase, setPhase] = useState<Phase>({ s: "idle" });
@@ -46,7 +47,7 @@ export function KeyForm({ submitLabel, onDone }: { submitLabel: string; onDone?:
     if (!value.trim() || phase.s === "checking") return;
     setPhase({ s: "checking" });
     try {
-      const r = await app.shell.setKey(value);
+      const r = await shell.setKey(value);
       if (r.outcome === "rejected") return setPhase({ s: "rejected", detail: r.detail });
       setValue("");
       if (r.outcome === "saved_unverified") return setPhase({ s: "unverified", detail: r.detail });
@@ -124,25 +125,26 @@ export function KeyForm({ submitLabel, onDone }: { submitLabel: string; onDone?:
  */
 export function KeepRunning({ onDone }: { onDone: () => void }) {
   const app = useApp();
+  const shell = useShell();
   const [login, setLogin] = useState<LoginItemStatus | null>(null);
   const [atLogin, setAtLogin] = useState(true);
   const [notify, setNotify] = useState<NotificationPermission | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    app.shell.loginItem().then(setLogin, () => setLogin("unavailable"));
-    app.shell.notifications().then(setNotify, () => setNotify("unavailable"));
+    shell.loginItem().then(setLogin, () => setLogin("unavailable"));
+    shell.notifications().then(setNotify, () => setNotify("unavailable"));
   }, [app]);
 
   const done = async () => {
-    await app.shell.keepRunningDone().catch(() => {});
+    await shell.keepRunningDone().catch(() => {});
     onDone();
   };
   const finish = async () => {
     setBusy(true);
     setError(null);
     try {
-      if (login && login !== "unavailable" && atLogin !== (login === "enabled")) await app.shell.setLoginItem(atLogin);
+      if (login && login !== "unavailable" && atLogin !== (login === "enabled")) await shell.setLoginItem(atLogin);
     } catch (e) {
       setBusy(false);
       return setError(`${errorMessage(e)} You can change this later in Settings.`);
@@ -163,7 +165,7 @@ export function KeepRunning({ onDone }: { onDone: () => void }) {
         )}
         {notify === "not_determined" && (
           <div className="row">
-            <button type="button" onClick={() => void app.shell.requestNotifications().then(setNotify, () => {})}>
+            <button type="button" onClick={() => void shell.requestNotifications().then(setNotify, () => {})}>
               Allow notifications
             </button>
             <span className="muted small">For approvals, questions and monitor news. Never your data or API key.</span>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { errorMessage } from "@homerun/app-state";
 import { routeFor, useApp, useStore } from "../hooks";
-import { isKeychainApproval } from "../platform/types";
+import { isKeychainApproval, type ShellApi } from "../platform/types";
 import { Layout } from "./Layout";
 import { KeepRunning, Onboarding } from "./Onboarding";
 
@@ -11,6 +11,13 @@ import { KeepRunning, Onboarding } from "./Onboarding";
  * handled here for the window's lifetime.
  */
 export function Root() {
+  const app = useApp();
+  // The web client has no shell: no key, no keep-running, no shell events (§9.9).
+  if (!app.shell) return <Layout keyError={null} />;
+  return <DesktopRoot shell={app.shell} />;
+}
+
+function DesktopRoot({ shell }: { shell: ShellApi }) {
   const app = useApp();
   const key = useStore(app.key);
   const [error, setError] = useState<unknown>(null);
@@ -23,17 +30,17 @@ export function Root() {
   };
   useEffect(load, [app]);
   useEffect(() => {
-    const off = app.shell.onEvent((e) => {
+    const off = shell.onEvent((e) => {
       if (e.type === "navigate") app.go(routeFor(e.target));
       else app.update.set(e.state);
     });
-    app.shell.updateStatus().then((s) => app.update.get() ?? app.update.set(s), () => {});
-    app.shell.prefs().then(
+    shell.updateStatus().then((s) => app.update.get() ?? app.update.set(s), () => {});
+    shell.prefs().then(
       (p) => setKeepRunning(!p.keep_running_asked),
       () => setKeepRunning(false),
     );
     return off;
-  }, [app]);
+  }, [app, shell]);
 
   if (error && isKeychainApproval(error)) return <KeychainWait onRetry={load} />;
   if ((!key && !error) || keepRunning === null) return <div className="splash" aria-busy="true" />;

@@ -9,6 +9,9 @@ import {
   type ClientMsgId,
 } from "@homerun/core";
 import {
+  AccountDeleted,
+  type AppAttestation,
+  type AttestedIdentity,
   decodePairingUrl,
   type DeviceIdentity,
   type DeviceKind,
@@ -35,7 +38,8 @@ import {
   toB64url,
   verifyLinkStatement,
 } from "@homerun/protocol";
-import type { Account } from "./account";
+import type { TokenSource } from "./account";
+import type { DeviceKeyStore } from "./keys";
 import { LiveClosedError, RemoteLive } from "./live";
 import { type ConnectionState, type Fetch, RelayConnection, RelayError } from "./relay-connection";
 import { RendezvousChannel } from "./rendezvous";
@@ -55,8 +59,10 @@ type SealedPush = Omit<SealedInner, "body"> & { body: SealedPushBody };
 
 export interface RemoteClientOptions {
   relayUrl: string;
-  account: Account;
+  account: TokenSource;
   store: RemoteStore;
+  /** Where the secret keys live. Without one they are kept, raw, in `store`. */
+  keys?: DeviceKeyStore;
   kind: Platform;
   /** Shown on the desktop's paired-devices list. */
   name: string;
@@ -65,6 +71,12 @@ export interface RemoteClientOptions {
   reconnect?: { initialMs: number; maxMs: number } | false;
   now?: () => number;
   fetch?: Fetch;
+  /**
+   * An iPhone's App Attest (§9.8): a fresh attestation of this device's keys, sent when it
+   * registers, pairs and links. Without one, the relay and the desktop treat an `ios` device
+   * as a browser.
+   */
+  attest?: (identity: AttestedIdentity) => Promise<AppAttestation>;
 }
 
 export interface DesktopView extends PairedDesktop {
@@ -105,14 +117,17 @@ export class RemoteClient {
   private receiptListeners = new Set<(r: Extract<ServerFrame, { type: "receipt" }>) => void>();
   /** Recently delivered msg_ids, so a receipt that beat `waitDelivered` still counts. */
   private delivered = new Set<string>();
+  private opening: Promise<unknown> = Promise.resolve();
   private linksListeners = new Set<() => void>();
+  private desktopsListeners = new Set<() => void>();
 
   private constructor(
     private readonly o: RemoteClientOptions,
     state: RemoteState,
+    identity: DeviceIdentity,
   ) {
     this.state = state;
-    this.identity = identityFromStored(state.device.device_id, state.device.kind, state.device.keys);
+    this.identity = identity;
     this.conn = new RelayConnection({
       url: o.relayUrl,
       identity: this.identity,
@@ -131,16 +146,27 @@ export class RemoteClient {
 
   /** Loads this device from the store, or creates a new identity (§9.6 step 1). */
   static async create(o: RemoteClientOptions): Promise<RemoteClient> {
-    let state = await o.store.load();
-    if (!state || state.device.kind !== o.kind) {
-      state = {
-        device: { device_id: crypto.randomUUID() as DeviceId, kind: o.kind, name: o.name, keys: generateDeviceKeys() },
-        desktops: {},
-        seen: {},
-      };
-      await o.store.save(state);
+    const state = await o.store.load();
+    if (state && state.device.kind === o.kind) {
+      const { device_id, kind } = state.device;
+      if (o.keys) {
+        const k = await o.keys.load(device_id);
+        if (k) return new RemoteClient(o, state, { deviceId: device_id, kind, ...k });
+      } else if (state.device.keys) {
+        return new RemoteClient(o, state, identityFromStored(device_id, kind, state.device.keys));
+      }
+      // The keys are gone (cleared site data, a restored backup): its pairings went with them.
     }
-    return new RemoteClient(o, state);
+    const device_id = crypto.randomUUID() as DeviceId;
+    const fresh: RemoteState = { device: { device_id, kind: o.kind, name: o.name }, desktops: {}, seen: {} };
+    let identity: DeviceIdentity;
+    if (o.keys) identity = { deviceId: device_id, kind: o.kind, ...(await o.keys.create(device_id)) };
+    else {
+      fresh.device.keys = generateDeviceKeys();
+      identity = identityFromStored(device_id, o.kind, fresh.device.keys);
+    }
+    await o.store.save(fresh);
+    return new RemoteClient(o, fresh, identity);
   }
 
   private now() {
@@ -159,7 +185,8 @@ export class RemoteClient {
 
   /** Registers this device's public keys with the relay under the signed-in account. */
   async register(): Promise<void> {
-    await this.conn.call("POST", RELAY_PATHS.devices, { device: publicOf(this.identity), name: this.state.device.name });
+    const attestation = await this.attestation();
+    await this.conn.call("POST", RELAY_PATHS.devices, { device: publicOf(this.identity), name: this.state.device.name, ...(attestation ? { attestation } : {}) });
   }
 
   /** Connects and keeps reconnecting; resolves when the relay has authenticated us. */
@@ -185,6 +212,12 @@ export class RemoteClient {
     }));
   }
 
+  /** Fires when the paired desktops or their presence change. */
+  onDesktops(fn: () => void): () => void {
+    this.desktopsListeners.add(fn);
+    return () => this.desktopsListeners.delete(fn);
+  }
+
   onSealed(fn: (e: SealedEvent) => void): () => void {
     this.sealedListeners.add(fn);
     return () => this.sealedListeners.delete(fn);
@@ -202,12 +235,12 @@ export class RemoteClient {
     const qr = decodePairingUrl(qrUrl);
     if (!qr) throw new PairingError("not a Homerun pairing code");
     const session = toB64url(systemRandom(16));
-    const init = new PairInitiator({ qr, me: this.identity.noise, hello: this.hello(), sessionId: session });
+    const init = new PairInitiator({ qr, me: this.identity.noise, hello: await this.hello(), sessionId: session });
     const ch = new RendezvousChannel(this.conn, "pair", qr.device_id, session, offerTag(qr.pairing_code));
     const linked = this.waitLinked(qr.device_id, timeoutMs);
     try {
-      ch.send(init.start());
-      const welcome = init.finish(await ch.next(timeoutMs));
+      ch.send(await init.start());
+      const welcome = await init.finish(await ch.next(timeoutMs));
       const statement = this.checkStatement(welcome.statement, welcome.signing_public_key, qr.device_id, qr.static_public_key, "qr");
       const desktop: PairedDesktop = {
         device_id: qr.device_id,
@@ -237,14 +270,14 @@ export class RemoteClient {
       desktopId,
       sessionId: session,
       me: this.identity.noise,
-      info: this.hello(),
+      info: await this.hello(),
     });
     const ch = new RendezvousChannel(this.conn, "link", desktopId as DeviceId, session);
     const linked = this.waitLinked(desktopId, timeoutMs);
     let finished = false;
     try {
-      ch.send(init.start());
-      ch.send(init.answer(await ch.next()));
+      ch.send(await init.start());
+      ch.send(await init.answer(await ch.next()));
       ch.send(init.reveal(await ch.next()));
       onCode(init.code!);
       const r = init.result(await ch.next(timeoutMs));
@@ -283,12 +316,17 @@ export class RemoteClient {
     else await this.unpin(desktopId);
   }
 
-  /** Deletes the account's relay data everywhere (§10.9), forgets this device and signs out. */
-  async deleteAccount(): Promise<void> {
-    await this.conn.call("DELETE", RELAY_PATHS.account);
+  /**
+   * Deletes the account, every device's data at the relay and the user at the identity provider
+   * (§10.9). The answer says whether the provider's user went too: "pending" means the relay is
+   * retrying, "manual" that the user must delete their sign-in there themselves.
+   */
+  async deleteAccount(): Promise<AccountDeleted["provider"]> {
+    const r = AccountDeleted.safeParse(await this.conn.call("DELETE", RELAY_PATHS.account));
     this.conn.close();
     await this.forget();
     await this.o.account.signOut();
+    return r.success ? r.data.provider : "manual";
   }
 
   // ---------------------------------------------------------------- live
@@ -316,7 +354,7 @@ export class RemoteClient {
       client_msg_id: i.client_msg_id ?? (crypto.randomUUID() as ClientMsgId),
       text: i.text,
     };
-    const env = this.sealTo(desktopId, body, expiresInMs);
+    const env = await this.sealTo(desktopId, body, expiresInMs);
     if (this.conn.state === "ready") return this.sendOverSocket(env);
     return this.postSealed(env);
   }
@@ -355,7 +393,7 @@ export class RemoteClient {
     if (this.o.kind !== "ios") throw new Error("only a phone answers from the lock screen");
     const b = push.body;
     if (!b.request_id || !b.actions?.some((a) => a.id === actionId)) throw new Error("this notification can't be answered from the lock screen");
-    const env = this.sealTo(push.sender_device_id, { type: "answer", request_id: b.request_id, response, via: "notification" }, SEALED_EXPIRY_DEFAULT_MS.answer);
+    const env = await this.sealTo(push.sender_device_id, { type: "answer", request_id: b.request_id, response, via: "notification" }, SEALED_EXPIRY_DEFAULT_MS.answer);
     return this.postSealed(env);
   }
 
@@ -371,13 +409,29 @@ export class RemoteClient {
 
   // ---------------------------------------------------------------- internals
 
-  private hello() {
+  private async attestation(): Promise<AppAttestation | undefined> {
+    if (this.o.kind !== "ios" || !this.o.attest) return undefined;
+    const p = publicOf(this.identity);
+    return this.o.attest({ device_id: this.deviceId, static_public_key: p.static_public_key, signing_public_key: p.signing_public_key });
+  }
+
+  private async hello() {
+    const attestation = await this.attestation();
     return {
       device_id: this.deviceId,
       platform: this.o.kind,
       name: this.state.device.name,
       signing_public_key: publicOf(this.identity).signing_public_key,
+      ...(attestation ? { attestation } : {}),
     };
+  }
+
+  /**
+   * What a paired desktop lets this device do: its link statement's platform. An iPhone the
+   * desktop couldn't attest is linked as a browser (§9.9).
+   */
+  role(desktopId: string): RemotePlatform | null {
+    return this.state.desktops[desktopId]?.statement.platform ?? null;
   }
 
   /** A statement is only good if the desktop we talked to signed it, for us, in our account. */
@@ -392,7 +446,8 @@ export class RemoteClient {
       s.device_id !== this.deviceId ||
       s.device_static_public_key !== me.static_public_key ||
       s.device_signing_public_key !== me.signing_public_key ||
-      s.platform !== this.o.kind ||
+      // The desktop may give an unattested iPhone a browser's role, never the reverse.
+      (s.platform !== this.o.kind && s.platform !== "web") ||
       s.method !== method ||
       (account !== null && s.account !== account)
     ) {
@@ -401,7 +456,7 @@ export class RemoteClient {
     return s;
   }
 
-  private sealTo(desktopId: string, body: SealedBody, expiresInMs: number): SealedEnvelope {
+  private sealTo(desktopId: string, body: SealedBody, expiresInMs: number): Promise<SealedEnvelope> {
     const d = this.state.desktops[desktopId];
     if (!d) throw new Error("not paired with that desktop");
     const now = this.now();
@@ -434,10 +489,17 @@ export class RemoteClient {
     return this.conn.call("POST", RELAY_PATHS.sealed, { envelope: env });
   }
 
-  private async open(raw: unknown) {
+  /** Opens one at a time, so the seen-set check and its update can't interleave. */
+  private open(raw: unknown) {
+    const r = this.opening.then(() => this.openNow(raw));
+    this.opening = r.catch(() => {});
+    return r;
+  }
+
+  private async openNow(raw: unknown) {
     const now = this.now();
     this.pruneSeen(now);
-    const r = openSealed(raw, {
+    const r = await openSealed(raw, {
       me: { deviceId: this.deviceId, noise: this.identity.noise },
       senderStatic: (id) => {
         const d = this.state.desktops[id];
@@ -464,6 +526,7 @@ export class RemoteClient {
         return this.updateLinks(f.links);
       case "presence":
         this.presence.set(f.device_id, { online: f.online, last_seen_at: f.last_seen_at });
+        this.desktopsChanged();
         return;
       case "receipt":
         if (f.status === "delivered") {
@@ -496,6 +559,7 @@ export class RemoteClient {
       void this.o.store.save(this.state);
     }
     for (const l of [...this.linksListeners]) l();
+    this.desktopsChanged();
   }
 
   private waitLinked(desktopId: string, timeoutMs: number): Promise<void> {
@@ -523,11 +587,13 @@ export class RemoteClient {
   private async pin(d: PairedDesktop): Promise<void> {
     this.state.desktops[d.device_id] = d;
     await this.o.store.save(this.state);
+    this.desktopsChanged();
   }
 
   private async unpin(id: string): Promise<void> {
     delete this.state.desktops[id];
     await this.o.store.save(this.state);
+    this.desktopsChanged();
   }
 
   /** The relay removed this device: drop its keys; a new pairing starts with a new identity. */
@@ -535,6 +601,12 @@ export class RemoteClient {
     this.state.desktops = {};
     this.state.seen = {};
     await this.o.store.clear();
+    await this.o.keys?.destroy();
+    this.desktopsChanged();
+  }
+
+  private desktopsChanged(): void {
+    for (const l of [...this.desktopsListeners]) l();
   }
 }
 

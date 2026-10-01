@@ -3,6 +3,7 @@ import { DeviceId, RelayPresence, StaticPublicKey, TimestampMs } from "@homerun/
 import { framed, fromB64url, toB64url, utf8 } from "./bytes";
 import { ed25519Verify, hash, type SigningKey } from "./crypto";
 import { DeviceKind, DevicePublic, SigningPublicKey } from "./identity";
+import { AppAttestation } from "./app-attest";
 import { NOISE_MAX_MESSAGE } from "./noise";
 import { SealedEnvelope } from "./sealed";
 import { LinkStatement } from "./statement";
@@ -51,8 +52,8 @@ export function challengeBytes(nonce: string, deviceId: string): Uint8Array {
   return framed(RELAY_AUTH_LABEL, nonce, deviceId);
 }
 
-export function signChallenge(key: SigningKey, nonce: string, deviceId: string): string {
-  return toB64url(key.sign(challengeBytes(nonce, deviceId)));
+export async function signChallenge(key: SigningKey, nonce: string, deviceId: string): Promise<string> {
+  return toB64url(await key.sign(challengeBytes(nonce, deviceId)));
 }
 
 export function requestBytes(deviceId: string, ts: number, method: string, path: string, body: Uint8Array): Uint8Array {
@@ -60,8 +61,15 @@ export function requestBytes(deviceId: string, ts: number, method: string, path:
 }
 
 /** HTTPS: `homerun-device: <device_id>.<ts>.<signature>` over the method, path and body hash. */
-export function signRequest(key: SigningKey, deviceId: string, ts: number, method: string, path: string, body: Uint8Array): string {
-  return `${deviceId}.${ts}.${toB64url(key.sign(requestBytes(deviceId, ts, method, path, body)))}`;
+export async function signRequest(
+  key: SigningKey,
+  deviceId: string,
+  ts: number,
+  method: string,
+  path: string,
+  body: Uint8Array,
+): Promise<string> {
+  return `${deviceId}.${ts}.${toB64url(await key.sign(requestBytes(deviceId, ts, method, path, body)))}`;
 }
 
 export function parseDeviceProof(header: string | null): { deviceId: string; ts: number; signature: string } | null {
@@ -83,7 +91,11 @@ export const bodyBytes = (body: string) => utf8(body);
 
 // ---------------------------------------------------------------- HTTPS bodies
 
-export const RegisterDevice = z.strictObject({ device: DevicePublic, name: DeviceName });
+/**
+ * `POST /v1/register`. An iPhone includes its App Attest attestation; the relay verifies it for its
+ * own routing (push tokens, lock-screen answers) and registers an unattested `ios` claim as `web`.
+ */
+export const RegisterDevice = z.strictObject({ device: DevicePublic, name: DeviceName, attestation: AppAttestation.optional() });
 export type RegisterDevice = z.infer<typeof RegisterDevice>;
 
 export const LinkedDevice = z.strictObject({
@@ -108,6 +120,14 @@ export const PushTokenBody = z.strictObject({
   token: z.string().regex(/^[0-9a-f]{64,200}$/),
   environment: z.enum(["sandbox", "production"]),
 });
+
+/**
+ * `DELETE /v1/account` (202): the relay data is gone; this is what happened to the user at the
+ * identity provider (§10.9). `pending`: the relay keeps retrying and refuses the account's
+ * tokens until it's done. `manual`: this relay can't delete it, the user does that themselves.
+ */
+export const AccountDeleted = z.strictObject({ provider: z.enum(["deleted", "pending", "manual"]) });
+export type AccountDeleted = z.infer<typeof AccountDeleted>;
 
 export const RelayErrorCode = z.enum([
   "unauthenticated",

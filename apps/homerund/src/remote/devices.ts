@@ -11,12 +11,20 @@ import type { Store } from "../store/store";
 export interface DeviceRow {
   device_id: string;
   name: string;
+  /** The device's role: `ios` only when this desktop verified its App Attest attestation. */
   platform: "ios" | "web";
+  /** What the device said it was. */
+  claimed_platform: "ios" | "web";
   method: "qr" | "code";
   static_public_key: string;
   signing_public_key: string;
   paired_at: number;
   last_seen_at: number | null;
+  /** The App Attest credential key (uncompressed P-256, base64url) and its last counter. */
+  attest_key: string | null;
+  attest_counter: number | null;
+  /** The Secure Enclave key that signs Face ID approvals, bound into the attestation. */
+  approval_key: string | null;
 }
 
 export class PairedDevices {
@@ -29,6 +37,7 @@ export class PairedDevices {
       device_id: r.device_id as PairedDevice["device_id"],
       name: r.name,
       platform: r.platform,
+      claimed_platform: r.claimed_platform,
       method: r.method,
       paired_at: r.paired_at,
       online: this.online.has(r.device_id),
@@ -57,13 +66,29 @@ export class PairedDevices {
   add(r: DeviceRow): void {
     this.store.db
       .query(
-        `INSERT INTO remote_devices (device_id, name, platform, method, static_public_key, signing_public_key, paired_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (device_id) DO UPDATE SET name = excluded.name, platform = excluded.platform, method = excluded.method,
+        `INSERT INTO remote_devices (device_id, name, platform, claimed_platform, method, static_public_key, signing_public_key,
+           paired_at, last_seen_at, attest_key, attest_counter, approval_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (device_id) DO UPDATE SET name = excluded.name, platform = excluded.platform,
+           claimed_platform = excluded.claimed_platform, method = excluded.method,
            static_public_key = excluded.static_public_key, signing_public_key = excluded.signing_public_key,
-           paired_at = excluded.paired_at, last_seen_at = excluded.last_seen_at`,
+           paired_at = excluded.paired_at, last_seen_at = excluded.last_seen_at, attest_key = excluded.attest_key,
+           attest_counter = excluded.attest_counter, approval_key = excluded.approval_key`,
       )
-      .run(r.device_id, r.name, r.platform, r.method, r.static_public_key, r.signing_public_key, r.paired_at, r.last_seen_at);
+      .run(
+        r.device_id,
+        r.name,
+        r.platform,
+        r.claimed_platform,
+        r.method,
+        r.static_public_key,
+        r.signing_public_key,
+        r.paired_at,
+        r.last_seen_at,
+        r.attest_key,
+        r.attest_counter,
+        r.approval_key,
+      );
   }
 
   remove(id: string): boolean {

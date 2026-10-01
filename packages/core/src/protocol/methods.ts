@@ -148,10 +148,26 @@ export const AccountStatus = named(
       error: z.string().max(500).nullable(),
     }),
     /** A device asking to link, while the shell's prompt shows its code (§10.5). */
-    link_request: z.object({ name: z.string().max(100), platform: z.enum(["ios", "web"]) }).nullable(),
+    link_request: z
+      .object({
+        name: z.string().max(100),
+        /** The authority it would get: `ios` only if App Attest vouched for it (§12). */
+        platform: z.enum(["ios", "web"]),
+        /** What it says it is. An `ios` claim App Attest didn't vouch for links as `web`. */
+        claimed_platform: z.enum(["ios", "web"]),
+      })
+      .nullable(),
   }),
 );
 export type AccountStatus = z.infer<typeof AccountStatus>;
+
+/**
+ * What happened to the user at the identity provider when the account was deleted (§10.9):
+ * `deleted` by the relay, `pending` (the relay keeps retrying) or `manual` (this relay can't, so
+ * the user deletes it in the provider's own settings).
+ */
+export const ProviderDeletion = named("ProviderDeletion", z.enum(["deleted", "pending", "manual"]));
+export type ProviderDeletion = z.infer<typeof ProviderDeletion>;
 
 /** A phone or browser linked to this desktop (§9.6 revocation). */
 export const PairedDevice = named(
@@ -159,7 +175,10 @@ export const PairedDevice = named(
   z.object({
     device_id: DeviceId,
     name: z.string().min(1).max(100),
+    /** Its role (§12): `ios` only if App Attest vouched for an iPhone app; otherwise `web`. */
     platform: z.enum(["ios", "web"]),
+    /** What it said it was when it paired. `ios` with platform `web` is an unverified iPhone. */
+    claimed_platform: z.enum(["ios", "web"]),
     /** QR pairing (§9.6) or code linking (§10.5). */
     method: z.enum(["qr", "code"]),
     paired_at: TimestampMs,
@@ -493,9 +512,10 @@ export const METHODS = {
   }),
   "account.delete": def("account.delete", {
     params: Empty,
-    result: z.object({ status: AccountStatus }),
+    result: z.object({ status: AccountStatus, provider: ProviderDeletion }),
     callers: LOCAL_UI,
-    description: "Delete the account's devices, links and queued messages at the relay (§10.7), unpair everything here, and sign out.",
+    description:
+      "Delete the account's devices, links and queued messages at the relay (§10.7) and its user at the identity provider (§10.9), unpair everything here, and sign out.",
   }),
   "devices.list": def("devices.list", {
     params: Empty,
@@ -732,7 +752,10 @@ export const NOTIFICATIONS = {
     params: z.object({
       request_id: Uuid,
       name: z.string().min(1).max(100),
+      /** The authority it would get (§12). */
       platform: z.enum(["ios", "web"]),
+      /** What it says it is; `ios` with platform `web` means App Attest didn't vouch for it. */
+      claimed_platform: z.enum(["ios", "web"]),
       /** The six-digit code the other device shows too (§10.5). */
       code: z.string().regex(/^[0-9]{6}$/),
       requested_at: TimestampMs,

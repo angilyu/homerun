@@ -1,5 +1,6 @@
 import type { DeviceId } from "@homerun/core";
 import {
+  type AppAttestation,
   type ClientFrame,
   type DeviceIdentity,
   type DeviceKind,
@@ -19,6 +20,7 @@ import {
   WS_BEARER_PREFIX,
   WS_SUBPROTOCOL,
 } from "@homerun/protocol";
+import { testAppAttestCA } from "@homerun/protocol/testing";
 
 /** Helpers shared by the relay's suites on Bun and on workerd. The relay is a black box here. */
 
@@ -27,6 +29,13 @@ export interface Target {
   wsUrl: string;
   now: () => number;
 }
+
+/** The App Attest CA the relays under test trust instead of Apple's. */
+export const appAttest = testAppAttestCA();
+export const appAttestRoot = toB64url(appAttest.root);
+
+/** The web client's origin the relays under test list. */
+export const WEB_ORIGIN = "https://app.homerun.test";
 
 export const b64 = (n = 32) => toB64url(crypto.getRandomValues(new Uint8Array(n)));
 export const sessionId = () => b64(16);
@@ -46,28 +55,37 @@ export class TestDevice {
     return publicOf(this.id);
   }
 
-  async req(t: Target, token: string, method: string, path: string, body?: unknown, o: { ts?: number; sign?: boolean } = {}): Promise<Response> {
+  async req(t: Target, token: string, method: string, path: string, body?: unknown, o: { ts?: number; sign?: boolean; origin?: string } = {}): Promise<Response> {
     const bytes = body === undefined ? new Uint8Array() : utf8(JSON.stringify(body));
     const headers: Record<string, string> = { authorization: `Bearer ${token}` };
     if (body !== undefined) headers["content-type"] = "application/json";
-    if (o.sign !== false) headers["homerun-device"] = signRequest(this.id.signing, this.deviceId, o.ts ?? t.now(), method, path, bytes);
+    if (o.origin) headers.origin = o.origin;
+    if (o.sign !== false) headers["homerun-device"] = await signRequest(this.id.signing, this.deviceId, o.ts ?? t.now(), method, path, bytes);
     return fetch(t.url + path, { method, headers, ...(body !== undefined ? { body: bytes as Uint8Array<ArrayBuffer> } : {}) });
   }
 
-  register(t: Target, token: string): Promise<Response> {
-    return this.req(t, token, "POST", RELAY_PATHS.devices, { device: this.pub, name: this.name });
+  /** An iPhone's attestation of its keys by the test CA (as the iOS app sends one). */
+  attestation(o: Parameters<typeof appAttest.attest>[1] = {}): AppAttestation {
+    const p = this.pub;
+    return appAttest.attest({ device_id: p.device_id, static_public_key: p.static_public_key, signing_public_key: p.signing_public_key }, o).attestation;
+  }
+
+  /** Registers; an iPhone attests unless `attestation` is null or another one. */
+  register(t: Target, token: string, o: { attestation?: AppAttestation | null } = {}): Promise<Response> {
+    const attestation = o.attestation === undefined ? (this.kind === "ios" ? this.attestation() : null) : o.attestation;
+    return this.req(t, token, "POST", RELAY_PATHS.devices, { device: this.pub, name: this.name, ...(attestation ? { attestation } : {}) });
   }
 
   async connect(t: Target, token: string, o: { browser?: boolean; auth?: boolean } = {}): Promise<Conn> {
     const c = await Conn.open(t.wsUrl, token, o.browser ?? false);
     if (o.auth === false) return c;
     const ch = await c.next("challenge");
-    c.send({ type: "auth", device_id: this.deviceId, signature: signChallenge(this.id.signing, ch.nonce, this.deviceId) });
+    c.send({ type: "auth", device_id: this.deviceId, signature: await signChallenge(this.id.signing, ch.nonce, this.deviceId) });
     await c.next("ready");
     return c;
   }
 
-  seal(to: TestDevice, body: Record<string, unknown>, o: { now: number; ttl: number; msgId?: string }): SealedEnvelope {
+  seal(to: TestDevice, body: Record<string, unknown>, o: { now: number; ttl: number; msgId?: string }): Promise<SealedEnvelope> {
     return seal({
       inner: { v: 1, msg_id: o.msgId ?? newMsgId(), sender_device_id: this.deviceId, created_at: o.now, expires_at: o.now + o.ttl, body } as never,
       to: to.deviceId,
@@ -85,7 +103,7 @@ export function pushBody(body = "Needs your answer") {
 }
 
 /** The statement a desktop signs to link `device` (what pairing or linking produces). */
-export function statement(desktop: TestDevice, device: TestDevice, account: string, now: number) {
+export function statement(desktop: TestDevice, device: TestDevice, account: string, now: number, platform = device.kind as "ios" | "web") {
   return signLinkStatement(
     {
       v: 1,
@@ -95,7 +113,7 @@ export function statement(desktop: TestDevice, device: TestDevice, account: stri
       desktop_static_public_key: desktop.pub.static_public_key,
       device_static_public_key: device.pub.static_public_key,
       device_signing_public_key: device.pub.signing_public_key,
-      platform: device.kind as "ios" | "web",
+      platform,
       method: "qr",
       created_at: now,
     },

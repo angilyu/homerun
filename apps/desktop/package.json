@@ -3,6 +3,12 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "exports": {
+    "./app": "./src/app.tsx",
+    "./hooks": "./src/hooks.ts",
+    "./ui": "./src/ui/bits.tsx",
+    "./styles.css": "./src/styles.css"
+  },
   "description": "The desktop app (\u00a74, \u00a75.1): the Tauri shell in src-tauri/ and the React DOM views in src/. State and logic live in @homerun/app-state.",
   "scripts": {
     "tauri": "tauri",

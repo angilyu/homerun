@@ -15,14 +15,16 @@ export function Tasks() {
     <Page
       title="Tasks"
       actions={
-        <>
-          <button type="button" onClick={() => app.go({ name: "task_edit", kind: "session" })}>
-            New task
-          </button>
-          <button type="button" className="primary" onClick={() => app.go({ name: "task_edit", kind: "monitor" })}>
-            New monitor
-          </button>
-        </>
+        app.client.may("tasks.create") && (
+          <>
+            <button type="button" onClick={() => app.go({ name: "task_edit", kind: "session" })}>
+              New task
+            </button>
+            <button type="button" className="primary" onClick={() => app.go({ name: "task_edit", kind: "monitor" })}>
+              New monitor
+            </button>
+          </>
+        )
       }
     >
       <ErrorText error={tasks.error} />

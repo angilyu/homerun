@@ -27,8 +27,9 @@ and your data stays on your machine. Users bring their own Anthropic API key.
 | 7 | The desktop app ([`apps/desktop`](apps/desktop/README.md)) | Done |
 | 8 | Packaging: menu bar, login item, signed updater; CLI access (8a); Windows (8b) | Done |
 | 9 | Accounts, relay and push ([`apps/relay`](apps/relay/README.md)) | Done: protocol, relay and reference client (9a); desktop sign-in, pairing and linking, live sessions, sealed messages and push (9b). The Cloudflare, WorkOS and Apple accounts and the deploy are [manual steps](apps/relay/README.md#deploying); a real phone is milestone 10 |
+| 10 | iOS and web ([`apps/web`](apps/web/README.md)) | 10a done: App Attest, deleting the provider's user, and the web client with reduced authority. A real browser against WorkOS and Pages is a [manual step](apps/desktop/README.md#manual-checks). 10b, the iOS app, is next |
 
-Later milestones (iOS and web, distribution) are listed in
+Later milestones (the iOS app, distribution) are listed in
 [design §16](docs/design.md#16-build-plan).
 
 ## Repository layout
@@ -38,12 +39,13 @@ Later milestones (iOS and web, distribution) are listed in
 | [`apps/homerund`](apps/homerund/README.md) | The runtime: agent runs, storage (SQLite), crash resume, the local socket |
 | [`apps/cli`](apps/cli/README.md) | `homerun`, the command-line client |
 | [`apps/desktop`](apps/desktop/README.md) | The macOS and Windows app: a Tauri shell that supervises `homerund`, and the React UI |
-| [`packages/app-state`](packages/app-state/README.md) | The platform-neutral client state layer the app's views render (and, later, the web and iOS clients) |
+| [`apps/web`](apps/web/README.md) | The web client: the desktop's views over the relay, with a browser's reduced authority, as static files for Cloudflare Pages |
+| [`packages/app-state`](packages/app-state/README.md) | The platform-neutral client state layer the app's and the web client's views render (and, later, the iOS app's) |
 | [`packages/core`](packages/core/README.md) | Task spec, events and the IPC protocol as Zod schemas, plus JSON Schema and test vectors |
 | [`packages/client`](packages/client/README.md) | How a local process finds and talks to `homerund`: the runtime, the CLI and the test harnesses share it |
 | [`apps/relay`](apps/relay/README.md) | The relay: a Cloudflare Worker with one Durable Object per account, and a Bun adapter for tests |
 | [`packages/protocol`](packages/protocol/README.md) | The relay protocol: Noise live sessions, sealed messages, pairing and linking, and its JSON test vectors |
-| [`packages/remote`](packages/remote/README.md) | A headless reference client that plays the phone and the web against the relay |
+| [`packages/remote`](packages/remote/README.md) | The remote client the web client builds on: device keys, sign-in, pairing and linking, and app-state's transport over the relay |
 | [`packages/testkit`](packages/testkit/README.md) | Test doubles: a local OIDC issuer and a mock APNs |
 | `spikes/` | Milestone 0 experiments: SDK behaviour, signing, packaging, native MCP servers |
 | `scripts/` | Repository checks (`check-no-secrets.sh`, `check-registry.sh`) and the macOS build, signing and notarization scripts (`scripts/macos/`) |

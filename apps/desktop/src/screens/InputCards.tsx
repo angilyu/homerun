@@ -3,6 +3,7 @@ import {
   CLASS_LABEL,
   alreadyAnswered,
   approvalResponse,
+  cantAnswer,
   checkGrant,
   contentText,
   describeResolution,
@@ -16,6 +17,7 @@ import {
   toggleOption,
   toolName,
   type ApprovalDecision,
+  type ClientRole,
   type GrantDraft,
   type InputResolution,
   type QuestionDraft,
@@ -27,7 +29,9 @@ import { Fold, Time } from "../ui/bits";
 
 /**
  * Approvals, questions and "Did this happen?" (§5.4, §5.6). Answering goes through
- * `ThreadSync.answer`; first answer wins, so a late answer shows who answered first.
+ * `ThreadSync.answer`; first answer wins, so a late answer shows who answered first. A card
+ * this client can't answer (the web and a destructive call, §9.9; any remote while its desktop is
+ * offline, §9.8) says why instead of offering buttons.
  */
 
 const REASON: Record<ApprovalPrompt["reason"], string> = {
@@ -43,10 +47,12 @@ export function InputCard({ sync, request_id, prompt, expires_at }: { sync: Thre
   const app = useApp();
   const runtime = useStore(app.client.runtime);
   const deviceId = runtime.state === "ready" ? runtime.device_id : null;
+  const role = app.client.role;
+  const notice = cantAnswer(prompt, role) ?? (runtime.state === "offline" ? "Can be answered when your Mac is back" : null);
 
   const answer = async (response: InputResponse) => {
     const r = await sync.answer(request_id, response);
-    if (r.status === "already_resolved") setLate(alreadyAnswered(r.state, r.answered_by, deviceId));
+    if (r.status === "already_resolved") setLate(alreadyAnswered(r.state, r.answered_by, deviceId, app.client.role));
   };
 
   if (late)
@@ -62,15 +68,31 @@ export function InputCard({ sync, request_id, prompt, expires_at }: { sync: Thre
   ) : null;
   switch (prompt.type) {
     case "approval":
-      return <ApprovalCard prompt={prompt} onAnswer={answer} footer={expiry} />;
+      return <ApprovalCard prompt={prompt} onAnswer={answer} footer={expiry} role={role} notice={notice} />;
     case "question":
-      return <QuestionCard prompt={prompt} onAnswer={answer} footer={expiry} />;
+      return <QuestionCard prompt={prompt} onAnswer={answer} footer={expiry} role={role} notice={notice} />;
     case "ambiguous_tool_call":
-      return <AmbiguityCard prompt={prompt} onAnswer={answer} />;
+      return <AmbiguityCard prompt={prompt} onAnswer={answer} notice={notice} />;
   }
 }
 
 type OnAnswer = (r: InputResponse) => Promise<void>;
+
+/** What a card shows: who may answer it, and why this client can't, if it can't. */
+interface CardProps {
+  onAnswer: OnAnswer;
+  footer?: React.ReactNode;
+  role?: ClientRole;
+  notice?: string | null;
+}
+
+function Notice({ text }: { text: string }) {
+  return (
+    <p className="notice" role="note">
+      {text}
+    </p>
+  );
+}
 
 function useSubmit(onAnswer: OnAnswer) {
   const [busy, setBusy] = useState(false);
@@ -89,16 +111,16 @@ function useSubmit(onAnswer: OnAnswer) {
   return { busy, error, setError, submit };
 }
 
-export function ApprovalCard({ prompt, onAnswer, footer }: { prompt: ApprovalPrompt; onAnswer: OnAnswer; footer?: React.ReactNode }) {
+export function ApprovalCard({ prompt, onAnswer, footer, role = "webview", notice = null }: CardProps & { prompt: ApprovalPrompt }) {
   const { busy, error, setError, submit } = useSubmit(onAnswer);
   const [editing, setEditing] = useState(false);
   const [grant, setGrant] = useState<GrantDraft>(() => initialGrant(prompt));
   const editor = grantEditor(prompt);
   const check = checkGrant(prompt, grant);
-  const always = offersAlways(prompt) && editor.classes.length > 0;
+  const always = offersAlways(prompt, role) && editor.classes.length > 0;
 
   const decide = (d: ApprovalDecision) => {
-    const r = approvalResponse(prompt, d, d === "allow_always" ? grant : undefined);
+    const r = approvalResponse(prompt, d, d === "allow_always" ? grant : undefined, role);
     if (!r.response) return setError(r.errors.join(" ") || "Check the pattern.");
     void submit(r.response);
   };
@@ -115,7 +137,8 @@ export function ApprovalCard({ prompt, onAnswer, footer }: { prompt: ApprovalPro
         </p>
       )}
       <Fold text={contentText(prompt.input)} lines={10} />
-      {editing && (
+      {notice && <Notice text={notice} />}
+      {editing && !notice && (
         <fieldset className="grant-editor">
           <legend>Always allow for this task</legend>
           {editor.pattern_editable ? (
@@ -163,7 +186,7 @@ export function ApprovalCard({ prompt, onAnswer, footer }: { prompt: ApprovalPro
           </div>
         </fieldset>
       )}
-      {!editing && (
+      {!editing && !notice && (
         <div className="row">
           <button type="button" className="primary" disabled={busy} onClick={() => decide("allow")}>
             Allow once
@@ -188,17 +211,17 @@ export function ApprovalCard({ prompt, onAnswer, footer }: { prompt: ApprovalPro
   );
 }
 
-export function QuestionCard({ prompt, onAnswer, footer }: { prompt: QuestionPrompt; onAnswer: OnAnswer; footer?: React.ReactNode }) {
+export function QuestionCard({ prompt, onAnswer, footer, role = "webview", notice = null }: CardProps & { prompt: QuestionPrompt }) {
   const { busy, error, submit } = useSubmit(onAnswer);
   const [draft, setDraft] = useState<QuestionDraft>(() => initialAnswers(prompt));
-  const response = questionResponse(prompt, draft);
+  const response = questionResponse(prompt, draft, role);
   return (
     <section className="card input-card question" aria-label="Question from Claude">
       {prompt.questions.map((q, qi) => {
         const a = draft.answers[qi]!;
         const name = `q${qi}`;
         return (
-          <fieldset key={qi}>
+          <fieldset key={qi} disabled={notice !== null}>
             <legend>
               {q.header && <span className="badge">{q.header}</span>} {q.question}
             </legend>
@@ -223,11 +246,15 @@ export function QuestionCard({ prompt, onAnswer, footer }: { prompt: QuestionPro
           </fieldset>
         );
       })}
-      <div className="row">
-        <button type="button" className="primary" disabled={busy || !response} onClick={() => response && void submit(response)}>
-          Send answer
-        </button>
-      </div>
+      {notice ? (
+        <Notice text={notice} />
+      ) : (
+        <div className="row">
+          <button type="button" className="primary" disabled={busy || !response} onClick={() => response && void submit(response)}>
+            Send answer
+          </button>
+        </div>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -239,7 +266,7 @@ export function QuestionCard({ prompt, onAnswer, footer }: { prompt: QuestionPro
 }
 
 /** "Did this happen?" after a crash interrupted a call that isn't safe to repeat (§5.4). */
-export function AmbiguityCard({ prompt, onAnswer }: { prompt: AmbiguousCallPrompt; onAnswer: OnAnswer }) {
+export function AmbiguityCard({ prompt, onAnswer, notice = null }: Omit<CardProps, "footer" | "role"> & { prompt: AmbiguousCallPrompt }) {
   const { busy, error, submit } = useSubmit(onAnswer);
   return (
     <section className="card input-card ambiguity" aria-label="Did this happen?">
@@ -251,14 +278,18 @@ export function AmbiguityCard({ prompt, onAnswer }: { prompt: AmbiguousCallPromp
         again on its own.
       </p>
       <Fold text={contentText(prompt.input)} lines={8} />
-      <div className="row">
-        <button type="button" disabled={busy} onClick={() => void submit({ type: "ambiguous_tool_call", outcome: "completed" })}>
-          Yes, it happened
-        </button>
-        <button type="button" disabled={busy} onClick={() => void submit({ type: "ambiguous_tool_call", outcome: "not_run" })}>
-          No, it didn't run
-        </button>
-      </div>
+      {notice ? (
+        <Notice text={notice} />
+      ) : (
+        <div className="row">
+          <button type="button" disabled={busy} onClick={() => void submit({ type: "ambiguous_tool_call", outcome: "completed" })}>
+            Yes, it happened
+          </button>
+          <button type="button" disabled={busy} onClick={() => void submit({ type: "ambiguous_tool_call", outcome: "not_run" })}>
+            No, it didn't run
+          </button>
+        </div>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -286,7 +317,7 @@ export function ResolvedLine({ prompt, resolution }: { prompt: InputPrompt; reso
   return (
     <p className="event resolved-line">
       <span>
-        {what}: {describeResolution(prompt, resolution, deviceId)}
+        {what}: {describeResolution(prompt, resolution, deviceId, app.client.role)}
         {answers ? ` — ${answers}` : ""}
         {resolution.response?.type === "approval" && resolution.response.grant ? ` (${resolution.response.grant.pattern ?? "any call"})` : ""}
       </span>{" "}

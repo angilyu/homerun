@@ -40,9 +40,13 @@ export interface OutboxItem {
   client_msg_id: string;
   text: string;
   created_at: number;
-  /** sending: the call is out. queued: the runtime was unreachable; sent on reconnect. failed: refused. */
-  state: "sending" | "queued" | "failed";
+  /**
+   * sending: the call is out. queued: the runtime was unreachable; sent on reconnect.
+   * relayed: sealed at the relay for an offline desktop, until `expires_at` (§9.4). failed: refused.
+   */
+  state: "sending" | "queued" | "relayed" | "failed";
   error?: string;
+  expires_at?: number;
 }
 
 export interface ThreadState {
@@ -71,7 +75,7 @@ export type ThreadAction =
   | { type: "pending"; requests: readonly InputRequest[] }
   | { type: "resynced" }
   | { type: "outbox_add"; item: OutboxItem }
-  | { type: "outbox_update"; client_msg_id: string; state: OutboxItem["state"]; error?: string }
+  | { type: "outbox_update"; client_msg_id: string; state: OutboxItem["state"]; error?: string; expires_at?: number }
   | { type: "outbox_remove"; client_msg_id: string };
 
 export function initialThreadState(thread_id: string): ThreadState {
@@ -122,7 +126,7 @@ export function reduceThread(s: ThreadState, a: ThreadAction): ThreadState {
       if (!s.outbox.some((o) => o.client_msg_id === a.client_msg_id)) return s;
       return {
         ...s,
-        outbox: s.outbox.map((o) => (o.client_msg_id === a.client_msg_id ? { ...o, state: a.state, error: a.error } : o)),
+        outbox: s.outbox.map((o) => (o.client_msg_id === a.client_msg_id ? { ...o, state: a.state, error: a.error, ...(a.expires_at !== undefined ? { expires_at: a.expires_at } : {}) } : o)),
       };
     }
     case "outbox_remove":
