@@ -386,12 +386,14 @@ describe("the account (§10.4, §10.9)", () => {
   });
 
   test("deleting the account wipes the relay's data, unpairs everything and signs out", async () => {
-    newUser(w);
+    const sub = newUser(w);
     const d = await signedInDesktop();
     const p = await aPhone();
     await pairByQr(d, p);
     const r = await d.sh.c.call("account.delete", {});
     expect(r.status).toMatchObject({ state: "signed_out", email: null, relay: { state: "off" } });
+    expect(r.provider).toBe("deleted");
+    expect(w.issuer.deletedUsers.has(sub)).toBe(true);
     expect(await list(d)).toEqual([]);
     expect(d.sh.keychain.has("refresh_token")).toBe(false);
     expect(d.sh.keychain.has("device_static_key")).toBe(false);

@@ -1,5 +1,5 @@
-import type { AccountStatus, PairedDevice } from "@homerun/core";
-import { type AppAttestPolicy, type DeviceIdentity, type LinkedDevice, productionAppAttestPolicy, RELAY_PATHS, type ServerFrame } from "@homerun/protocol";
+import type { AccountStatus, PairedDevice, ProviderDeletion } from "@homerun/core";
+import { AccountDeleted, type AppAttestPolicy, type DeviceIdentity, type LinkedDevice, productionAppAttestPolicy, RELAY_PATHS, type ServerFrame } from "@homerun/protocol";
 import { log } from "../log";
 import type { FrameSink, RemotePeer } from "../rpc/server";
 import { RemoteAccount, SignedOutError, TOKEN_HANDOVER_MS, type AccountDeps } from "./account";
@@ -192,12 +192,19 @@ export class RemoteService {
    * message. Then this desktop forgets its pairings and keys and signs out. The provider's user
    * is deleted in its own dashboard (a manual step).
    */
-  async deleteAccount(): Promise<AccountStatus> {
+  /**
+   * Deletes the account at the relay, which deletes the user at the identity provider too
+   * (§10.9). `provider` says whether it did: "pending" means it is retrying, "manual" that the
+   * user must delete their sign-in there themselves (a relay with no provider admin, or older).
+   */
+  async deleteAccount(): Promise<{ status: AccountStatus; provider: ProviderDeletion }> {
     if (!this.link || !this.account.usable) throw new RemoteError("unavailable", "Sign in to delete the account.");
     // Stopped first, so nothing reconnects and registers this desktop again meanwhile.
     this.link.stop();
+    let provider: ProviderDeletion;
     try {
-      await this.link.call("DELETE", RELAY_PATHS.account);
+      const r = AccountDeleted.safeParse(await this.link.call("DELETE", RELAY_PATHS.account));
+      provider = r.success ? r.data.provider : "manual";
     } catch (e) {
       this.sync();
       log.info("couldn't delete the account at the relay", { error: (e as Error).message });
@@ -205,7 +212,8 @@ export class RemoteService {
     }
     this.forgetEverything("the account was deleted");
     await this.account.signOut({ forgetAccount: true });
-    return this.status();
+    log.info("deleted the account", { provider });
+    return { status: this.status(), provider };
   }
 
   // ---------------------------------------------------------------- devices

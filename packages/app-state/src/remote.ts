@@ -1,4 +1,4 @@
-import { NOTIFICATIONS, type AccountStatus, type PairedDevice } from "@homerun/core";
+import { NOTIFICATIONS, type AccountStatus, type PairedDevice, type ProviderDeletion } from "@homerun/core";
 import { errorMessage } from "./errors";
 import { ago, when } from "./format";
 import type { Rpc } from "./rpc";
@@ -26,6 +26,8 @@ export class Remote {
   /** The QR offer on screen, if any. */
   readonly pairing = new Store<PairingOffer | null>(null);
   readonly error = new Store<string | null>(null);
+  /** What happened to the sign-in when this desktop deleted the account (§10.9); null otherwise. */
+  readonly deleted = new Store<ProviderDeletion | null>(null);
 
   constructor(private readonly rpc: Rpc) {}
 
@@ -65,10 +67,17 @@ export class Remote {
     return false;
   }
 
-  signIn = () => this.set(this.rpc.call("account.sign_in", {}));
+  signIn = () => {
+    this.deleted.set(null);
+    return this.set(this.rpc.call("account.sign_in", {}));
+  };
   cancelSignIn = () => this.set(this.rpc.call("account.cancel_sign_in", {}));
   signOut = () => this.set(this.rpc.call("account.sign_out", {}));
-  deleteAccount = () => this.set(this.rpc.call("account.delete", {}));
+  deleteAccount = async () => {
+    const r = await this.rpc.call("account.delete", {});
+    this.account.set(r.status);
+    this.deleted.set(r.provider);
+  };
 
   async unpair(device_id: string): Promise<void> {
     await this.rpc.call("devices.unpair", { device_id });
@@ -91,6 +100,18 @@ export class Remote {
 
   private async set(p: Promise<{ status: AccountStatus }>): Promise<void> {
     this.account.set((await p).status);
+  }
+}
+
+/** After deleting the account: whether the sign-in at the identity provider went too (§10.9). */
+export function deletedText(p: ProviderDeletion): string {
+  switch (p) {
+    case "deleted":
+      return "Your account was deleted, including your sign-in.";
+    case "pending":
+      return "Your account was deleted. Deleting your sign-in is still finishing; Homerun’s relay keeps trying.";
+    case "manual":
+      return "Your account was deleted here. Your sign-in wasn’t: delete it with the service you signed in with.";
   }
 }
 

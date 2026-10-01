@@ -1,6 +1,6 @@
 import { type AccountStatus, type PairedDevice, PROTOCOL_VERSION } from "@homerun/core";
 import { Account, MemoryStore, RemoteClient, type RemoteLive } from "@homerun/remote";
-import { startLocalRelay, type LocalRelay } from "@homerun/relay/local";
+import { startLocalRelay, type LocalRelay, WorkosAdmin } from "@homerun/relay/local";
 import { toB64url } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
@@ -41,6 +41,9 @@ async function workerdRelay(issuer: OidcIssuer, apns: ApnsMock): Promise<World["
     APNS_TOPIC: apns.topic,
     APNS_ENDPOINT: apns.url,
     APP_ATTEST_TEST_ROOT: toB64url(appAttest.root),
+    PROVIDER_ADMIN: "workos",
+    WORKOS_API_KEY: issuer.adminKey,
+    WORKOS_API_BASE: issuer.url,
   });
   const bunOnly = (): never => {
     throw new Error("only the Bun relay can do this; skip the test under workerd");
@@ -58,6 +61,7 @@ export async function startWorld(): Promise<World> {
         clientId: issuer.clientId,
         apns: { keyP8: apns.p8, keyId: apns.keyId, teamId: apns.teamId, topic: apns.topic, endpoint: apns.url },
         appAttest: appAttest.policy(),
+        providerAdmin: new WorkosAdmin(issuer.adminKey, issuer.url),
       });
   return {
     issuer,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { platformName, relayText, seenText, type PairingOffer } from "@homerun/app-state";
+import { deletedText, platformName, relayText, seenText, type PairingOffer } from "@homerun/app-state";
 import type { AccountStatus, PairedDevice } from "@homerun/core";
 import { encode } from "uqr";
 import { useAction, useApp, useNow, useStore } from "../hooks";
@@ -53,6 +53,7 @@ export function RemoteSection() {
 
 function AccountPart({ account, run, busy, hasDevices }: { account: AccountStatus; run: (f: () => Promise<unknown>) => void; busy: boolean; hasDevices: boolean }) {
   const remote = useApp().client.remote;
+  const deleted = useStore(remote.deleted);
   const now = useNow();
   const signIn = (
     <button type="button" className="primary" disabled={busy} onClick={() => run(remote.signIn)}>
@@ -65,6 +66,11 @@ function AccountPart({ account, run, busy, hasDevices }: { account: AccountStatu
     case "signed_out":
       return (
         <>
+          {deleted && (
+            <p className={deleted === "deleted" ? "notice info" : "notice warn"} role="status">
+              {deletedText(deleted)}
+            </p>
+          )}
           <p>Sign in to use Homerun from your iPhone or a browser. Chats stay on this computer; the relay only passes on encrypted messages.</p>
           {hasDevices && <p className="muted small">Your paired devices stay paired, and reconnect when you sign in to the same account.</p>}
           <ErrorText error={account.error} />

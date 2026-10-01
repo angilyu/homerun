@@ -9,6 +9,8 @@ import { DEFAULT_LIMITS, type RelayLimits } from "./config";
 import { AccountRelay, errorResponse, type RelaySocket, type SocketState } from "./core/account";
 import { checkOrigin, parseWebOrigins, preflight, withCors } from "./core/cors";
 import type { ProviderAdmin } from "./core/provider-admin";
+
+export { WorkosAdmin, type ProviderAdmin } from "./core/provider-admin";
 import { dropAll, type Sql, type SqlValue } from "./core/sql";
 
 /**

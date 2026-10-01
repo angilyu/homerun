@@ -167,7 +167,7 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     },
     "account.cancel_sign_in": () => ({ status: remoteOf().cancelSignIn() }),
     "account.sign_out": async () => ({ status: await remoteOf().signOut() }),
-    "account.delete": () => remote(async (r) => ({ status: await r.deleteAccount() })),
+    "account.delete": () => remote((r) => r.deleteAccount()),
     "devices.list": () => ({ devices: remoteOf().list() }),
     "devices.unpair": (_c, p) => remote((r) => (r.unpair(p.device_id), { ok: true as const })),
     "devices.pairing.start": () => remote((r) => r.startPairing()),

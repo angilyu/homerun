@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import type { DeviceId, RequestId } from "@homerun/core";
-import { startLocalRelay, type LocalRelay } from "@homerun/relay/local";
+import { startLocalRelay, type LocalRelay, WorkosAdmin } from "@homerun/relay/local";
 import { decodePairingUrl, encodePairingUrl, generateDeviceKeys, identityFromStored, newPairingCode, RELAY_PATHS, type SealedEnvelope } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
 import { ApnsMock, fakeDeviceToken, OidcIssuer } from "@homerun/testkit";
@@ -22,6 +22,7 @@ beforeAll(async () => {
     clientId: issuer.clientId,
     apns: { keyP8: apns.p8, keyId: apns.keyId, teamId: apns.teamId, topic: apns.topic, endpoint: apns.url },
     appAttest: appAttest.policy(),
+    providerAdmin: new WorkosAdmin(issuer.adminKey, issuer.url),
   });
 });
 afterEach(() => {
@@ -400,7 +401,7 @@ describe("unpairing and account deletion", () => {
 
   test("deleting the account removes every device and signs out", async () => {
     const { client, d, account, store } = await paired();
-    await client.deleteAccount();
+    expect(await client.deleteAccount()).toBe("deleted");
     expect(account.signedIn).toBe(false);
     expect(await store.load()).toBeNull();
     await until(() => d.conn.state === "removed" || d.conn.state === "closed");

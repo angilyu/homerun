@@ -9,6 +9,7 @@ import {
   type ClientMsgId,
 } from "@homerun/core";
 import {
+  AccountDeleted,
   type AppAttestation,
   type AttestedIdentity,
   decodePairingUrl,
@@ -294,11 +295,17 @@ export class RemoteClient {
   }
 
   /** Deletes the account's relay data everywhere (§10.9), forgets this device and signs out. */
-  async deleteAccount(): Promise<void> {
-    await this.conn.call("DELETE", RELAY_PATHS.account);
+  /**
+   * Deletes the account, every device's data at the relay and the user at the identity provider
+   * (§10.9). The answer says whether the provider's user went too: "pending" means the relay is
+   * retrying, "manual" that the user must delete their sign-in there themselves.
+   */
+  async deleteAccount(): Promise<AccountDeleted["provider"]> {
+    const r = AccountDeleted.safeParse(await this.conn.call("DELETE", RELAY_PATHS.account));
     this.conn.close();
     await this.forget();
     await this.o.account.signOut();
+    return r.success ? r.data.provider : "manual";
   }
 
   // ---------------------------------------------------------------- live
