@@ -1,3 +1,4 @@
+import "./jitless";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createApp } from "@homerun/desktop/app";
