@@ -44,6 +44,8 @@ export function routeFor(t: ShellTarget): Route {
       return { name: "thread", thread_id: t.thread_id };
     case "health":
       return { name: "health" };
+    case "settings":
+      return { name: "settings" };
     default:
       return { name: "home" };
   }

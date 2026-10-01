@@ -16,6 +16,7 @@ const phone = (over: Record<string, unknown> = {}) => ({
   claimed_platform: "ios",
   method: "qr",
   paired_at: T0,
+  biometric_approvals: true,
   online: true,
   last_seen_at: T0,
   ...over,
@@ -120,6 +121,7 @@ describe("Settings → Remote access (§10)", () => {
     const row = (await within(list).findByText(/Wenjing’s iPhone/)).closest("li") as HTMLElement;
     expect(row.textContent).toContain("iPhone");
     expect(row.textContent).toContain("Last seen 5 min ago");
+    expect(row.textContent).toContain("approves destructive actions with Face ID");
     fireEvent.click(within(row).getByRole("button", { name: "Unpair" }));
     const ask = within(row).getByRole("group", { name: /Unpair it\?/ });
     fireEvent.click(within(ask).getByRole("button", { name: "Unpair" }));
@@ -142,7 +144,21 @@ describe("Settings → Remote access (§10)", () => {
     await renderApp({ t, route: { name: "settings" } });
     const s = await section();
     expect((await within(s).findByText(/is asking to link/)).textContent).toContain("An iPhone that Apple couldn’t verify (it would link with a browser’s access)");
-    expect(within(within(s).getByRole("group", { name: "Paired devices" })).getByText("Unverified iPhone")).toBeTruthy();
+    const list = within(s).getByRole("group", { name: "Paired devices" });
+    expect(within(list).getByText("Unverified iPhone")).toBeTruthy();
+    expect(list.textContent).not.toContain("Face ID");
+  });
+
+  test("an iPhone without a Face ID key can't approve destructive actions (§18 row 115)", async () => {
+    const t = remoteTransport(signedIn(), [phone({ biometric_approvals: false })]);
+    await renderApp({ t, route: { name: "settings" } });
+    const list = await within(await section()).findByRole("group", { name: "Paired devices" });
+    expect((await within(list).findByText(/Wenjing’s iPhone/)).closest("li")?.textContent).toContain("destructive actions are approved here");
+  });
+
+  test("a notification about a phone's Face ID key opens Settings", async () => {
+    const { routeFor } = await import("../../src/hooks");
+    expect(routeFor({ screen: "settings" })).toEqual({ name: "settings" });
   });
 
   test("sign out and delete account ask first", async () => {
