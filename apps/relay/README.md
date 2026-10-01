@@ -9,7 +9,7 @@ It runs on Cloudflare Workers with one Durable Object per account ([§18 rows 74
 - **`src/worker.ts`**: the Worker verifies the access token at the edge, as a JWT checked against the provider's JWKS. The keys are fetched once and cached, so no request calls the provider (`src/auth.ts`). It then forwards the request to the account's Durable Object (`idFromName(sub)`), which accepts WebSockets through the hibernation API.
 - **`src/core/account.ts`**: all of the relay's logic, runtime-neutral: registration and device proofs, links, presence, live-session routing, the sealed-message queue, pairing offers and linking rendezvous, push and rate limits. It sees storage only through a small SQL interface (`src/core/sql.ts`).
 - **`src/local.ts`**: a Bun adapter that runs the same core on `bun:sqlite` and `Bun.serve`. The tests and `bun run dev` use it, and so does the reference client's end-to-end suite.
-- **`src/apns.ts`**: APNs over HTTP/2 with a token-based (`.p8`, ES256) provider JWT, using only `fetch` and WebCrypto.
+- **`src/apns.ts`**: APNs over HTTP/2 with a token-based (`.p8`, ES256) provider JWT, using only `fetch` and WebCrypto. A push whose sealed header carries an opaque `collapse_id` is sent with that `apns-collapse-id`, so the desktop's withdrawal replaces the push it withdraws ([§18 row 117](../../docs/design.md#18-decision-log)).
 
 ### What it stores
 

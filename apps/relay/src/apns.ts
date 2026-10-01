@@ -29,8 +29,13 @@ export type ApnsResult =
   | { ok: true; apnsId: string | null }
   | { ok: false; status: number; reason: string; unregistered: boolean };
 
+export interface PushOptions {
+  /** `apns-collapse-id`: the sealed header's opaque `collapse_id`, so a withdrawal replaces its push. */
+  collapseId?: string;
+}
+
 export interface PushSender {
-  send(deviceToken: string, environment: ApnsEnvironment, payload: ApnsPayload): Promise<ApnsResult>;
+  send(deviceToken: string, environment: ApnsEnvironment, payload: ApnsPayload, o?: PushOptions): Promise<ApnsResult>;
 }
 
 const HOSTS: Record<ApnsEnvironment, string> = {
@@ -62,13 +67,13 @@ export class ApnsClient implements PushSender {
     return token;
   }
 
-  async send(deviceToken: string, environment: ApnsEnvironment, payload: ApnsPayload): Promise<ApnsResult> {
-    let r = await this.post(deviceToken, environment, payload, false);
-    if (!r.ok && r.status === 403 && r.reason === "ExpiredProviderToken") r = await this.post(deviceToken, environment, payload, true);
+  async send(deviceToken: string, environment: ApnsEnvironment, payload: ApnsPayload, o: PushOptions = {}): Promise<ApnsResult> {
+    let r = await this.post(deviceToken, environment, payload, o, false);
+    if (!r.ok && r.status === 403 && r.reason === "ExpiredProviderToken") r = await this.post(deviceToken, environment, payload, o, true);
     return r;
   }
 
-  private async post(deviceToken: string, environment: ApnsEnvironment, payload: ApnsPayload, fresh: boolean): Promise<ApnsResult> {
+  private async post(deviceToken: string, environment: ApnsEnvironment, payload: ApnsPayload, o: PushOptions, fresh: boolean): Promise<ApnsResult> {
     const f = this.cfg.fetch ?? fetch;
     const base = this.cfg.endpoint ?? HOSTS[environment];
     let res: Response;
@@ -81,6 +86,7 @@ export class ApnsClient implements PushSender {
           "apns-push-type": "alert",
           "apns-priority": "10",
           "apns-expiration": String(payload.expiration),
+          ...(o.collapseId !== undefined ? { "apns-collapse-id": o.collapseId } : {}),
           "content-type": "application/json",
         },
         body: payload.body,

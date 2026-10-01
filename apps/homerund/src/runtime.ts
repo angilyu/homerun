@@ -184,12 +184,13 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     let server: RpcServer | null = null;
     // Local notifications go to the shell connection only: `notification.*` lists no other recipient (§8.2, §9.7).
     // …and, as sealed pushes, to paired iPhones (§9.7).
-    let pushRemote: RemoteService["push"] | null = null;
+    let remoteOut: Pick<RemoteService, "push" | "withdraw"> | null = null;
     const notifier = new Notifier(
       store,
       (m, p) => {
         server?.broadcast(m, p);
-        if (m === "notification.requested") pushRemote?.(p as Parameters<RemoteService["push"]>[0]);
+        if (m === "notification.requested") remoteOut?.push(p as Parameters<RemoteService["push"]>[0]);
+        else if (m === "notification.withdrawn") remoteOut?.withdraw((p as { key: string }).key);
       },
       o.notifyCoalesceMs,
     );
@@ -237,6 +238,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       hostname: device.hostname,
       // A development build also trusts the App Attest development environment (Xcode builds).
       appAttest: productionAppAttestPolicy(config.build === "development"),
+      approvalKeyRenewed: (dev) => notifier.approvalKeyRenewed(dev, t()),
       effects: {
         sendMessage: (p, origin) => manager.sendMessage(p, origin),
         createThread: (title, taskId) => manager.createThread(title, taskId),
@@ -249,7 +251,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       },
       ...o.remote,
     });
-    pushRemote = (n) => remote.push(n);
+    remoteOut = remote;
     server = new RpcServer({
       socketPath: config.socketPath,
       runDir: config.runDir,

@@ -11,7 +11,7 @@ import {
   type SealedPush as SealedPushSchema,
   answerableFromNotification,
 } from "@homerun/core";
-import { type DeviceIdentity, fromB64url, newMsgId, openSealed, seal, seenUntil, type SealedEnvelope } from "@homerun/protocol";
+import { collapseId, type DeviceIdentity, fromB64url, newMsgId, openSealed, seal, seenUntil, type SealedEnvelope } from "@homerun/protocol";
 import type { z } from "zod";
 import { log } from "../log";
 import type { Answer } from "../runs/ambiguity";
@@ -71,8 +71,18 @@ const PUSH_CATEGORY: Partial<Record<LocalNotification["kind"], PushCategory>> = 
   // The daily digest stays on the desktop: it's a summary, not news.
 };
 
+/** What a withdrawal says if the phone shows it at all (it replaces the original in place). */
+export const WITHDRAWN_TITLE = "Answered";
+
 export class SealedMessages {
   private queue: Promise<void> = Promise.resolve();
+  /**
+   * Keys the collapse ids of request pushes (§18 row 117). In memory: after a restart the
+   * notifier's sent-set is gone too, so nothing from an earlier life is withdrawn anyway.
+   */
+  private readonly collapseSecret = crypto.getRandomValues(new Uint8Array(32));
+  /** Requests pushed in this runtime life, so only those are withdrawn. */
+  private readonly pushedRequests = new Set<string>();
 
   constructor(private d: SealedDeps) {}
 
@@ -188,6 +198,25 @@ export class SealedMessages {
       ...(requestId ? { request_id: requestId } : {}),
       ...(prompt ? actionsFor(prompt) : {}),
     } as SealedPush;
+    if (requestId) this.pushedRequests.add(requestId);
+    this.send(phones, body, requestId);
+  }
+
+  /**
+   * The notification with this key was withdrawn on the desktop (answered, expired, cancelled).
+   * For a request we pushed, each iPhone gets a `withdrawn` push under the same collapse id, so
+   * it replaces the original and the extension removes it (§9.7, §18 row 117).
+   */
+  withdraw(key: string): void {
+    if (!key.startsWith("input:")) return;
+    const requestId = key.slice("input:".length);
+    if (!this.pushedRequests.delete(requestId)) return;
+    const phones = this.d.devices.rows().filter((r) => r.platform === "ios");
+    if (!phones.length) return;
+    this.send(phones, { type: "push", category: "input_request", title: WITHDRAWN_TITLE, body: "", request_id: requestId, withdrawn: true } as SealedPush, requestId);
+  }
+
+  private send(phones: DeviceRow[], body: SealedPush, requestId: string | null): void {
     const me = this.d.me();
     const now = this.d.now();
     for (const phone of phones) {
@@ -199,18 +228,26 @@ export class SealedMessages {
         expires_at: now + SEALED_EXPIRY_DEFAULT_MS.push,
         body,
       } as SealedInner;
+      const cid = requestId ? collapseId(this.collapseSecret, phone.device_id, requestId) : undefined;
       // Best effort: a phone with no push token, or an unreachable relay, just misses it.
-      seal({ inner, to: phone.device_id, sender: me.noise, recipientStatic: fromB64url(phone.static_public_key) })
+      seal({ inner, to: phone.device_id, sender: me.noise, recipientStatic: fromB64url(phone.static_public_key), ...(cid ? { collapseId: cid } : {}) })
         .then((env) => this.d.post(env))
         .catch((e: Error) => log.info("push not sent", { device_id: phone.device_id, error: e.message }));
     }
   }
 }
 
+const ACTION_LABEL_MAX = 64;
+
 /** Lock-screen buttons for a request a notification may answer (§9.7). */
 export function actionsFor(p: InputPrompt): Actions {
   if (!answerableFromNotification(p)) return {};
   if (p.type === "approval") return { actions: [{ id: "allow", label: "Allow" }, { id: "deny", label: "Deny" }] };
-  if (p.type === "question") return { actions: p.questions[0]!.options.map((o, i) => ({ id: `option:${i}`, label: o.label.slice(0, 64) })) };
+  if (p.type === "question") {
+    // The phone answers with the button's label, so a label too long for a button means "open the app".
+    const options = p.questions[0]!.options;
+    if (options.some((o) => o.label.length > ACTION_LABEL_MAX)) return {};
+    return { actions: options.map((o, i) => ({ id: `option:${i}`, label: o.label })) };
+  }
   return {};
 }

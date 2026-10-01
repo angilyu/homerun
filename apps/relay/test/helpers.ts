@@ -85,8 +85,9 @@ export class TestDevice {
     return c;
   }
 
-  seal(to: TestDevice, body: Record<string, unknown>, o: { now: number; ttl: number; msgId?: string }): Promise<SealedEnvelope> {
+  seal(to: TestDevice, body: Record<string, unknown>, o: { now: number; ttl: number; msgId?: string; collapseId?: string }): Promise<SealedEnvelope> {
     return seal({
+      collapseId: o.collapseId,
       inner: { v: 1, msg_id: o.msgId ?? newMsgId(), sender_device_id: this.deviceId, created_at: o.now, expires_at: o.now + o.ttl, body } as never,
       to: to.deviceId,
       sender: this.id.noise,

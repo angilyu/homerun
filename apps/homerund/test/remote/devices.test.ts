@@ -3,11 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RPC_ERROR, type PairedDevice } from "@homerun/core";
-import { decodePairingUrl } from "@homerun/protocol";
+import { approvalRenewalClientDataHash, decodePairingUrl, toB64url } from "@homerun/protocol";
+import { testApprovalKey, testAssertion } from "@homerun/protocol/testing";
+import type { FakeScript } from "../../src/agent/fake-engine";
 import { LinkDeclinedError, LiveClosedError, RpcCallError } from "@homerun/remote";
 import { fakeDeviceToken } from "@homerun/testkit";
 import { RpcCallError as LocalCallError } from "../../src/rpc/client";
-import { socketRuntime, until } from "../helpers";
+import { sessionSpec, socketRuntime, until } from "../helpers";
 import { appAttest, connected, desktop, envFor, pairByQr as pairWith, helloLive, linkByCode, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
 import { otherAppAttest } from "./harness";
 
@@ -429,3 +431,89 @@ describe("the account (§10.4, §10.9)", () => {
     await until(() => p.client.connectionState === "removed", 5000, "phone removed");
   });
 });
+
+describe("Face ID approvals (§9.8, §18 rows 115–116)", () => {
+  const deletes: FakeScript = async (x) => {
+    const i = (await x.nextInput())!;
+    await x.tool({ toolCallId: "c1", tool: "Bash", input: { command: "rm -rf build" }, canDefer: true });
+    x.result([i.uuid]);
+  };
+
+  async function destructiveWaiting(d: Desk) {
+    const { thread_id } = await d.sh.c.call("tasks.create", { spec: sessionSpec({ builtin: ["Bash"] }) as never });
+    await d.sh.c.call("messages.send", { thread_id, client_msg_id: crypto.randomUUID() as never, text: "clean" });
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const { requests } = await d.sh.c.call("input.list_pending", { thread_id });
+      if (requests.length) return requests[0]!;
+      if (Date.now() > deadline) throw new Error("timed out waiting for the approval");
+      await Bun.sleep(10);
+    }
+  }
+
+  test("allowing a destructive call from an iPhone needs a Face ID proof from the key it attested; without a key, only the Mac allows", async () => {
+    newUser(w);
+    const d = await signedInDesktop({ script: deletes, env: { HOMERUN_INPUT_GRACE_MS: "600000" } });
+    const p = await aPhone({ faceId: true });
+    const { desk } = await pairByQr(d, p);
+    const plain = await aPhone({ name: "No Face ID" });
+    await pairByQr(d, plain);
+    expect(Object.fromEntries((await list(d)).map((x) => [x.name, x.biometric_approvals]))).toEqual({ "Ada's iPhone": true, "No Face ID": false });
+
+    const req = await destructiveWaiting(d);
+    const allow = { type: "approval", decision: "allow" } as const;
+    const fields = { device_id: p.client.deviceId, desktop_id: desk.device_id, request_id: req.request_id, decision: "allow" };
+    const expiresAt = Date.now() + 60_000;
+    const answer = async (who: typeof p, approval?: { signature: string; expires_at: number }) => {
+      const live = await who.client.openLive(desk.device_id);
+      await helloLive(live, who.client.deviceId);
+      try {
+        return await live.request("input.answer", { request_id: req.request_id, response: allow, via: "app", ...(approval ? { approval } : {}) });
+      } catch (e) {
+        return e as RpcCallError;
+      } finally {
+        live.close();
+      }
+    };
+    const refused = async (r: unknown, text: string) => {
+      expect(r).toBeInstanceOf(RpcCallError);
+      expect((r as RpcCallError).code).toBe(RPC_ERROR.AUTHORITY_INSUFFICIENT);
+      expect((r as Error).message).toContain(text);
+    };
+
+    await refused(await answer(plain), "Approve on your Mac");
+    await refused(await answer(p), "Confirm with Face ID");
+    // Signed by another key, or for another decision: refused.
+    await refused(await answer(p, { signature: testApprovalKey().sign({ ...fields, expires_at: expiresAt }), expires_at: expiresAt }), "didn't verify");
+    await refused(await answer(p, { signature: p.approval!.sign({ ...fields, decision: "allow_always", expires_at: expiresAt }), expires_at: expiresAt }), "didn't verify");
+    expect(await answer(p, { signature: p.approval!.sign({ ...fields, expires_at: expiresAt }), expires_at: expiresAt })).toEqual({ status: "applied" });
+  }, 20_000);
+
+  test("a new approval key is pinned only with an App Attest assertion over it, and the Mac says so", async () => {
+    newUser(w);
+    const d = await signedInDesktop();
+    const p = await aPhone({ faceId: true });
+    const { desk } = await pairByQr(d, p);
+    const live = await p.client.openLive(desk.device_id);
+    await helloLive(live, p.client.deviceId);
+    const next = testApprovalKey();
+    const assertion = (key: string, counter: number) => toB64url(testAssertion(p.credential!.credentialSecretKey, approvalRenewalClientDataHash(p.client.deviceId, key), counter));
+    const renew = (approval_key: string, a: string) => live.request("devices.renew_approval_key", { approval_key, assertion: a }).catch((e) => e as RpcCallError);
+
+    // Vouching for another key, or signed by another credential: refused.
+    expect(await renew(next.publicKey, assertion(testApprovalKey().publicKey, 1))).toBeInstanceOf(RpcCallError);
+    const stranger = toB64url(testAssertion(crypto.getRandomValues(new Uint8Array(32)).fill(7), approvalRenewalClientDataHash(p.client.deviceId, next.publicKey), 1));
+    expect(await renew(next.publicKey, stranger)).toBeInstanceOf(RpcCallError);
+    expect(d.sh.notes.some((n) => n.method === "notification.requested" && (n.params as { kind: string }).kind === "device")).toBe(false);
+
+    expect(await renew(next.publicKey, assertion(next.publicKey, 1))).toEqual({ ok: true });
+    await until(() => d.sh.notes.some((n) => n.method === "notification.requested" && (n.params as { kind: string }).kind === "device"), 5000, "the Mac's notification");
+    const note = d.sh.notes.find((n) => n.method === "notification.requested" && (n.params as { kind: string }).kind === "device")!.params;
+    expect(note).toMatchObject({ target: { screen: "settings" }, thread_id: null, title: "Face ID approvals changed" });
+    // The same assertion again: the counter must go up.
+    const r = await renew(testApprovalKey().publicKey, assertion(next.publicKey, 1));
+    expect((r as RpcCallError).code).toBe(RPC_ERROR.AUTHORITY_INSUFFICIENT);
+    live.close();
+  }, 20_000);
+});
+

@@ -205,8 +205,12 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
       ["allow", approvalAnswer],
       ["always allow", { ...approvalAnswer, response: { type: "approval", decision: "allow_always", grant: { tool: "Bash", pattern: "npm install", class: "write" } } }],
       ["from lock screen", { ...approvalAnswer, via: "notification" }],
+      ["with Face ID", { ...approvalAnswer, approval: { signature: "MEUCIQDx7k2v9yJ3bQ8pN4mR6sT1uW5zA0cE2gH4iK6lM8nO0wIgP2rS4tU6vX8yZ0aB2cD4eF6gH8iJ0kL2mN4oP6qR8sT", expires_at: F.T0 + 60_000 } }],
     ],
-    badParams: [["missing via", { request_id: F.REQUEST, response: { type: "approval", decision: "allow" } }]],
+    badParams: [
+      ["missing via", { request_id: F.REQUEST, response: { type: "approval", decision: "allow" } }],
+      ["Face ID proof without expiry", { ...approvalAnswer, approval: { signature: "MEUCIQDx7k2v9yJ3bQ8pN4mR6sT1uW5zA0cE2gH4iK6lM8nO0w" } }],
+    ],
     badParamsRule: [["always allow without grant", { ...approvalAnswer, response: { type: "approval", decision: "allow_always" } }]],
     results: [["applied", { status: "applied" }], ["lost the race", { status: "already_resolved", state: "answered", answered_by: F.PHONE }]],
     badResults: [["unknown status", { status: "queued" }]],
@@ -296,7 +300,16 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
     badResults: [
       ["a desktop", { devices: [{ ...F.pairedDevice(), platform: "desktop" }] }],
       ["no claimed platform", { devices: [{ ...F.pairedDevice(), claimed_platform: undefined }] }],
+      ["no Face ID state", { devices: [{ ...F.pairedDevice(), biometric_approvals: undefined }] }],
     ],
+  },
+  "devices.renew_approval_key": {
+    params: [["renewed", { approval_key: `BH${"q".repeat(85)}`, assertion: "omlzaWduYXR1cmVYRzBFAiEA" }]],
+    badParams: [
+      ["compressed key", { approval_key: `Ah${"q".repeat(42)}`, assertion: "omlzaWduYXR1cmVYRzBFAiEA" }],
+      ["no assertion", { approval_key: `BH${"q".repeat(85)}` }],
+    ],
+    results: [["ok", { ok: true }]],
   },
   "devices.unpair": {
     params: [["by id", { device_id: F.PHONE }]],
@@ -402,6 +415,10 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
         { key: `input:${F.REQUEST}`, kind: "approval", target: { screen: "thread", thread_id: F.THREAD }, thread_id: F.THREAD, title: "Deploy site", body: "Approval needed: Bash (destructive)", created_at: F.T0 },
       ],
       ["missed checks", { key: "missed:1767225600000", kind: "missed_checks", target: { screen: "health" }, thread_id: null, title: "Monitors missed checks", body: "", created_at: F.T0 }],
+      [
+        "an iPhone renewed its Face ID key",
+        { key: `device:${F.PHONE}:1767225600000`, kind: "device", target: { screen: "settings" }, thread_id: null, title: "Ada's iPhone renewed its Face ID key", body: "It can approve destructive calls again.", created_at: F.T0 },
+      ],
     ],
     invalid: [
       ["title too long", { key: "input:x", kind: "question", target: { screen: "health" }, thread_id: null, title: "x".repeat(81), body: "", created_at: F.T0 }],
@@ -417,7 +434,7 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
   "devices.changed": {
     valid: [
       ["one phone", { devices: [F.pairedDevice()] }],
-      ["an unverified iPhone", { devices: [{ ...F.pairedDevice(), platform: "web" }] }],
+      ["an unverified iPhone", { devices: [{ ...F.pairedDevice(), platform: "web", biometric_approvals: false }] }],
       ["none", { devices: [] }],
     ],
     invalid: [["missing devices", {}]],

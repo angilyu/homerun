@@ -60,7 +60,7 @@ export type CliToolStatus =
   | { state: "foreign"; link: string };
 
 /** Where a notification click or a menu-bar row goes. */
-export type ShellTarget = { screen: "thread"; thread_id: string } | { screen: "health" } | { screen: "home" };
+export type ShellTarget = { screen: "thread"; thread_id: string } | { screen: "health" } | { screen: "settings" } | { screen: "home" };
 
 /** From the shell, in order: a notification or menu-bar click, or the updater changed. */
 export type ShellEvent = { type: "navigate"; target: ShellTarget } | { type: "update"; state: UpdateState };

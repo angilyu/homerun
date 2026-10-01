@@ -11,12 +11,13 @@ use std::collections::HashSet;
 pub const TITLE_MAX: usize = 80;
 pub const BODY_MAX: usize = 160;
 
-/// Where a click goes: a thread, or the Health screen. `None` just opens the window.
+/// Where a click goes: a thread, the Health or Settings screen, or just the window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "screen", rename_all = "snake_case")]
 pub enum Target {
     Thread { thread_id: String },
     Health,
+    Settings,
     Home,
 }
 
@@ -45,6 +46,7 @@ impl Permission {
 }
 
 const HEALTH_THREAD: &str = "homerun.health";
+const SETTINGS_THREAD: &str = "homerun.settings";
 const HOME_THREAD: &str = "homerun.shell";
 
 impl Target {
@@ -54,6 +56,7 @@ impl Target {
         match self {
             Target::Thread { thread_id } => thread_id.clone(),
             Target::Health => HEALTH_THREAD.into(),
+            Target::Settings => SETTINGS_THREAD.into(),
             Target::Home => HOME_THREAD.into(),
         }
     }
@@ -62,6 +65,7 @@ impl Target {
     pub fn from_thread_identifier(s: &str) -> Target {
         match s {
             HEALTH_THREAD => Target::Health,
+            SETTINGS_THREAD => Target::Settings,
             t if id_ok(t) => Target::Thread { thread_id: t.into() },
             _ => Target::Home,
         }
@@ -136,6 +140,7 @@ pub fn from_runtime(params: &Value) -> Option<Post> {
     let target = match params.pointer("/target/screen").and_then(Value::as_str)? {
         "thread" => Target::Thread { thread_id: params.pointer("/target/thread_id")?.as_str().filter(|t| id_ok(t))?.to_string() },
         "health" => Target::Health,
+        "settings" => Target::Settings,
         _ => return None,
     };
     let group = params.get("thread_id").and_then(Value::as_str).filter(|t| id_ok(t)).map(str::to_string);
@@ -231,8 +236,10 @@ mod tests {
         let mut bad = req("k:1");
         bad["target"] = json!({"screen": "thread", "thread_id": "../../etc"});
         assert!(from_runtime(&bad).is_none());
-        bad["target"] = json!({"screen": "settings"});
+        bad["target"] = json!({"screen": "inbox"});
         assert!(from_runtime(&bad).is_none());
+        bad["target"] = json!({"screen": "settings"});
+        assert_eq!(from_runtime(&bad).unwrap().target, Target::Settings);
         bad["target"] = json!({"screen": "health"});
         assert_eq!(from_runtime(&bad).unwrap().target, Target::Health);
     }
@@ -272,11 +279,12 @@ mod tests {
             [Permission::NotDetermined, Permission::Denied, Permission::Allowed, Permission::Allowed, Permission::Allowed, Permission::Unavailable]
         );
         assert_eq!(serde_json::to_value(Permission::NotDetermined).unwrap(), "not_determined");
+        assert_eq!(serde_json::to_value(Target::Settings).unwrap(), json!({"screen": "settings"}));
     }
 
     #[test]
     fn a_click_finds_its_way_back() {
-        for t in [Target::Thread { thread_id: "th_01H-x".into() }, Target::Health, Target::Home] {
+        for t in [Target::Thread { thread_id: "th_01H-x".into() }, Target::Health, Target::Settings, Target::Home] {
             assert_eq!(Target::from_thread_identifier(&t.thread_identifier()), t);
         }
         for junk in ["", "../x", "a b", "homerun.shell", &"x".repeat(65)] {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AccountDeleted, newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope, WS_BEARER_PREFIX, WS_SUBPROTOCOL } from "@homerun/protocol";
+import { AccountDeleted, collapseId, newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope, WS_BEARER_PREFIX, WS_SUBPROTOCOL } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
 import { fakeDeviceToken, type ApnsMock, type OidcIssuer } from "@homerun/testkit";
 import { b64, type Conn, instruction, pushBody, sessionId, statement, type Target, TestDevice } from "./helpers";
@@ -559,6 +559,24 @@ export function sharedScenarios(get: () => Ctx) {
       expect((await p.dc.next("receipt")).status).toBe("pushed");
       expect(c.apns.deliveries.filter((x) => x.token === token)).toHaveLength(1);
       expect(await p.pc.quiet("sealed")).toBe(true);
+    });
+
+    test("a collapse id in the header becomes apns-collapse-id; without one there is none", async () => {
+      const c = get();
+      const p = await linkedPair(c);
+      const token = fakeDeviceToken();
+      await p.phone.req(c.t, p.tok, "POST", RELAY_PATHS.pushToken, { token, environment: "sandbox" });
+      const cid = collapseId(new Uint8Array(32).fill(9), p.phone.deviceId, crypto.randomUUID());
+      const env = await p.desktop.seal(p.phone, pushBody(), { now: c.t.now(), ttl: HOUR, collapseId: cid });
+      expect(env.header.collapse_id).toBe(cid);
+      p.dc.send({ type: "sealed", envelope: env });
+      expect((await p.dc.next("receipt")).status).toBe("pushed");
+      expect((await c.apns.waitFor((x) => x.token === token)).collapseId).toBe(cid);
+      p.dc.send({ type: "sealed", envelope: await p.desktop.seal(p.phone, pushBody(), { now: c.t.now(), ttl: HOUR }) });
+      expect((await p.dc.next("receipt")).status).toBe("pushed");
+      const plain = c.apns.deliveries.filter((x) => x.token === token);
+      expect(plain).toHaveLength(2);
+      expect(plain[1]!.collapseId).toBeNull();
     });
 
     test("an unregistered token is forgotten", async () => {

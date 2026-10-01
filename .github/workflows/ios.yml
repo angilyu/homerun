@@ -1,0 +1,146 @@
+name: iOS
+
+# The iPhone app's native half on macOS, where minutes cost ten times Linux's (§16 row 10).
+# ios-swift: HomerunKit (Noise, sealed messages, pushes, App Attest, the token owner) under
+# `swift test` against the same packages/protocol/vectors JSON as bun test, on pull requests that
+# touch the Swift or the vectors. About a minute.
+# ios-sim: nightly and on demand, the whole app: prebuild, CocoaPods, a Release simulator build
+# (the JavaScript bundled by Metro, compiled by hermesc), then the app
+# launched with `-HomerunSelfTest 1` runs the protocol vectors under Hermes on the simulator
+# (apps/ios/scripts/sim-selftest.sh). The JavaScript side runs per pull request on Linux (ci.yml
+# ios-js).
+on:
+  pull_request:
+    paths:
+      - "apps/ios/modules/**"
+      - "apps/ios/targets/**"
+      - "packages/protocol/vectors/**"
+      - ".github/workflows/ios.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/ios/modules/**"
+      - "apps/ios/targets/**"
+      - "packages/protocol/vectors/**"
+      - ".github/workflows/ios.yml"
+  schedule:
+    - cron: "30 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  ios-swift:
+    name: HomerunKit (swift test)
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift
+        run: swift --version
+      - name: HomerunKit against the protocol vectors
+        working-directory: apps/ios/modules/homerun/ios/HomerunKit
+        run: swift test
+
+  ios-sim:
+    name: apps/ios simulator build and Hermes self-test
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: macos-26
+    # The agreed exception to 3 minutes (plan §8): nightly and on demand only. A cold React Native
+    # build is 9 to 14 minutes; the build step has its own bound, so the job's always-steps still
+    # save the caches and the logs.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # Expo's precompiled modules are built with Swift 6.3 (Xcode 26.4). Use the newest Xcode on
+      # the image; with an older Swift, build the Expo modules from source instead.
+      - name: Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          swift=$(xcrun swift --version 2>&1 | sed -nE 's/.*Swift version ([0-9]+\.[0-9]+).*/\1/p' | head -1)
+          echo "$xcode, Swift $swift"
+          if [ "$(printf '%s\n6.3\n' "$swift" | sort -V | head -1)" != "6.3" ]; then
+            echo "EXPO_USE_PRECOMPILED_MODULES=0" >> "$GITHUB_ENV"
+          fi
+      # A simulator's first boot takes minutes on a fresh runner: start it now, and let it finish
+      # during the build. The self-test waits for it, bounded.
+      - name: Boot a simulator while the app builds
+        run: |
+          udid=$(apps/ios/scripts/sim-selftest.sh pick)
+          echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl list devices | grep "$udid"
+          perl -e 'alarm 60; exec @ARGV' xcrun simctl boot "$udid" || echo "simctl boot didn't return; the self-test waits for the boot"
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/ios..."
+      # No relay or issuer: the self-test needs neither, and the build carries no account config.
+      - name: Prebuild
+        run: pnpm --filter @homerun/ios exec expo prebuild --platform ios --clean --no-install
+      # Podfile.lock doesn't exist until pod install (prebuild generates ios/), so the key is what
+      # decides it: the generated Podfile, the lockfile that pins every pod's podspec, the podspecs.
+      - name: Pods cache key
+        id: podkey
+        run: echo "key=pods-${{ runner.os }}-${{ hashFiles('apps/ios/ios/Podfile', 'apps/ios/ios/Podfile.properties.json', 'pnpm-lock.yaml', 'apps/ios/modules/**/*.podspec') }}-${EXPO_USE_PRECOMPILED_MODULES:-1}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: pods-restore
+        with:
+          path: |
+            apps/ios/ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: ${{ steps.podkey.outputs.key }}
+      - name: CocoaPods
+        id: pods
+        working-directory: apps/ios/ios
+        run: pod install
+      # Saved as soon as pod install succeeds, whatever the build does later.
+      - uses: actions/cache/save@v4
+        if: ${{ always() && steps.pods.outcome == 'success' && steps.pods-restore.outputs.cache-hit != 'true' }}
+        with:
+          path: |
+            apps/ios/ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: ${{ steps.podkey.outputs.key }}
+      # Each line of build.log carries the seconds since the build started, so even a build cut
+      # off by the timeout shows where the time went (scripts/build-timing.pl).
+      - name: Release simulator build
+        id: build
+        working-directory: apps/ios/ios
+        timeout-minutes: 25
+        run: |
+          set -o pipefail
+          xcodebuild -workspace Homerun.xcworkspace -scheme Homerun -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            -showBuildTimingSummary build 2>&1 |
+            perl -MTime::HiRes=time -pe 'BEGIN { $| = 1; $t = time } printf "%7.1f ", time - $t' > build.log
+          tail -3 build.log
+      - name: Where the build's time went
+        if: ${{ always() && steps.build.outcome != 'skipped' }}
+        working-directory: apps/ios/ios
+        run: |
+          [ "${{ steps.build.outcome }}" = success ] || tail -60 build.log
+          ../scripts/build-timing.pl build.log | tee build-timing.txt
+      # The app writes "HomerunSelfTest vectors: N passed" to stdout and a file in its container.
+      - name: Protocol vectors under Hermes on the simulator
+        working-directory: apps/ios/ios
+        timeout-minutes: 4
+        run: ../scripts/sim-selftest.sh build/Build/Products/Release-iphonesimulator/Homerun.app "$RUNNER_TEMP/selftest"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: ios-sim-logs
+          path: |
+            ${{ runner.temp }}/selftest
+            apps/ios/ios/build.log
+            apps/ios/ios/build-timing.txt
+          if-no-files-found: ignore
+          retention-days: 7

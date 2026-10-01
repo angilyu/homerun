@@ -284,6 +284,90 @@
       }
     },
     {
+      "name": "push with a collapse id",
+      "sender": "desktop",
+      "recipient_static": "yuErP1xPDl69hb0yGLaTF7_QD_DONivx1ovy88d6MgM",
+      "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+      "ephemeral_secret": "7e62a32dd6bd6bb0ae79053e06ac5bb91fcad9435ad5fdc2195314c8b52e6308",
+      "max_chunk": null,
+      "collapse_id": "5USyzTjmahv915ST9S8Xog",
+      "inner": {
+        "v": 1,
+        "msg_id": "nnYGQygk1NWo8c-1Yzjg4A",
+        "sender_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+        "created_at": 1780272000000,
+        "expires_at": 1780358400000,
+        "body": {
+          "type": "push",
+          "category": "input_request",
+          "title": "Approval needed",
+          "body": "The agent wants to run `npm install` in homerun.",
+          "thread_id": "3a2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+          "request_id": "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a",
+          "actions": [
+            {
+              "id": "allow",
+              "label": "Allow"
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            }
+          ]
+        }
+      },
+      "envelope": {
+        "header": {
+          "v": 1,
+          "mode": "sealed",
+          "kind": "push",
+          "msg_id": "nnYGQygk1NWo8c-1Yzjg4A",
+          "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+          "from_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "expires_at": 1780358400000,
+          "collapse_id": "5USyzTjmahv915ST9S8Xog"
+        },
+        "ciphertext": "ADDnWGAeDHGYoLwruqpBpTRQiArBWRAZESkpQADTWTnCNEifH2vvNpGsLOJAOvXy5pAB37IxwAJWfMDgRWPJASjGG0g7ITE7Re1eh8PZCqm2KM82DuQWB8XGLPxYddphTsal4bXZc2dKGWnBsXcaDixzivSbG8jTZXms_PMu6DLzNQsH7YwgYJOEl26OpjJymfvAmKGYWundRxEzKSp1SzPYsjF555CAVbopeU6SsSNNdnVQpnGCOa9fdK7hDTE0wh5A2hHpK4KpkbRBxROSs5F2i961Bc00JOXYD2-gqWFbZcNt3KRVWZqBUOnZDOdlPVvMEx49z7KfrKKYBufHS-G9i8zRK6rgekHAg7ImnO7yqO-9DoNHor4_A3CTwViwj1ubGtcHf7qjRGX6DFpwYpuAFOe3MEQbzjeQOLqhwLJ_6xoW5m9u1nw3ERBJl6mfAPDVEy1XYvPBzqqlbP-3DZ5LBpihCqO8Ziimu4SbiMWgRdGMgRIRnBXmu4KmzasFrDvJLpLMwZ5t0Ep-d56tjMfpWoFUg4wez_FV2lB_Iy5Ld_KCWgjrJEtTS2qGWbI_22KbpnDDFKVEmy0jbkftKdjbi33JAim4lqjRcLBjVwi0_9cIONmeBVOJGRd_aZOIDrV3fk_ENZjyYT2RaPkwscL9McUANSIwChOk7-77mx-jJs03yuyFrOCe1yNVwPFPqu6P"
+      }
+    },
+    {
+      "name": "withdrawal",
+      "sender": "desktop",
+      "recipient_static": "yuErP1xPDl69hb0yGLaTF7_QD_DONivx1ovy88d6MgM",
+      "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+      "ephemeral_secret": "9e30156ba2e2d35d3118e2f787970442251e830d9f1cd991355e2dcca4d27691",
+      "max_chunk": null,
+      "collapse_id": "5USyzTjmahv915ST9S8Xog",
+      "inner": {
+        "v": 1,
+        "msg_id": "mP_Fc-ZLuOPf4TJRDhI-HQ",
+        "sender_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+        "created_at": 1780272060000,
+        "expires_at": 1780275660000,
+        "body": {
+          "type": "push",
+          "category": "input_request",
+          "title": "Answered on your Mac",
+          "body": "",
+          "request_id": "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a",
+          "withdrawn": true
+        }
+      },
+      "envelope": {
+        "header": {
+          "v": 1,
+          "mode": "sealed",
+          "kind": "push",
+          "msg_id": "mP_Fc-ZLuOPf4TJRDhI-HQ",
+          "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+          "from_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "expires_at": 1780275660000,
+          "collapse_id": "5USyzTjmahv915ST9S8Xog"
+        },
+        "ciphertext": "ADCZnMwdLSwrOQohwVGV-EMsgbXMMH0ek7lCLHktKgoqP0Phi-Iin9SLx3sdt0K5fOcBSi7Dg_AFU7QHhWfcG-p1gzaGk-YLzSON9XLikJVOpTxeSNt4IsPgSsw-vOZ3bzFTePw5rqvwTrX4xA9Sdlk8AKpj3kYoymex2hSeRFNUwEqVs2OLVe_SUQRiLDT8R0WqDFT-4vQU5BYWW1rkk-MBOiRSKnOjSyj6CLKy04ucufmaUut2YoZEdggHoQ8i_t6S9xkPpRKVQ6PX963-cNcy84vld5Zf6E5_VxzrMpeKKmdfyBGF6MxD_4pOuQ3Z-ACmZi2y34FZrf_o99gQWV-jHijjYhS9kBNPyFqgwjndSPyi0PYIXARmkMxue1OOR90eoXi7Qy-yVhYjfnLh9niW1xkWRg_VEiwnSIuFWm3P9wBJu4bkEoHM3eQQ-UlbHXydgUsOjYsFhhotYrnwxcoZpci6Nqf5loS3SUJznaBzytH22nJFZZty80IYWg"
+      }
+    },
+    {
       "name": "inner sender differs",
       "sender": "phone",
       "recipient_static": "p358-Fr1XRGDVOMll5581kA00TQoaEK0NEb6em4ojm8",
@@ -493,6 +577,173 @@
             "via": "notification"
           }
         }
+      }
+    },
+    {
+      "name": "push with a collapse id opens",
+      "recipient": "phone",
+      "pinned": {
+        "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10": "p358-Fr1XRGDVOMll5581kA00TQoaEK0NEb6em4ojm8"
+      },
+      "now": 1780272120000,
+      "seen": [],
+      "envelope": {
+        "header": {
+          "v": 1,
+          "mode": "sealed",
+          "kind": "push",
+          "msg_id": "nnYGQygk1NWo8c-1Yzjg4A",
+          "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+          "from_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "expires_at": 1780358400000,
+          "collapse_id": "5USyzTjmahv915ST9S8Xog"
+        },
+        "ciphertext": "ADDnWGAeDHGYoLwruqpBpTRQiArBWRAZESkpQADTWTnCNEifH2vvNpGsLOJAOvXy5pAB37IxwAJWfMDgRWPJASjGG0g7ITE7Re1eh8PZCqm2KM82DuQWB8XGLPxYddphTsal4bXZc2dKGWnBsXcaDixzivSbG8jTZXms_PMu6DLzNQsH7YwgYJOEl26OpjJymfvAmKGYWundRxEzKSp1SzPYsjF555CAVbopeU6SsSNNdnVQpnGCOa9fdK7hDTE0wh5A2hHpK4KpkbRBxROSs5F2i961Bc00JOXYD2-gqWFbZcNt3KRVWZqBUOnZDOdlPVvMEx49z7KfrKKYBufHS-G9i8zRK6rgekHAg7ImnO7yqO-9DoNHor4_A3CTwViwj1ubGtcHf7qjRGX6DFpwYpuAFOe3MEQbzjeQOLqhwLJ_6xoW5m9u1nw3ERBJl6mfAPDVEy1XYvPBzqqlbP-3DZ5LBpihCqO8Ziimu4SbiMWgRdGMgRIRnBXmu4KmzasFrDvJLpLMwZ5t0Ep-d56tjMfpWoFUg4wez_FV2lB_Iy5Ld_KCWgjrJEtTS2qGWbI_22KbpnDDFKVEmy0jbkftKdjbi33JAim4lqjRcLBjVwi0_9cIONmeBVOJGRd_aZOIDrV3fk_ENZjyYT2RaPkwscL9McUANSIwChOk7-77mx-jJs03yuyFrOCe1yNVwPFPqu6P"
+      },
+      "expect": {
+        "ok": true,
+        "inner": {
+          "v": 1,
+          "msg_id": "nnYGQygk1NWo8c-1Yzjg4A",
+          "sender_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "created_at": 1780272000000,
+          "expires_at": 1780358400000,
+          "body": {
+            "type": "push",
+            "category": "input_request",
+            "title": "Approval needed",
+            "body": "The agent wants to run `npm install` in homerun.",
+            "thread_id": "3a2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "request_id": "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a",
+            "actions": [
+              {
+                "id": "allow",
+                "label": "Allow"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "withdrawal opens",
+      "recipient": "phone",
+      "pinned": {
+        "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10": "p358-Fr1XRGDVOMll5581kA00TQoaEK0NEb6em4ojm8"
+      },
+      "now": 1780272120000,
+      "seen": [],
+      "envelope": {
+        "header": {
+          "v": 1,
+          "mode": "sealed",
+          "kind": "push",
+          "msg_id": "mP_Fc-ZLuOPf4TJRDhI-HQ",
+          "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+          "from_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "expires_at": 1780275660000,
+          "collapse_id": "5USyzTjmahv915ST9S8Xog"
+        },
+        "ciphertext": "ADCZnMwdLSwrOQohwVGV-EMsgbXMMH0ek7lCLHktKgoqP0Phi-Iin9SLx3sdt0K5fOcBSi7Dg_AFU7QHhWfcG-p1gzaGk-YLzSON9XLikJVOpTxeSNt4IsPgSsw-vOZ3bzFTePw5rqvwTrX4xA9Sdlk8AKpj3kYoymex2hSeRFNUwEqVs2OLVe_SUQRiLDT8R0WqDFT-4vQU5BYWW1rkk-MBOiRSKnOjSyj6CLKy04ucufmaUut2YoZEdggHoQ8i_t6S9xkPpRKVQ6PX963-cNcy84vld5Zf6E5_VxzrMpeKKmdfyBGF6MxD_4pOuQ3Z-ACmZi2y34FZrf_o99gQWV-jHijjYhS9kBNPyFqgwjndSPyi0PYIXARmkMxue1OOR90eoXi7Qy-yVhYjfnLh9niW1xkWRg_VEiwnSIuFWm3P9wBJu4bkEoHM3eQQ-UlbHXydgUsOjYsFhhotYrnwxcoZpci6Nqf5loS3SUJznaBzytH22nJFZZty80IYWg"
+      },
+      "expect": {
+        "ok": true,
+        "inner": {
+          "v": 1,
+          "msg_id": "mP_Fc-ZLuOPf4TJRDhI-HQ",
+          "sender_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "created_at": 1780272060000,
+          "expires_at": 1780275660000,
+          "body": {
+            "type": "push",
+            "category": "input_request",
+            "title": "Answered on your Mac",
+            "body": "",
+            "request_id": "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a",
+            "withdrawn": true
+          }
+        }
+      }
+    },
+    {
+      "name": "collapse id stripped",
+      "recipient": "phone",
+      "pinned": {
+        "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10": "p358-Fr1XRGDVOMll5581kA00TQoaEK0NEb6em4ojm8"
+      },
+      "now": 1780272120000,
+      "seen": [],
+      "envelope": {
+        "header": {
+          "v": 1,
+          "mode": "sealed",
+          "kind": "push",
+          "msg_id": "nnYGQygk1NWo8c-1Yzjg4A",
+          "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+          "from_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "expires_at": 1780358400000
+        },
+        "ciphertext": "ADDnWGAeDHGYoLwruqpBpTRQiArBWRAZESkpQADTWTnCNEifH2vvNpGsLOJAOvXy5pAB37IxwAJWfMDgRWPJASjGG0g7ITE7Re1eh8PZCqm2KM82DuQWB8XGLPxYddphTsal4bXZc2dKGWnBsXcaDixzivSbG8jTZXms_PMu6DLzNQsH7YwgYJOEl26OpjJymfvAmKGYWundRxEzKSp1SzPYsjF555CAVbopeU6SsSNNdnVQpnGCOa9fdK7hDTE0wh5A2hHpK4KpkbRBxROSs5F2i961Bc00JOXYD2-gqWFbZcNt3KRVWZqBUOnZDOdlPVvMEx49z7KfrKKYBufHS-G9i8zRK6rgekHAg7ImnO7yqO-9DoNHor4_A3CTwViwj1ubGtcHf7qjRGX6DFpwYpuAFOe3MEQbzjeQOLqhwLJ_6xoW5m9u1nw3ERBJl6mfAPDVEy1XYvPBzqqlbP-3DZ5LBpihCqO8Ziimu4SbiMWgRdGMgRIRnBXmu4KmzasFrDvJLpLMwZ5t0Ep-d56tjMfpWoFUg4wez_FV2lB_Iy5Ld_KCWgjrJEtTS2qGWbI_22KbpnDDFKVEmy0jbkftKdjbi33JAim4lqjRcLBjVwi0_9cIONmeBVOJGRd_aZOIDrV3fk_ENZjyYT2RaPkwscL9McUANSIwChOk7-77mx-jJs03yuyFrOCe1yNVwPFPqu6P"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "decrypt_failed"
+      }
+    },
+    {
+      "name": "collapse id swapped",
+      "recipient": "phone",
+      "pinned": {
+        "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10": "p358-Fr1XRGDVOMll5581kA00TQoaEK0NEb6em4ojm8"
+      },
+      "now": 1780272120000,
+      "seen": [],
+      "envelope": {
+        "header": {
+          "v": 1,
+          "mode": "sealed",
+          "kind": "push",
+          "msg_id": "nnYGQygk1NWo8c-1Yzjg4A",
+          "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+          "from_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "expires_at": 1780358400000,
+          "collapse_id": "vWVrT_Iat6NGteoNRY1HEA"
+        },
+        "ciphertext": "ADDnWGAeDHGYoLwruqpBpTRQiArBWRAZESkpQADTWTnCNEifH2vvNpGsLOJAOvXy5pAB37IxwAJWfMDgRWPJASjGG0g7ITE7Re1eh8PZCqm2KM82DuQWB8XGLPxYddphTsal4bXZc2dKGWnBsXcaDixzivSbG8jTZXms_PMu6DLzNQsH7YwgYJOEl26OpjJymfvAmKGYWundRxEzKSp1SzPYsjF555CAVbopeU6SsSNNdnVQpnGCOa9fdK7hDTE0wh5A2hHpK4KpkbRBxROSs5F2i961Bc00JOXYD2-gqWFbZcNt3KRVWZqBUOnZDOdlPVvMEx49z7KfrKKYBufHS-G9i8zRK6rgekHAg7ImnO7yqO-9DoNHor4_A3CTwViwj1ubGtcHf7qjRGX6DFpwYpuAFOe3MEQbzjeQOLqhwLJ_6xoW5m9u1nw3ERBJl6mfAPDVEy1XYvPBzqqlbP-3DZ5LBpihCqO8Ziimu4SbiMWgRdGMgRIRnBXmu4KmzasFrDvJLpLMwZ5t0Ep-d56tjMfpWoFUg4wez_FV2lB_Iy5Ld_KCWgjrJEtTS2qGWbI_22KbpnDDFKVEmy0jbkftKdjbi33JAim4lqjRcLBjVwi0_9cIONmeBVOJGRd_aZOIDrV3fk_ENZjyYT2RaPkwscL9McUANSIwChOk7-77mx-jJs03yuyFrOCe1yNVwPFPqu6P"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "decrypt_failed"
+      }
+    },
+    {
+      "name": "collapse id added",
+      "recipient": "phone",
+      "pinned": {
+        "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10": "p358-Fr1XRGDVOMll5581kA00TQoaEK0NEb6em4ojm8"
+      },
+      "now": 1780272120000,
+      "seen": [],
+      "envelope": {
+        "header": {
+          "v": 1,
+          "mode": "sealed",
+          "kind": "push",
+          "msg_id": "pPjmEeWrf0NcYSXF75Aonw",
+          "to_device_id": "5b1f6a2e-3c4d-4e8f-8a7b-1c2d3e4f5a6b",
+          "from_device_id": "0e5a3c1d-7b2f-4d8e-9a61-3f0c2b7d9e10",
+          "expires_at": 1780358400000,
+          "collapse_id": "5USyzTjmahv915ST9S8Xog"
+        },
+        "ciphertext": "ADAgEdCpn3JsKAAK5zSZnOi6WvBQ-0-YgB_mXDHXdQgzavIO0aZ-DuBbBSuu11CdAdcB34lN-CML9LcMq4VFQWkBF80z8nuroXgID7cCDvmXTVUCXOdNHsRroC0YQMqWRi2vqeZRHxQTtGy6m5fpqfvEz_ag_8LbepCiv8AxOdoRB0clqMC_kvYwLX8g1x6L6syKGV1MbGtaAjeMCkVgXkugwMML0zdZOXyTT_5AQ6YLzIMlSv5zpBTZD_NCtuc8VsdFg-ZmS8_4PFi0PbyNO50PmU87omUuHsfYEbE3AJ9QBLWJDkRmCM9-s5ghBtJ1PK_2JB6aabRK719oFvpPMPazMMJpaaCj1sfmFwWwNWt_frqz-2lPUbPjPEry81XaZ5RhVcnlmG7cgctCgI01Bu9WuV_no_g8JQWIgcleMxCYxM6sDQWU20FgjOef86-43yLDSHst2XOyDScpgyBXURJ0THl7dWIZcfcMC7qOtlcoBmShMJlevH0RawQlgvp91KQdZSzZHHLntrtn8D4SsuQa8o8jwiUpKP8rtnMNkTsckkGP0uiM3AG-LCMiOxluI8OCLmwHiuSWRXNGv9B5vvxRT-k2uvp9FNEeqgWPRisBCHckrEYcMtLcBZLVMLfuMvib6RlCq56bGqPJwHWA3Yg0orW3aQ4sfoXgsDs7nvgOZW7KmXXR1lY7OlT9UeCnNDqP"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "decrypt_failed"
       }
     },
     {

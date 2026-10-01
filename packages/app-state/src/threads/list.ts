@@ -21,12 +21,25 @@ const byRecency = (a: ThreadSummary, b: ThreadSummary) => b.updated_at - a.updat
 export class ThreadList {
   readonly store = new Store<ThreadListState>({ threads: [], loaded: false, has_more: false, error: null });
 
+  /** The list on screen came from a cache: the first page replaces it, deleted threads and all. */
+  private cached = false;
+
   constructor(private readonly rpc: Rpc) {}
+
+  /** Show the cached list until the runtime answers (§9.8). */
+  restore(threads: readonly ThreadSummary[]): void {
+    const s = this.store.get();
+    if (s.loaded || s.threads.length > 0 || threads.length === 0) return;
+    this.cached = true;
+    this.store.set({ ...s, threads: merge([], threads) });
+  }
 
   async load(): Promise<void> {
     try {
       const r = await this.rpc.call("threads.list", { limit: PAGE });
-      this.store.set((s) => ({ threads: merge(r.threads, s.loaded ? [] : s.threads), loaded: true, has_more: r.has_more, error: null }));
+      const fresh = this.cached;
+      this.cached = false;
+      this.store.set((s) => ({ threads: merge(r.threads, s.loaded || fresh ? [] : s.threads), loaded: true, has_more: r.has_more, error: null }));
     } catch (e) {
       this.store.set((s) => ({ ...s, error: errorMessage(e) }));
     }

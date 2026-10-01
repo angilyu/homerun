@@ -80,6 +80,11 @@ export const SealedPush = named(
     request_id: RequestId.optional(),
     /** Present when the request can be answered from the lock screen (§9.7). */
     actions: z.array(z.object({ id: z.string().min(1).max(64), label: z.string().min(1).max(64) })).max(4).optional(),
+    /**
+     * `request_id` was answered, expired or was cancelled: the phone removes its notification
+     * instead of showing this one (§9.7, §18).
+     */
+    withdrawn: z.literal(true).optional(),
   }),
 );
 

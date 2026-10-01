@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": ["test", "scripts", "app.config.ts", "../homerund/src/globals.d.ts"]
+}

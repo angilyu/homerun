@@ -19,7 +19,7 @@ import {
 } from "../common";
 import { MonitorState, Run, RunState, Task, TaskKind, TaskVersion, Thread, ThreadSummary } from "../domain";
 import { GrantProposal, ToolGrant } from "../grants";
-import { AnswerVia, InputRequest, InputRequestState, InputResponse } from "../input";
+import { AnswerVia, ApprovalProof, InputRequest, InputRequestState, InputResponse } from "../input";
 import { ScheduleCoverage, ScheduleState } from "../schedule";
 import { HEALTH_DIGEST_MAX_MS, HealthDigest, HealthSettings } from "../health";
 import { TaskSpec } from "../task-spec";
@@ -90,6 +90,8 @@ const FULL_APP = ["shell", "webview", "cli_dev", "ios"] as const satisfies reado
 const LOCAL_UI = ["shell", "webview"] as const satisfies readonly CallerRole[];
 /** The shell's own launch-token connection, never forwarded webview calls (§5.2). */
 const SHELL = ["shell"] as const satisfies readonly CallerRole[];
+/** A verified iPhone, about itself. */
+const IOS = ["ios"] as const satisfies readonly CallerRole[];
 
 // ---------------------------------------------------------------- shared shapes
 
@@ -181,6 +183,11 @@ export const PairedDevice = named(
     claimed_platform: z.enum(["ios", "web"]),
     /** QR pairing (§9.6) or code linking (§10.5). */
     method: z.enum(["qr", "code"]),
+    /**
+     * Whether it may allow destructive calls: an iPhone whose Face ID approval key the desktop
+     * pinned (§9.8). Without one, those are approved on the Mac only.
+     */
+    biometric_approvals: z.boolean(),
     paired_at: TimestampMs,
     online: z.boolean(),
     last_seen_at: TimestampMs.nullable(),
@@ -422,14 +429,21 @@ export const METHODS = {
     description: "Unanswered input requests.",
   }),
   "input.answer": def("input.answer", {
-    params: z.object({ request_id: RequestId, response: InputResponse, via: AnswerVia }),
+    params: z.object({
+      request_id: RequestId,
+      response: InputResponse,
+      via: AnswerVia,
+      /** An iPhone allowing a destructive call signs it with Face ID (`needsApprovalProof`, §9.8). */
+      approval: ApprovalProof.optional(),
+    }),
     result: z.discriminatedUnion("status", [
       z.object({ status: z.literal("applied") }),
       /** First answer wins (§5.6): a second device learns who answered. */
       z.object({ status: z.literal("already_resolved"), state: InputRequestState, answered_by: z.string().nullable() }),
     ]),
     callers: EVERYONE,
-    description: "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller may not answer it (`INPUT_ANSWER_RIGHTS`, `checkResponse`).",
+    description:
+      "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller may not answer it (`INPUT_ANSWER_RIGHTS`, `checkResponse`), or when an iPhone allows a destructive call without a valid Face ID `approval`.",
   }),
 
   // ---- monitor state (§8.3)
@@ -543,6 +557,19 @@ export const METHODS = {
     description: "Close a pairing offer before it expires.",
   }),
 
+  "devices.renew_approval_key": def("devices.renew_approval_key", {
+    params: z.object({
+      /** The new Secure Enclave approval key, uncompressed P-256, base64url. */
+      approval_key: z.string().regex(/^[A-Za-z0-9_-]{87}$/),
+      /** An App Attest assertion over it (§9.8), CBOR, base64url. */
+      assertion: z.string().regex(/^[A-Za-z0-9_-]+$/).max(8192),
+    }),
+    result: Ok,
+    callers: IOS,
+    description:
+      "An iPhone's Face ID enrolment changed, so its approval key was replaced (§9.8). The desktop pins the new key only if an App Attest assertion with a higher counter vouches for it, and tells the user; otherwise destructive approvals stay on the Mac.",
+  }),
+
   // ---- shell only (§5.2)
   "devices.link.decide": def("devices.link.decide", {
     params: z.object({ request_id: Uuid, approve: z.boolean() }),
@@ -638,15 +665,19 @@ export const LOCAL_NOTIFICATION_BODY_MAX = 160;
 
 export const LocalNotificationKind = named(
   "LocalNotificationKind",
-  z.enum(["approval", "question", "ambiguous_call", "monitor_report", "monitor_failed", "monitor_paused", "missed_checks", "digest"]),
+  z.enum(["approval", "question", "ambiguous_call", "monitor_report", "monitor_failed", "monitor_paused", "missed_checks", "digest", "device"]),
   "What a local notification is about (§8.2, §9.7)",
 );
 export type LocalNotificationKind = z.infer<typeof LocalNotificationKind>;
 
-/** Where clicking the notification goes: the thread, or the Health screen for device-wide news. */
+/** Where clicking the notification goes: the thread, the Health screen for device-wide news, or Settings for a paired device. */
 export const NotificationTarget = named(
   "NotificationTarget",
-  z.discriminatedUnion("screen", [z.object({ screen: z.literal("thread"), thread_id: ThreadId }), z.object({ screen: z.literal("health") })]),
+  z.discriminatedUnion("screen", [
+    z.object({ screen: z.literal("thread"), thread_id: ThreadId }),
+    z.object({ screen: z.literal("health") }),
+    z.object({ screen: z.literal("settings") }),
+  ]),
 );
 export type NotificationTarget = z.infer<typeof NotificationTarget>;
 

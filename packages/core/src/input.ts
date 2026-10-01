@@ -192,6 +192,41 @@ export function checkResponse(prompt: InputPrompt, response: InputResponse, from
   return errs;
 }
 
+// ---------------------------------------------------------------- Face ID approvals (§9.8)
+
+/**
+ * Whether an iPhone's answer must carry an `ApprovalProof`: anything but "deny" on a destructive
+ * call. The phone signs it with a Secure Enclave key that only Face ID unlocks, and the desktop
+ * pinned that key's public half when App Attest vouched for the phone (§18). Denying is always
+ * safe, so it needs no proof. The desktop's own UI never needs one.
+ */
+export function needsApprovalProof(p: InputPrompt, r: InputResponse): boolean {
+  if (p.type === "question" || p.class !== "destructive") return false;
+  return !(r.type === "approval" && r.decision === "deny");
+}
+
+/** What an approval proof signs as the decision: the approval's decision or the call's outcome. */
+export function approvalDecision(r: InputResponse): string | null {
+  if (r.type === "approval") return r.decision;
+  if (r.type === "ambiguous_tool_call") return r.outcome;
+  return null;
+}
+
+/** How far ahead an approval proof may expire; the request's own expiry caps it too. */
+export const APPROVAL_PROOF_MAX_MS = 5 * 60 * 1000;
+
+/** An iPhone's Face ID signature over one answer (§9.8; the message is in `packages/protocol`). */
+export const ApprovalProof = named(
+  "ApprovalProof",
+  z.object({
+    /** ECDSA P-256 with SHA-256, DER, base64url. */
+    signature: z.string().regex(/^[A-Za-z0-9_-]{8,96}$/),
+    /** The proof is refused after this, and may claim at most `APPROVAL_PROOF_MAX_MS`. */
+    expires_at: TimestampMs,
+  }),
+);
+export type ApprovalProof = z.infer<typeof ApprovalProof>;
+
 /**
  * "Always allow" is never offered for a call known to be destructive (§5.6). An unmatched `Bash`
  * command (its grant becomes an allowlisted pattern with a non-destructive class) and an

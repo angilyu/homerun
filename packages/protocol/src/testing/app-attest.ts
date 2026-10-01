@@ -2,6 +2,7 @@ import { p256, p384 } from "@noble/curves/nist.js";
 import { sha256, sha384 } from "@noble/hashes/sha2.js";
 import { concat, toB64url, utf8 } from "../bytes";
 import { type AppAttestation, type AppAttestPolicy, attestationClientDataHash, type AttestedIdentity, IOS_APP_ID } from "../app-attest";
+import { type ApprovalFields, signApprovalForTesting } from "../approval";
 
 /**
  * A stand-in for Apple's App Attest service, for tests only (a separate `./testing` entry, never
@@ -228,3 +229,17 @@ export function testAssertion(credentialSecretKey: Uint8Array, clientDataHash: U
   const signature = p256.sign(nonce, credentialSecretKey, { prehash: true, format: "der" });
   return cbor({ map: [["signature", signature], ["authenticatorData", authenticatorData]] });
 }
+
+/** A Face ID approval key as a test iPhone holds it (phones keep theirs in the Secure Enclave). */
+export interface TestApprovalKey {
+  secretKey: Uint8Array;
+  /** Uncompressed P-256, base64url: what the phone binds into its attestation. */
+  publicKey: string;
+  sign(f: ApprovalFields): string;
+}
+
+export function testApprovalKey(): TestApprovalKey {
+  const secretKey = p256.utils.randomSecretKey();
+  return { secretKey, publicKey: toB64url(p256.getPublicKey(secretKey, false)), sign: (f) => signApprovalForTesting(secretKey, f) };
+}
+

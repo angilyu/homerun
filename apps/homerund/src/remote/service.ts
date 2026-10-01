@@ -1,8 +1,9 @@
-import type { AccountStatus, PairedDevice, ProviderDeletion } from "@homerun/core";
-import { AccountDeleted, type AppAttestPolicy, type DeviceIdentity, type LinkedDevice, productionAppAttestPolicy, RELAY_PATHS, type ServerFrame } from "@homerun/protocol";
+import type { AccountStatus, ApprovalProof, InputRequest, InputResponse, PairedDevice, ProviderDeletion } from "@homerun/core";
+import { AccountDeleted, type AppAttestPolicy, approvalRenewalClientDataHash, fromB64url, verifyAssertion, type DeviceIdentity, type LinkedDevice, productionAppAttestPolicy, RELAY_PATHS, type ServerFrame } from "@homerun/protocol";
 import { log } from "../log";
 import type { FrameSink, RemotePeer } from "../rpc/server";
 import { RemoteAccount, SignedOutError, TOKEN_HANDOVER_MS, type AccountDeps } from "./account";
+import { approvalRefusal } from "./approvals";
 import { type DeviceRow, PairedDevices } from "./devices";
 import { forgetIdentity, loadIdentity, newIdentity } from "./keys";
 import { RelayLink, type RelayLinkDeps } from "./link";
@@ -41,6 +42,8 @@ export interface RemoteDeps extends Omit<AccountDeps, "openBrowser" | "accountSw
   effects?: SealedEffects;
   /** Whose App Attest attestations make a device an iPhone; Apple's production root by default. */
   appAttest?: AppAttestPolicy;
+  /** An iPhone replaced its Face ID approval key: tell the user on this Mac (§18 row 116). */
+  approvalKeyRenewed?: (device: { device_id: string; name: string }) => void;
 }
 
 /** What tests may shorten or replace. */
@@ -50,7 +53,7 @@ export type RemoteTuning = Pick<RemoteDeps, "fetch" | "signInTimeoutMs" | "hando
 export class RemoteError extends Error {
   override name = "RemoteError";
   constructor(
-    readonly kind: "unavailable" | "not_found",
+    readonly kind: "unavailable" | "not_found" | "refused",
     message: string,
   ) {
     super(message);
@@ -66,6 +69,7 @@ export class RemoteService {
   private readonly linking: Linking;
   private readonly sealed: SealedMessages;
   private readonly name: string;
+  private readonly attest: AppAttestPolicy;
   /** Devices we asked the relay to link and haven't seen in its list yet. */
   private pendingLinks = new Set<string>();
   private cached: { raw: string; id: DeviceIdentity } | null = null;
@@ -85,7 +89,7 @@ export class RemoteService {
     const send = (f: Parameters<RelayLink["send"]>[0]) => this.link?.send(f) ?? false;
     const me = () => this.identity();
     const account = () => this.account.subject;
-    const attest = d.appAttest ?? productionAppAttestPolicy(false);
+    const attest = (this.attest = d.appAttest ?? productionAppAttestPolicy(false));
     this.pairing = new Pairing({
       me,
       name: this.name,
@@ -246,6 +250,39 @@ export class RemoteService {
     if (!(await this.linking.decide(requestId, approve))) throw new RemoteError("not_found", "That link request has ended.");
   }
 
+  /** Why an iPhone's answer is refused for want of a Face ID proof (§18 row 115), or null. */
+  approvalRefusal(deviceId: string, request: InputRequest, response: InputResponse, proof: ApprovalProof | undefined): string | null {
+    // The phone signs this desktop's relay identity: the id it paired with.
+    const me = loadIdentity(this.d.secrets)?.deviceId ?? "";
+    return approvalRefusal(this.devices.get(deviceId), me, request, response, proof, this.d.now());
+  }
+
+  /**
+   * An iPhone's Face ID enrolment changed, so the Secure Enclave dropped its approval key and made
+   * another (§18 row 116). The new key is pinned only when an App Attest assertion from the
+   * credential pinned at pairing vouches for it, with a higher counter: a stolen session key alone
+   * can't swap in a key of its own. The user hears about it on this Mac.
+   */
+  renewApprovalKey(deviceId: string, approvalKey: string, assertion: string): void {
+    const row = this.devices.get(deviceId);
+    if (!row || row.platform !== "ios" || !row.attest_key || row.attest_counter === null) {
+      throw new RemoteError("refused", "Only an iPhone this Mac verified can renew its approval key.");
+    }
+    let r: ReturnType<typeof verifyAssertion>;
+    try {
+      r = verifyAssertion(fromB64url(assertion), approvalRenewalClientDataHash(deviceId, approvalKey), fromB64url(row.attest_key), row.attest_counter, this.attest);
+    } catch {
+      r = { ok: false, reason: "malformed" };
+    }
+    if (!r.ok) {
+      log.warn("an approval key renewal didn't verify", { device_id: deviceId, reason: r.reason });
+      throw new RemoteError("refused", "This iPhone's new Face ID key couldn't be verified. Approve destructive actions on your Mac.");
+    }
+    this.devices.renewApprovalKey(deviceId, approvalKey, r.counter);
+    this.changed();
+    this.d.approvalKeyRenewed?.({ device_id: deviceId, name: row.name });
+  }
+
   // ---------------------------------------------------------------- runtime events
 
   shellConnected(): void {
@@ -261,6 +298,12 @@ export class RemoteService {
     } catch (e) {
       log.info("push not sent", { error: (e as Error).message });
     }
+  }
+
+  /** A local notification was withdrawn: so is its push (§18 row 117). */
+  withdraw(key: string): void {
+    if (!this.link || !this.account.usable || this.stopped) return;
+    this.sealed.withdraw(key);
   }
 
   /** The machine woke from sleep (`power.did_wake`). */

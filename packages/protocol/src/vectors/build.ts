@@ -10,7 +10,9 @@ import { openSealed, seal, sealRaw, type SealedEnvelope, type SealedHeader } fro
 import { linkStatementBytes, signLinkStatement, type LinkStatementBody } from "../statement";
 import { challengeBytes, requestBytes, signChallenge, signRequest } from "../wire";
 import { p256 } from "@noble/curves/nist.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { attestationClientDataHash, IOS_APP_ID } from "../app-attest";
+import { approvalMessage, approvalRenewalClientDataHash, checkApprovalProof, collapseId, signApprovalForTesting, type ApprovalFields } from "../approval";
 import { testAppAttestCA, testAssertion } from "../testing/app-attest";
 import { ACCOUNT, identityOf, T0, vectorDeviceKeys, type VectorDeviceName } from "./fixtures";
 import { seededRandom } from "./seeded";
@@ -79,9 +81,9 @@ export async function buildSealed() {
     text: "A longer instruction that is split into several fragments. ".repeat(4),
   } as SealedInner["body"], T0, 12 * HOUR);
 
-  const add = async (name: string, o: { inner: SealedInner; from: typeof phone; to: typeof desktop; toStatic?: Uint8Array; maxChunk?: number }) => {
+  const add = async (name: string, o: { inner: SealedInner; from: typeof phone; to: typeof desktop; toStatic?: Uint8Array; maxChunk?: number; collapseId?: string }) => {
     const e = eph(`sealed/${name}`);
-    const env = await seal({ inner: o.inner, to: o.to.deviceId, sender: o.from.noise, recipientStatic: o.toStatic ?? o.to.noise.publicKey, e, maxChunk: o.maxChunk });
+    const env = await seal({ inner: o.inner, to: o.to.deviceId, sender: o.from.noise, recipientStatic: o.toStatic ?? o.to.noise.publicKey, e, maxChunk: o.maxChunk, collapseId: o.collapseId });
     seals.push({
       name,
       sender: o.from === phone ? "phone" : "desktop",
@@ -89,6 +91,7 @@ export async function buildSealed() {
       to_device_id: o.to.deviceId,
       ephemeral_secret: toHex(e.secretKey),
       max_chunk: o.maxChunk ?? null,
+      ...(o.collapseId !== undefined ? { collapse_id: o.collapseId } : {}),
       inner: o.inner,
       envelope: env,
     });
@@ -137,6 +140,16 @@ export async function buildSealed() {
   const envFuture = await add("from the future", { inner: future, from: phone, to: desktop });
   const tooLong = inner("too long", answer.body, T0, 2 * HOUR);
   const envTooLong = await add("lifetime too long", { inner: tooLong, from: phone, to: desktop });
+  const collapse = collapseId(seededRandom("sealed/collapse-secret")(32), phone.deviceId, "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a");
+  const envCollapsing = await add("push with a collapse id", { inner: { ...push, msg_id: msgId("collapsing") }, from: desktop, to: phone, collapseId: collapse });
+  const withdrawal = inner(
+    "withdrawal",
+    { type: "push", category: "input_request", title: "Answered on your Mac", body: "", request_id: "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a", withdrawn: true } as SealedInner["body"],
+    T0 + 60_000,
+    HOUR,
+    desktop.deviceId,
+  );
+  const envWithdrawal = await add("withdrawal", { inner: withdrawal, from: desktop, to: phone, collapseId: collapse });
 
   const lyingHeader = (label: string): SealedHeader => ({
     v: 1,
@@ -154,6 +167,13 @@ export async function buildSealed() {
   await open("instruction opens", envInstruction, { ok: true });
   await open("push opens on the phone", envPush, { ok: true }, { recipient: "phone", pinned: { [desktop.deviceId]: "desktop" } });
   await open("answer opens", envAnswer, { ok: true });
+  const onPhone = { recipient: "phone" as const, pinned: { [desktop.deviceId]: "desktop" as const }, now: T0 + 120_000 };
+  await open("push with a collapse id opens", envCollapsing, { ok: true }, onPhone);
+  await open("withdrawal opens", envWithdrawal, { ok: true }, onPhone);
+  const { collapse_id: _dropped, ...noCollapse } = envCollapsing.header;
+  await open("collapse id stripped", { ...envCollapsing, header: noCollapse }, { ok: false, reason: "decrypt_failed" }, onPhone);
+  await open("collapse id swapped", { ...envCollapsing, header: { ...envCollapsing.header, collapse_id: collapseId(new Uint8Array(32), phone.deviceId, "x") } }, { ok: false, reason: "decrypt_failed" }, onPhone);
+  await open("collapse id added", { ...envPush, header: { ...envPush.header, collapse_id: collapse } }, { ok: false, reason: "decrypt_failed" }, onPhone);
   await open("fragmented instruction opens", envLong, { ok: true });
   await open("at the edge of the skew allowance", envAnswer, { ok: true }, { now: answer.expires_at + CLOCK_SKEW_MS });
 
@@ -526,8 +546,85 @@ export function buildAppAttest() {
   };
 }
 
+// ---------------------------------------------------------------- Face ID approvals
+
+export function buildApproval() {
+  const phone = keys("phone");
+  const desktop = keys("desktop");
+  const secret = seededRandom("approval/key")(32);
+  const approvalKey = toB64url(p256.getPublicKey(secret, false));
+  const otherKey = toB64url(p256.getPublicKey(seededRandom("approval/other")(32), false));
+  const now = T0;
+  const fields: ApprovalFields = { device_id: phone.device_id, desktop_id: desktop.device_id, request_id: "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0a", decision: "allow", expires_at: now + 60_000 };
+  const sig = signApprovalForTesting(secret, fields);
+  const verify: Record<string, unknown>[] = [];
+  const check = (name: string, o: { fields?: Partial<ApprovalFields>; signature?: string; key?: string; now?: number; request_expires_at?: number | null }, expect: string) => {
+    const f = { ...fields, ...o.fields };
+    const c = {
+      name,
+      device_id: f.device_id,
+      desktop_id: f.desktop_id,
+      request_id: f.request_id,
+      decision: f.decision,
+      proof: { signature: o.signature ?? sig, expires_at: f.expires_at },
+      approval_key: o.key ?? approvalKey,
+      now: o.now ?? now,
+      request_expires_at: o.request_expires_at === undefined ? now + 600_000 : o.request_expires_at,
+      expect,
+    };
+    const { expires_at: _e, ...rest } = f;
+    const r = checkApprovalProof(c.proof, rest, c.approval_key, { now: c.now, requestExpiresAt: c.request_expires_at });
+    const got = r.ok ? "ok" : r.reason;
+    if (got !== expect) throw new Error(`vector ${name}: expected ${expect}, got ${got}`);
+    verify.push(c);
+  };
+  check("valid", {}, "ok");
+  check("request without an expiry", { request_expires_at: null }, "ok");
+  check("another request", { fields: { request_id: "4c3b2a19-0f8e-4d7c-9b6a-5f4e3d2c1b0b" } }, "signature");
+  check("another decision", { fields: { decision: "allow_always" } }, "signature");
+  check("another desktop", { fields: { desktop_id: keys("other").device_id } }, "signature");
+  check("another phone", { fields: { device_id: keys("other").device_id } }, "signature");
+  check("a later expiry", { fields: { expires_at: now + 61_000 } }, "signature");
+  check("another key", { key: otherKey }, "signature");
+  check("expired", { now: fields.expires_at + CLOCK_SKEW_MS + 1 }, "expired");
+  check("outlives the request", { request_expires_at: now + 1_000 }, "too_long");
+  const far = { ...fields, expires_at: now + 5 * 60_000 + CLOCK_SKEW_MS + 1 };
+  check("more than five minutes past the skew allowance", { fields: far, signature: signApprovalForTesting(secret, far) }, "too_long");
+  check("signature not DER", { signature: toB64url(new Uint8Array(64).fill(1)) }, "signature");
+  check("key not a point", { key: toB64url(new Uint8Array(65).fill(4)) }, "signature");
+
+  const newKey = toB64url(p256.getPublicKey(seededRandom("approval/renewed")(32), false));
+  const cdh = approvalRenewalClientDataHash(phone.device_id, newKey);
+  const ca = testAppAttestCA("homerun-vector-app-attest");
+  const who = { device_id: phone.device_id, static_public_key: phone.x25519_public, signing_public_key: phone.ed25519_public };
+  const cred = ca.attest(who, { approvalKey, credentialSecretKey: seededRandom("app-attest/credential")(32) });
+  const wrongDomain = sha256(framed("homerun-app-attest-v1", phone.device_id, fromB64url(newKey)));
+  return {
+    $comment: COMMENT(
+      "Face ID approvals (§9.8): `message` cases fix the signed bytes (every client must match); `verify` cases check a proof (ECDSA P-256 SHA-256, DER) against the pinned key and clock, giving `expect` (ok or a reason); `renewal` cases fix the App Attest clientDataHash for a new approval key and check an assertion over it.",
+    ),
+    app_id: IOS_APP_ID,
+    max_lifetime_ms: 5 * 60_000,
+    clock_skew_ms: CLOCK_SKEW_MS,
+    message: [{ ...fields, hex: toHex(approvalMessage(fields)) }],
+    verify,
+    renewal: {
+      device_id: phone.device_id,
+      approval_key: newKey,
+      client_data_hash: toHex(cdh),
+      credential_public_key: toB64url(cred.credentialPublicKey),
+      assertions: [
+        { name: "counter increases", client_data_hash: toHex(cdh), assertion: toB64url(testAssertion(cred.credentialSecretKey, cdh, 4)), last_counter: 3, valid: true, counter: 4 },
+        { name: "counter replayed", client_data_hash: toHex(cdh), assertion: toB64url(testAssertion(cred.credentialSecretKey, cdh, 3)), last_counter: 3, valid: false },
+        { name: "attestation domain", client_data_hash: toHex(cdh), assertion: toB64url(testAssertion(cred.credentialSecretKey, wrongDomain, 4)), last_counter: 3, valid: false },
+      ],
+    },
+  };
+}
+
 export async function buildAll(): Promise<Record<string, unknown>> {
   return {
+    "approval.json": buildApproval(),
     "sealed.json": await buildSealed(),
     "live.json": await buildLive(),
     "pairing.json": await buildPairing(),

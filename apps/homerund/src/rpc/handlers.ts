@@ -7,6 +7,7 @@ import {
   SUPPORTED_PROTOCOL,
   SURFACE_OF_ROLE,
   negotiateCapabilities,
+  needsApprovalProof,
   negotiateProtocol,
   policyNeedsFullApp,
   type CallerRole,
@@ -99,6 +100,8 @@ function refuseWidening(reasons: string[]): void {
   if (reasons.length) throw new RpcFail(RPC_ERROR.AUTHORITY_INSUFFICIENT, `Change this in the Homerun app: ${reasons.join("; ")}.`);
 }
 
+const REMOTE_ERROR = { not_found: RPC_ERROR.NOT_FOUND, unavailable: RPC_ERROR.UNAVAILABLE, refused: RPC_ERROR.AUTHORITY_INSUFFICIENT } as const;
+
 const BACKLOG_PAGE = 1000;
 const HISTORY_DEFAULT = 100;
 const THREADS_DEFAULT = 50;
@@ -120,7 +123,7 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     try {
       return await fn(remoteOf());
     } catch (e) {
-      if (e instanceof RemoteError) throw new RpcFail(e.kind === "not_found" ? RPC_ERROR.NOT_FOUND : RPC_ERROR.UNAVAILABLE, e.message);
+      if (e instanceof RemoteError) throw new RpcFail(REMOTE_ERROR[e.kind], e.message);
       throw e;
     }
   };
@@ -173,6 +176,11 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     "devices.pairing.start": () => remote((r) => r.startPairing()),
     "devices.pairing.cancel": (_c, p) => remote((r) => (r.cancelPairing(p.offer_id), { ok: true as const })),
     "devices.link.decide": (_c, p) => remote(async (r) => (await r.decideLink(p.request_id, p.approve), { ok: true as const })),
+    "devices.renew_approval_key": (conn, p) => {
+      if (!conn.remote) throw new RpcFail(RPC_ERROR.AUTHORITY_INSUFFICIENT, "Only a paired iPhone renews its approval key.");
+      const deviceId = conn.remote.deviceId;
+      return remote((r) => (r.renewApprovalKey(deviceId, p.approval_key, p.assertion), { ok: true as const }));
+    },
     "cli.tokens.revoke": (_c, p) => {
       if (!d.cliAccess.revoke(p.token_id)) throw notFound("CLI token");
       return { ok: true as const };
@@ -350,6 +358,10 @@ export function makeHandlers(d: HandlerDeps): Handlers {
       const r = getInputRequest(store, p.request_id);
       if (!r) throw notFound("input request");
       const a = { response: p.response, role: conn.role!, via: p.via, origin: originOf(conn) };
+      if (conn.role === "ios" && needsApprovalProof(r.prompt, p.response)) {
+        const refused = conn.remote && d.remote ? d.remote.approvalRefusal(conn.remote.deviceId, r, p.response, p.approval) : "Approve on your Mac.";
+        if (refused) throw new RpcFail(RPC_ERROR.AUTHORITY_INSUFFICIENT, refused);
+      }
       try {
         if (r.prompt.type === "ambiguous_tool_call") return manager.answerAmbiguous(p.request_id, a);
         const out = manager.answerInput(p.request_id, a);

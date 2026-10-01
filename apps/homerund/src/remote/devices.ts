@@ -42,6 +42,7 @@ export class PairedDevices {
       paired_at: r.paired_at,
       online: this.online.has(r.device_id),
       last_seen_at: r.last_seen_at,
+      biometric_approvals: r.platform === "ios" && r.approval_key !== null,
     }));
   }
 
@@ -89,6 +90,15 @@ export class PairedDevices {
         r.attest_counter,
         r.approval_key,
       );
+  }
+
+  /** Pins a replacement Face ID approval key and the assertion counter that vouched for it. */
+  renewApprovalKey(id: string, approvalKey: string, counter: number): boolean {
+    return (
+      this.store.db
+        .query("UPDATE remote_devices SET approval_key = ?, attest_counter = ? WHERE device_id = ? AND platform = 'ios'")
+        .run(approvalKey, counter, id).changes > 0
+    );
   }
 
   remove(id: string): boolean {

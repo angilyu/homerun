@@ -119,9 +119,10 @@ describe("allowlists", () => {
     expect(RUNTIME_TO_SHELL_METHODS).toEqual(["secrets.persist", "secrets.delete"]);
   });
 
-  test("the shell can do everything the webview can, and the webview everything iOS can but pairing", () => {
+  test("the shell can do everything the webview can, and the webview everything iOS can but pairing and renewing its own Face ID key", () => {
     for (const m of ALLOWLISTS.webview) expect(ALLOWLISTS.shell).toContain(m);
-    for (const m of ALLOWLISTS.ios) expect([...ALLOWLISTS.webview, "hello"]).toContain(m);
+    for (const m of ALLOWLISTS.ios) expect([...ALLOWLISTS.webview, "hello", "devices.renew_approval_key"]).toContain(m);
+    expect(only("devices.renew_approval_key")).toEqual(["ios"]);
   });
 
   test("web cannot raise the agent's reach (§9.9)", () => {

@@ -703,7 +703,7 @@ export class AccountRelay {
     // Too big for APNs: the notification says something generic and the app fetches the
     // message itself when it next connects (§9.7).
     if (!payload.sealed) this.enqueue(env, env.header.from_device_id);
-    const r = await this.host.push!.send(t.token, t.environment, payload);
+    const r = await this.host.push!.send(t.token, t.environment, payload, { collapseId: env.header.collapse_id });
     if (!r.ok) {
       if (r.unregistered) this.sql.run(`DELETE FROM push_tokens WHERE device_id = ? AND token = ?`, to.device_id, t.token);
       this.host.log?.("apns_failed", { status: r.status, reason: r.reason });

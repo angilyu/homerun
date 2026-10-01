@@ -39,10 +39,12 @@ export interface GrantEditor {
 
 /**
  * Why this client can't answer a prompt, or null if it can (§9.9). The web client answers
- * questions and approves `read`-class calls only; the runtime enforces the same rule.
+ * questions and approves `read`-class calls only; an iPhone approves destructive calls only with
+ * Face ID (`signsApprovals`, §18 row 115). The runtime enforces the same rules.
  */
-export function cantAnswer(p: InputPrompt, role: ClientRole = "webview"): string | null {
+export function cantAnswer(p: InputPrompt, role: ClientRole = "webview", signsApprovals = true): string | null {
   if (role === "web" && requiredAuthority(p) === "full") return "Approve on your phone or Mac";
+  if (role === "ios" && !signsApprovals && p.type !== "question" && p.class === "destructive") return "Approve on your Mac";
   return null;
 }
 

@@ -1,0 +1,20 @@
+{
+  "platforms": [
+    "apple"
+  ],
+  "apple": {
+    "modules": [
+      "HomerunModule"
+    ],
+    "appDelegateSubscribers": [
+      "HomerunAppDelegate"
+    ],
+    "podspecPath": [
+      "ios/HomerunKit/HomerunKit.podspec",
+      "ios/HomerunNative.podspec"
+    ],
+    "swiftModuleName": [
+      "HomerunNative"
+    ]
+  }
+}

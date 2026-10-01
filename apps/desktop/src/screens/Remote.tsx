@@ -132,6 +132,7 @@ function Devices({ devices }: { devices: readonly PairedDevice[] | null }) {
             {d.name} <Badge>{platformName(d)}</Badge>{" "}
             <span className="muted">
               paired <Time ts={d.paired_at} /> · {seenText(d, now)}
+              {d.platform === "ios" && (d.biometric_approvals ? " · approves destructive actions with Face ID" : " · destructive actions are approved here")}
             </span>{" "}
             <ConfirmButton label="Unpair" confirm="Unpair it? It can’t reach this computer again until you pair it again." onConfirm={() => void unpair.run(d.device_id)} />
           </li>

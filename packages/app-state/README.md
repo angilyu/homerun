@@ -1,7 +1,7 @@
 # `@homerun/app-state`
 
 The client state layer (docs/design.md §9.8). The desktop app and the web client render it with
-React DOM; the iOS app (milestone 10b) renders the same stores with React Native. Nothing here imports React, the DOM, Tauri or Bun: `tsconfig.json` builds with
+React DOM; the [iOS app](../../apps/ios/README.md) renders the same stores with React Native. Nothing here imports React, the DOM, Tauri or Bun: `tsconfig.json` builds with
 `types: []` and `lib: ES2023`, so a platform API can't sneak in.
 
 **The seams.** A client supplies two things:
@@ -41,6 +41,14 @@ React DOM; the iOS app (milestone 10b) renders the same stores with React Native
   - A remote client whose desktop is offline seals the message at the relay instead: the bubble
     is `relayed` until the desktop applies it, with its expiry (§9.4). It is not sent again on
     reconnect; the desktop's copy is idempotent on the same `client_msg_id`.
+  - With a `ThreadCache` (`threads/cache.ts`), it opens on the cached events and outbox, then
+    subscribes from the last cached seq, so the iPhone shows history offline (§9.8). It keeps the
+    newest 200 contiguous events per thread and the first page of the list, written a second
+    after state settles; a failed read or write costs only the head start. The iOS app's cache is
+    SQLCipher (§18 row 122); the desktop and the web keep nothing.
+  - With a `signApproval` seam, an allow on a destructive call carries a Face ID proof
+    (§18 row 115). A cancelled Face ID sends nothing (`ApprovalNotConfirmedError`); a client
+    without the seam, or whose desktop hasn't pinned its key, says "Approve on your Mac".
 - `threads/list.ts`: the thread list, patched by `threads.changed`. `groupThreads` sorts it into
   "Needs you", "Running" and "Recent".
 - `inbox.ts`: every pending request, with its thread.

@@ -2,7 +2,7 @@ import { type AccountStatus, type PairedDevice, PROTOCOL_VERSION } from "@homeru
 import { Account, MemoryStore, RemoteClient, type RemoteLive } from "@homerun/remote";
 import { startLocalRelay, type LocalRelay, WorkosAdmin } from "@homerun/relay/local";
 import { toB64url } from "@homerun/protocol";
-import { testAppAttestCA } from "@homerun/protocol/testing";
+import { type TestApprovalKey, testApprovalKey, testAppAttestCA, type TestCredential } from "@homerun/protocol/testing";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
 import { startWorkerd } from "../../../relay/test/workerd/host";
 import type { FakeScript } from "../../src/agent/fake-engine";
@@ -190,7 +190,7 @@ export async function connected(sh: Shell, timeoutMs = 5000): Promise<void> {
 }
 
 /** A phone (or browser) signed in as the issuer's current user, registered and connected. */
-export async function phone(w: World, o: { kind?: "ios" | "web"; name?: string; store?: MemoryStore; attest?: boolean } = {}) {
+export async function phone(w: World, o: { kind?: "ios" | "web"; name?: string; store?: MemoryStore; attest?: boolean; faceId?: boolean } = {}) {
   const account = await Account.create({
     issuer: w.issuer.url,
     clientId: w.issuer.clientId,
@@ -200,6 +200,8 @@ export async function phone(w: World, o: { kind?: "ios" | "web"; name?: string; 
   });
   await account.signIn();
   const kind = o.kind ?? "ios";
+  const approval: TestApprovalKey | null = o.faceId ? testApprovalKey() : null;
+  let credential: TestCredential | null = null;
   const client = await RemoteClient.create({
     relayUrl: w.relay.url,
     account,
@@ -207,11 +209,27 @@ export async function phone(w: World, o: { kind?: "ios" | "web"; name?: string; 
     kind,
     name: o.name ?? (kind === "web" ? "Chrome on Linux" : "Ada's iPhone"),
     reconnect: { initialMs: 50, maxMs: 500 },
-    ...(o.attest === false ? {} : { attest: async (id) => appAttest.attest(id).attestation }),
+    ...(o.attest === false
+      ? {}
+      : {
+          attest: async (id) => {
+            credential = appAttest.attest(id, approval ? { approvalKey: approval.publicKey } : {});
+            return credential.attestation;
+          },
+        }),
   });
   await client.register();
   await client.connect();
-  return { client, account };
+  return {
+    client,
+    account,
+    /** The Face ID approval key, when the phone attested with one. */
+    approval,
+    /** Its App Attest credential, once it has attested. */
+    get credential() {
+      return credential;
+    },
+  };
 }
 
 /** Says hello on a live session as the paired device it is. */

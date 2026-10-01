@@ -48,10 +48,10 @@ export function InputCard({ sync, request_id, prompt, expires_at }: { sync: Thre
   const runtime = useStore(app.client.runtime);
   const deviceId = runtime.state === "ready" ? runtime.device_id : null;
   const role = app.client.role;
-  const notice = cantAnswer(prompt, role) ?? (runtime.state === "offline" ? "Can be answered when your Mac is back" : null);
+  const notice = cantAnswer(prompt, role, app.client.signsApprovals) ?? (runtime.state === "offline" ? "Can be answered when your Mac is back" : null);
 
   const answer = async (response: InputResponse) => {
-    const r = await sync.answer(request_id, response);
+    const r = await sync.answer(request_id, response, { prompt, expires_at });
     if (r.status === "already_resolved") setLate(alreadyAnswered(r.state, r.answered_by, deviceId, app.client.role));
   };
 
