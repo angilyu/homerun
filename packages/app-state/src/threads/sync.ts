@@ -1,9 +1,10 @@
-import type { InputResponse, MethodResult, ThreadEvent, UnknownThreadEvent } from "@homerun/core";
+import { approvalDecision, needsApprovalProof, type ApprovalProof, type InputPrompt, type InputResponse, type MethodResult, type ThreadEvent, type UnknownThreadEvent } from "@homerun/core";
 import type { Env } from "../env";
-import { NotConnectedError, errorMessage } from "../errors";
+import { ApprovalNotConfirmedError, NotConnectedError, errorMessage } from "../errors";
 import type { Rpc } from "../rpc";
 import type { QueuedInstruction } from "../transport";
 import { Store } from "../store";
+import { CACHE_WRITE_MS, cacheableThread, quietly, type ThreadCache } from "./cache";
 import { initialThreadState, reduceThread, type ThreadAction, type ThreadState } from "./reducer";
 
 /** Events per history page. */
@@ -16,9 +17,26 @@ export interface SyncContext {
   connected(): boolean;
   /** Seals a message at the relay while the desktop is offline; remote clients only (§9.4). */
   queue?: (i: QueuedInstruction) => Promise<{ expires_at: number }>;
+  /** Where this thread is kept between launches; the iOS app only (§9.8). */
+  cache?: ThreadCache;
+  /** Signs a destructive approval with Face ID; the iOS app only (§9.8, §18 row 115). */
+  signApproval?: ApprovalSigner;
 }
 
 export type AnswerOutcome = MethodResult<"input.answer">;
+
+/** What an iPhone signs for an answer that needs a proof; it adds its own and its desktop's ids. */
+export interface ApprovalToSign {
+  request_id: string;
+  decision: string;
+  expires_at: number;
+}
+
+/** Face ID, then the Secure Enclave approval key. Null when the user cancels or the phone has no key. */
+export type ApprovalSigner = (a: ApprovalToSign) => Promise<ApprovalProof | null>;
+
+/** How long a proof lives: long enough to reach a slow relay, well inside the runtime's 5 minutes. */
+export const APPROVAL_PROOF_TTL_MS = 2 * 60 * 1000;
 
 /**
  * Keeps one open thread in sync (§5.2, §9.8): the latest history page, then a subscription from
@@ -35,12 +53,47 @@ export class ThreadSync {
   private resyncing = false;
   private closed = false;
   private readMarker = 0;
+  private restoring: Promise<void> | null = null;
+  private writeTimer: unknown = null;
+  private unwatch: (() => void) | null = null;
 
   constructor(
     private readonly ctx: SyncContext,
     readonly thread_id: string,
   ) {
     this.store = new Store(initialThreadState(thread_id));
+    if (ctx.cache) this.unwatch = this.store.subscribe(() => this.scheduleWrite());
+  }
+
+  /**
+   * Show what the cache kept, before or without the runtime (§9.8). Opening afterwards subscribes
+   * from the cached last seq, so the backlog fills in what happened meanwhile. A message sealed at
+   * the relay shows until it expires there.
+   */
+  restore(): Promise<void> {
+    this.restoring ??= (async () => {
+      const cache = this.ctx.cache;
+      if (!cache || this.store.get().loaded) return;
+      const t = await cache.loadThread(this.thread_id).catch(() => null);
+      if (!t || this.closed) return;
+      const now = this.ctx.env.now();
+      this.dispatch({ type: "cached", events: t.events, has_earlier: t.has_earlier, outbox: t.outbox.filter((o) => o.state !== "relayed" || (o.expires_at ?? 0) > now) });
+    })();
+    return this.restoring;
+  }
+
+  private scheduleWrite(): void {
+    if (this.writeTimer !== null || this.closed) return;
+    this.writeTimer = this.ctx.env.setTimeout(() => {
+      this.writeTimer = null;
+      this.write();
+    }, CACHE_WRITE_MS);
+  }
+
+  private write(): void {
+    const cache = this.ctx.cache;
+    const t = cache ? cacheableThread(this.store.get()) : null;
+    if (cache && t) quietly(() => cache.saveThread(this.thread_id, t));
   }
 
   private dispatch(a: ThreadAction): void {
@@ -177,9 +230,20 @@ export class ThreadSync {
     await this.ctx.rpc.call("runs.stop", { run_id });
   }
 
-  /** First answer wins (§5.6): `already_resolved` says who answered first. */
-  async answer(request_id: string, response: InputResponse): Promise<AnswerOutcome> {
-    const r = await this.ctx.rpc.call("input.answer", { request_id, response, via: "app" });
+  /**
+   * First answer wins (§5.6): `already_resolved` says who answered first. On an iPhone, allowing a
+   * destructive call asks Face ID first (`request` says what was asked); if it doesn't confirm,
+   * nothing is sent (§9.8).
+   */
+  async answer(request_id: string, response: InputResponse, request?: { prompt: InputPrompt; expires_at: number | null }): Promise<AnswerOutcome> {
+    let approval: ApprovalProof | undefined;
+    if (this.ctx.signApproval && request && needsApprovalProof(request.prompt, response)) {
+      const expires_at = Math.min(this.ctx.env.now() + APPROVAL_PROOF_TTL_MS, request.expires_at ?? Number.MAX_SAFE_INTEGER);
+      const proof = await this.ctx.signApproval({ request_id, decision: approvalDecision(response) ?? "", expires_at }).catch(() => null);
+      if (!proof) throw new ApprovalNotConfirmedError();
+      approval = proof;
+    }
+    const r = await this.ctx.rpc.call("input.answer", { request_id, response, via: "app", ...(approval ? { approval } : {}) });
     if (r.status === "already_resolved") void this.refreshPending().catch(() => {});
     return r;
   }
@@ -198,6 +262,12 @@ export class ThreadSync {
 
   close(): void {
     this.closed = true;
+    this.unwatch?.();
+    if (this.writeTimer !== null) {
+      this.ctx.env.clearTimeout(this.writeTimer);
+      this.writeTimer = null;
+      this.write();
+    }
     const sub = this.subscription;
     this.subscription = null;
     if (sub && this.ctx.connected()) void this.ctx.rpc.call("threads.unsubscribe", { subscription_id: sub }).catch(() => {});

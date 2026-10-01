@@ -70,6 +70,8 @@ export interface ThreadState {
 
 export type ThreadAction =
   | { type: "latest"; events: readonly StoredEvent[]; has_more: boolean }
+  /** The window a cache kept (`cache.ts`), shown until the runtime answers; ignored once loaded. */
+  | { type: "cached"; events: readonly StoredEvent[]; has_earlier: boolean; outbox: readonly OutboxItem[] }
   | { type: "earlier"; events: readonly StoredEvent[]; has_more: boolean }
   | { type: "event"; event: ThreadEvent | UnknownThreadEvent }
   | { type: "pending"; requests: readonly InputRequest[] }
@@ -102,6 +104,20 @@ export function reduceThread(s: ThreadState, a: ThreadAction): ThreadState {
         last_seq: last ? seqOf(last) : 0,
         has_earlier: a.has_more || events.length < a.events.length,
         outbox: dropSent(s.outbox, events),
+      };
+      return events.reduce(applySideEffects, s2);
+    }
+    case "cached": {
+      if (s.loaded) return s;
+      const events = contiguousTail(a.events);
+      const last = events.at(-1);
+      const s2: ThreadState = {
+        ...s,
+        loaded: true,
+        events,
+        last_seq: last ? seqOf(last) : 0,
+        has_earlier: a.has_earlier || events.length < a.events.length,
+        outbox: dropSent([...a.outbox.filter((o) => !s.outbox.some((x) => x.client_msg_id === o.client_msg_id)), ...s.outbox], events),
       };
       return events.reduce(applySideEffects, s2);
     }

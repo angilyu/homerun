@@ -8,6 +8,7 @@ export * from "./client";
 export * from "./threads/reducer";
 export * from "./threads/timeline";
 export * from "./threads/sync";
+export * from "./threads/cache";
 export * from "./threads/list";
 export * from "./inbox";
 export * from "./input";

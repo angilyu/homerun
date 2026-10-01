@@ -20,6 +20,14 @@ export class NotConnectedError extends Error {
   }
 }
 
+/** Face ID didn't sign an approval that needs it (§9.8): cancelled, failed, or no key on this phone. */
+export class ApprovalNotConfirmedError extends Error {
+  constructor(message = "Face ID didn't confirm it, so nothing was approved.") {
+    super(message);
+    this.name = "ApprovalNotConfirmedError";
+  }
+}
+
 /** A result or notification that doesn't match its core schema: a version mismatch or a bug. */
 export class ProtocolError extends Error {
   constructor(

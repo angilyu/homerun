@@ -6,7 +6,8 @@ import { Rpc } from "./rpc";
 import { Store } from "./store";
 import { Tasks } from "./tasks";
 import { ThreadList } from "./threads/list";
-import { ThreadSync } from "./threads/sync";
+import { CACHE_WRITE_MS, CACHED_THREADS, quietly, type ThreadCache } from "./threads/cache";
+import { ThreadSync, type ApprovalSigner } from "./threads/sync";
 import type { ClientRole, RuntimeStatus, Transport, TransportEvent } from "./transport";
 
 export interface AppClientOptions {
@@ -19,6 +20,10 @@ export interface AppClientOptions {
   remote?: boolean;
   /** Who this client is to the runtime; decides what the views offer (§9.9). Default `webview`. */
   role?: ClientRole;
+  /** Threads kept between launches, for this desktop (§9.8). The iOS app only. */
+  cache?: ThreadCache;
+  /** Face ID for destructive approvals (§9.8, §18 row 115). The iOS app only, when it has a key. */
+  signApproval?: ApprovalSigner;
 }
 
 /**
@@ -44,6 +49,8 @@ export class AppClient {
   private connection = -1;
   private unlisten: (() => void) | null = null;
   private inboxTimer: unknown = null;
+  private listTimer: unknown = null;
+  private unwatchList: (() => void) | null = null;
 
   constructor(
     private readonly transport: Transport,
@@ -63,12 +70,38 @@ export class AppClient {
   start(): void {
     if (this.unlisten) return;
     this.unlisten = this.transport.listen((e) => this.onEvent(e));
+    const cache = this.opts.cache;
+    if (cache) {
+      void cache
+        .loadList()
+        .then((t) => t && this.threads.restore(t))
+        .catch(() => {});
+      this.unwatchList = this.threads.store.subscribe(() => this.scheduleListWrite(cache));
+    }
     this.onStatus(this.transport.status());
+  }
+
+  /** Whether this client can approve destructive calls (with Face ID on an iPhone, §18 row 115). */
+  get signsApprovals(): boolean {
+    return this.opts.signApproval !== undefined;
+  }
+
+  private scheduleListWrite(cache: ThreadCache): void {
+    if (this.listTimer !== null) return;
+    this.listTimer = this.env.setTimeout(() => {
+      this.listTimer = null;
+      const s = this.threads.store.get();
+      if (s.loaded) quietly(() => cache.saveList(s.threads.slice(0, CACHED_THREADS)));
+    }, CACHE_WRITE_MS);
   }
 
   stop(): void {
     this.unlisten?.();
     this.unlisten = null;
+    this.unwatchList?.();
+    this.unwatchList = null;
+    if (this.listTimer !== null) this.env.clearTimeout(this.listTimer);
+    this.listTimer = null;
     for (const { sync, timer } of this.syncs.values()) {
       if (timer !== null) this.env.clearTimeout(timer);
       sync.close();
@@ -101,10 +134,18 @@ export class AppClient {
     let entry = this.syncs.get(thread_id);
     if (!entry) {
       const queue = this.transport.queueInstruction?.bind(this.transport);
-      const sync = new ThreadSync({ rpc: this.rpc, env: this.env, connected: () => this.connected, ...(queue ? { queue } : {}) }, thread_id);
+      const { cache, signApproval } = this.opts;
+      const sync = new ThreadSync(
+        { rpc: this.rpc, env: this.env, connected: () => this.connected, ...(queue ? { queue } : {}), ...(cache ? { cache } : {}), ...(signApproval ? { signApproval } : {}) },
+        thread_id,
+      );
       entry = { sync, refs: 0, timer: null };
       this.syncs.set(thread_id, entry);
-      if (this.connected) void sync.open().catch(() => {});
+      // The cached window first, then the runtime from its last seq.
+      void sync
+        .restore()
+        .then(() => (this.connected ? sync.open() : undefined))
+        .catch(() => {});
     }
     if (entry.timer !== null) {
       this.env.clearTimeout(entry.timer);

@@ -23,6 +23,7 @@ const phone = (over: Record<string, unknown> = {}) => ({
   claimed_platform: "ios",
   method: "qr",
   paired_at: T0,
+  biometric_approvals: false,
   online: false,
   last_seen_at: T0 - 5 * 60_000,
   ...over,
