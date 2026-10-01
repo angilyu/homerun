@@ -31,3 +31,16 @@ export function deviceRole(
   const approvalKey = (attestation as { approval_key?: string }).approval_key ?? null;
   return { platform: attestedRole(claimed, r), claimed_platform: claimed, attest_key: toB64url(r.credentialPublicKey), attest_counter: r.counter, approval_key: approvalKey };
 }
+
+/**
+ * The role to pin, given the one the relay registered the device with (§18 row 102). The lower
+ * of the two: an iPhone the relay didn't register as one links as a browser here too, since the
+ * relay takes no push token or lock-screen answer from it. One the relay registered as an
+ * iPhone but this desktop couldn't verify stays a browser; the relay accepts that downgrade.
+ * Either way it pairs, with a browser's authority, rather than being refused.
+ */
+export function agreeWithRelay(role: DeviceRole, relay: string | null | undefined): DeviceRole {
+  if (role.platform !== "ios" || relay == null || relay === "ios") return role;
+  log.info("the relay registered this iPhone as a browser; it links as one", { relay });
+  return { platform: "web", claimed_platform: role.claimed_platform, attest_key: null, attest_counter: null, approval_key: null };
+}
