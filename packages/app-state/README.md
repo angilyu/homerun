@@ -48,7 +48,9 @@ React DOM; the iOS app (milestone 10b) renders the same stores with React Native
   - Approvals: the Always-allow editor and `checkGrant`, which uses core's `grantCovers` so an
     edited pattern must still cover the call.
   - Questions: single and multiple choice plus freeform.
-  - The resolution text, for example "Allowed once on iPhone".
+  - The resolution text, for example "Allowed once on iPhone". This client's own answers say
+    "on this Mac", "on this iPhone" or "on this browser" by its role (`THIS_DEVICE`); the
+    transport's `device_id` is this client's own device, which `answered_by` names.
   - `cantAnswer(prompt, role)`: the web client's reduced authority (§9.9). It answers questions
     and `read`-class approvals only, never with Always allow; the rest say "Approve on your phone
     or Mac". The runtime enforces the same rule with core's `checkResponse`, which the drafts

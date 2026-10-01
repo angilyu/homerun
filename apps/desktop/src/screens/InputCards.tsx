@@ -46,7 +46,7 @@ export function InputCard({ sync, request_id, prompt, expires_at }: { sync: Thre
 
   const answer = async (response: InputResponse) => {
     const r = await sync.answer(request_id, response);
-    if (r.status === "already_resolved") setLate(alreadyAnswered(r.state, r.answered_by, deviceId));
+    if (r.status === "already_resolved") setLate(alreadyAnswered(r.state, r.answered_by, deviceId, app.client.role));
   };
 
   if (late)
@@ -286,7 +286,7 @@ export function ResolvedLine({ prompt, resolution }: { prompt: InputPrompt; reso
   return (
     <p className="event resolved-line">
       <span>
-        {what}: {describeResolution(prompt, resolution, deviceId)}
+        {what}: {describeResolution(prompt, resolution, deviceId, app.client.role)}
         {answers ? ` — ${answers}` : ""}
         {resolution.response?.type === "approval" && resolution.response.grant ? ` (${resolution.response.grant.pattern ?? "any call"})` : ""}
       </span>{" "}

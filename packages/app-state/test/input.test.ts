@@ -135,4 +135,13 @@ describe("after the answer", () => {
     expect(describeResolution(bash, { ...r, state: "expired", response: null, answered_by: null, surface: null }, DEVICE)).toBe("Expired without an answer");
     expect(alreadyAnswered("answered", OTHER_DEVICE, DEVICE)).toContain("another device");
   });
+
+  test("names the device this client runs on by its role", () => {
+    const r = { state: "answered" as const, response: { type: "approval" as const, decision: "deny" as const }, answered_by: DEVICE, surface: "ios" as const, ts: 1 };
+    expect(describeResolution(bash, r, DEVICE, "ios")).toBe("Denied on this iPhone");
+    expect(describeResolution(bash, { ...r, surface: "web" }, DEVICE, "web")).toBe("Denied on this browser");
+    // The desktop's own answer, seen on the phone.
+    expect(describeResolution(bash, { ...r, answered_by: OTHER_DEVICE, surface: "desktop" }, DEVICE, "ios")).toBe("Denied on a Mac");
+    expect(alreadyAnswered("answered", DEVICE, DEVICE, "web")).toBe("You already answered this on this browser.");
+  });
 });

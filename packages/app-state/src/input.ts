@@ -150,11 +150,21 @@ export const SURFACE_NAME: Readonly<Record<Surface, string>> = {
   web: "the web",
 };
 
-/** "Allowed on this Mac", "Answered on iPhone", "Expired" (§5.6: first answer wins). */
-export function describeResolution(prompt: InputPrompt, r: InputResolution, deviceId: string | null): string {
+/** The device this client runs on, as its own answers name it. */
+export const THIS_DEVICE: Readonly<Record<ClientRole, string>> = {
+  webview: "this Mac",
+  ios: "this iPhone",
+  web: "this browser",
+};
+
+/**
+ * "Allowed on this Mac", "Answered on iPhone", "Expired" (§5.6: first answer wins). `deviceId` is
+ * this client's own device (`RuntimeStatus.device_id`), which `answered_by` names when it answered.
+ */
+export function describeResolution(prompt: InputPrompt, r: InputResolution, deviceId: string | null, role: ClientRole = "webview"): string {
   if (r.state === "expired") return "Expired without an answer";
   if (r.state === "cancelled") return "Cancelled";
-  const where = r.answered_by !== null && r.answered_by === deviceId ? "on this Mac" : r.surface ? `on ${SURFACE_NAME[r.surface]}` : "";
+  const where = r.answered_by !== null && r.answered_by === deviceId ? `on ${THIS_DEVICE[role]}` : r.surface ? `on ${SURFACE_NAME[r.surface]}` : "";
   return `${answerVerb(prompt, r.response)} ${where}`.trim();
 }
 
@@ -171,9 +181,9 @@ export function answerVerb(prompt: InputPrompt, response: InputResponse | null):
 }
 
 /** Who answered first when this device was too late (`already_resolved`). */
-export function alreadyAnswered(state: string, answeredBy: string | null, deviceId: string | null): string {
+export function alreadyAnswered(state: string, answeredBy: string | null, deviceId: string | null, role: ClientRole = "webview"): string {
   if (state === "expired") return "This request expired before your answer arrived.";
   if (state === "cancelled") return "This request was cancelled before your answer arrived.";
-  if (answeredBy !== null && answeredBy === deviceId) return "You already answered this on this Mac.";
+  if (answeredBy !== null && answeredBy === deviceId) return `You already answered this on ${THIS_DEVICE[role]}.`;
   return "This was already answered on another device.";
 }

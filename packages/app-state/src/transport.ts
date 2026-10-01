@@ -15,7 +15,14 @@ export type ClientRole = "webview" | "ios" | "web";
  */
 export type RuntimeStatus =
   | { state: "starting" }
-  | { state: "ready"; connection: number; device_id: string; runtime_version: string; protocol: number }
+  | {
+      state: "ready";
+      connection: number;
+      /** This client's own device: the desktop's for its webview, the phone's or browser's when remote. `answered_by` names it. */
+      device_id: string;
+      runtime_version: string;
+      protocol: number;
+    }
   /** It stopped unexpectedly and is being restarted, at `retry_at` if known. */
   | { state: "restarting"; retry_at: number | null; last_error: string | null }
   /** It kept crashing: fast restarts stopped, the shell retries slowly (§5.1). */
