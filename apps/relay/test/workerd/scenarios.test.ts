@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
+import { appAttestRoot } from "../helpers";
 import { type Ctx, sharedScenarios } from "../scenarios";
 import { startWorkerd } from "./host";
 
@@ -20,6 +21,7 @@ beforeAll(async () => {
     APNS_TEAM_ID: apns.teamId,
     APNS_TOPIC: apns.topic,
     APNS_ENDPOINT: apns.url,
+    APP_ATTEST_TEST_ROOT: appAttestRoot,
   });
 }, 60_000);
 afterAll(async () => {

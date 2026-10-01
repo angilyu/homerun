@@ -1,5 +1,7 @@
 import { CLOCK_SKEW_MS, type DeviceId } from "@homerun/core";
 import {
+  type AppAttestPolicy,
+  attestedRole,
   buildApnsPayload,
   challengeBytes,
   CLOSE,
@@ -22,6 +24,7 @@ import {
   toB64url,
   utf8,
   verifyLinkStatement,
+  verifyAttestation,
   verifySignature,
 } from "@homerun/protocol";
 import type { VerifiedToken } from "../auth";
@@ -63,6 +66,12 @@ export interface RelayHost {
   verifyToken(token: string): Promise<VerifiedToken>;
   push: PushSender | null;
   limits: RelayLimits;
+  /**
+   * Whose App Attest attestations make a device an iPhone here (§9.8, §18 row 99): only an
+   * attested iPhone gets pushes and answers from the lock screen. The desktop checks the same
+   * attestation for itself, so a relay that lies about it gains nothing (§13).
+   */
+  appAttest: AppAttestPolicy;
   /** Deletes every row of this account (account deletion). */
   wipe(): void;
   log?(event: string, fields?: Record<string, unknown>): void;
@@ -238,8 +247,11 @@ export class AccountRelay {
     this.proof(req, url, body, { deviceId: device.device_id, signing: device.signing_public_key });
     const existing = this.device(device.device_id);
     if (existing) {
+      // The role was settled at the first registration; an iPhone doesn't re-attest to keep it,
+      // and one registered as a browser stays one (a new attestation doesn't upgrade it).
+      const sameKind = existing.kind === device.kind || (existing.kind === "web" && device.kind === "ios");
       if (
-        existing.kind !== device.kind ||
+        !sameKind ||
         existing.static_public_key !== device.static_public_key ||
         existing.signing_public_key !== device.signing_public_key
       ) {
@@ -250,10 +262,11 @@ export class AccountRelay {
       const n = one(this.sql.all<{ n: number }>(`SELECT count(*) AS n FROM devices`))!.n;
       if (n >= this.limits.maxDevices) return errorResponse("too_many_devices", `at most ${this.limits.maxDevices} devices per account`);
       if (!this.rate("register", this.limits.registrationsPerHour, 60 * 60 * 1000)) return errorResponse("rate_limited", "too many registrations");
+      const kind = this.attestedKind(device, parsed.data.attestation);
       this.sql.run(
         `INSERT INTO devices (device_id, kind, name, static_public_key, signing_public_key, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, NULL)`,
         device.device_id,
-        device.kind,
+        kind,
         name,
         device.static_public_key,
         device.signing_public_key,
@@ -261,6 +274,15 @@ export class AccountRelay {
       );
     }
     return okJson({ device: this.linkedView(this.device(device.device_id)!, null) });
+  }
+
+  /** An iPhone without an attestation of these keys that verifies registers as a browser. */
+  private attestedKind(device: RegisterDevice["device"], attestation: RegisterDevice["attestation"]): DeviceKind {
+    if (device.kind !== "ios") return device.kind;
+    if (!attestation) return "web";
+    const r = verifyAttestation(attestation, device, this.host.appAttest, this.host.now());
+    if (!r.ok) this.host.log?.("attestation_rejected", { reason: r.reason });
+    return attestedRole("ios", r);
   }
 
   private deleteAccount(): void {

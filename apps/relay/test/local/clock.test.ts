@@ -6,7 +6,7 @@ import { newPairingCode, offerTag, RELAY_PATHS } from "@homerun/protocol";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
 import type { RelayLimits } from "../../src/config";
 import { type LocalRelay, type LocalRelayOptions, startLocalRelay } from "../../src/local";
-import { instruction, sessionId, statement, TestDevice } from "../helpers";
+import { appAttest, instruction, sessionId, statement, TestDevice } from "../helpers";
 import { account, type Ctx, linkedPair } from "../scenarios";
 
 /** What needs a clock or small limits: expiry, token lifetimes, rate limits, queue bounds, restarts. */
@@ -34,7 +34,7 @@ afterAll(async () => {
 
 async function start(limits: Partial<RelayLimits> = {}, extra: Partial<LocalRelayOptions> = {}): Promise<Ctx> {
   clock = Date.now();
-  relay = await startLocalRelay({ issuer: issuer.url, clientId: issuer.clientId, now: () => clock, limits, ...extra });
+  relay = await startLocalRelay({ issuer: issuer.url, clientId: issuer.clientId, now: () => clock, limits, appAttest: appAttest.policy(), ...extra });
   return { t: { url: relay.url, wsUrl: relay.wsUrl, now: () => clock }, issuer, apns };
 }
 async function advance(ms: number) {

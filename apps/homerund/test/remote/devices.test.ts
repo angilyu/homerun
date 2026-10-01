@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { RPC_ERROR, type PairedDevice } from "@homerun/core";
 import { decodePairingUrl } from "@homerun/protocol";
 import { LinkDeclinedError, LiveClosedError, RpcCallError } from "@homerun/remote";
+import { fakeDeviceToken } from "@homerun/testkit";
 import { RpcCallError as LocalCallError } from "../../src/rpc/client";
 import { socketRuntime, until } from "../helpers";
-import { appAttest, connected, desktop, envFor, pairByQr as pairWith, helloLive, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
+import { appAttest, connected, desktop, envFor, pairByQr as pairWith, helloLive, linkByCode, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
 
 let w: World;
 beforeAll(async () => {
@@ -169,6 +170,43 @@ describe("QR pairing (§9.6)", () => {
     await relayState(d.sh, "off");
     const e = (await d.sh.c.call("devices.pairing.start", {}).catch((x) => x)) as LocalCallError;
     expect(e.code).toBe(RPC_ERROR.UNAVAILABLE);
+  });
+});
+
+describe("App Attest (§9.8): an iPhone Apple didn't vouch for is a browser", () => {
+  test("paired by QR, it is listed as web; it says hello as web, and has no push", async () => {
+    newUser(w);
+    const d = await signedInDesktop();
+    const p = await aPhone({ attest: false });
+    const { desk } = await pairByQr(d, p);
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform])).toEqual([["web", "ios"]]);
+    expect(p.client.role(desk.device_id)).toBe("web");
+    const live = await p.client.openLive(desk.device_id);
+    await expect(helloLive(live, p.client.deviceId, "ios")).rejects.toBeInstanceOf(RpcCallError);
+    const web = await p.client.openLive(desk.device_id);
+    expect(((await helloLive(web, p.client.deviceId, "web")) as { role: string }).role).toBe("web");
+    web.close();
+    await expect(p.client.registerPushToken(fakeDeviceToken(), "sandbox")).rejects.toThrow();
+  });
+
+  test("linking by code: the prompt says what it claimed, and it links as web", async () => {
+    newUser(w);
+    const d = await signedInDesktop();
+    const p = await aPhone({ attest: false });
+    const linked = linkByCode(d.sh, p.client);
+    await until(() => d.sh.prompts.length === 1, 5000, "link prompt");
+    expect(d.sh.prompts[0]).toMatchObject({ platform: "web", claimed_platform: "ios" });
+    await linked;
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform, x.method])).toEqual([["web", "ios", "code"]]);
+  });
+
+  test("an attested iPhone keeps its role", async () => {
+    newUser(w);
+    const d = await signedInDesktop();
+    const p = await aPhone();
+    const { desk } = await pairByQr(d, p);
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform])).toEqual([["ios", "ios"]]);
+    expect(p.client.role(desk.device_id)).toBe("ios");
   });
 });
 

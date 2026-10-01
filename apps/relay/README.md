@@ -42,6 +42,12 @@ Every request carries the provider's access token (`Authorization: Bearer`). Eve
 
 The frames and bodies are defined in `packages/protocol/src/wire.ts`, and `vectors/relay-wire.json` pins them.
 
+### iPhones and App Attest
+
+A device that registers as `ios` must send an App Attest attestation of its keys ([§9.8](../../docs/design.md#98-the-ios-app-a-full-conversational-client), [§18 row 99](../../docs/design.md#18-decision-log)). The relay checks it against Apple's App Attest root and the app id `NMJBY8WL8T.com.angilyu.homerun.ios`. One that is missing or doesn't verify registers as `web`: no push token and no lock-screen answers. The role is settled at the first registration and kept when the device registers again. The desktop checks the same attestation itself before it gives the device an iPhone's authority, so this check only decides what the relay does (push), never what the desktop allows ([§13](../../docs/design.md#13-security-model)).
+
+Production accepts only `appattest` (App Store and TestFlight builds). `APP_ATTEST_ALLOW_DEVELOP=1` also accepts `appattestdevelop`, from builds signed for development. Set it on a relay used with Xcode builds, together with a development desktop, which accepts them too. A production relay and a development desktop disagree about such a phone, and pairing it fails. `APP_ATTEST_TEST_ROOT` (DER, base64url) replaces Apple's root, for the workerd tests only.
+
 ### Limits
 
 From `src/config.ts`; the queue bounds are §9.4's.

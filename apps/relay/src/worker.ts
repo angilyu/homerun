@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { RELAY_PATHS, WS_SUBPROTOCOL } from "@homerun/protocol";
+import { type AppAttestPolicy, fromB64url, productionAppAttestPolicy, RELAY_PATHS, WS_SUBPROTOCOL } from "@homerun/protocol";
 import { ApnsClient, type PushSender } from "./apns";
 import { AuthError, bearerToken, TokenVerifier } from "./auth";
 import { DEFAULT_LIMITS } from "./config";
@@ -25,6 +25,18 @@ export interface Env {
   APNS_TOPIC?: string;
   /** Tests only: send pushes to a mock instead of Apple. */
   APNS_ENDPOINT?: string;
+  /** "1": accept development-signed iPhone builds' App Attest (`appattestdevelop`). */
+  APP_ATTEST_ALLOW_DEVELOP?: string;
+  /**
+   * Tests only: a root (DER, base64url) trusted instead of Apple's for App Attest. It only
+   * decides pushes and lock-screen answers here; desktops verify attestations themselves (§13).
+   */
+  APP_ATTEST_TEST_ROOT?: string;
+}
+
+function appAttest(env: Env): AppAttestPolicy {
+  const policy = productionAppAttestPolicy(env.APP_ATTEST_ALLOW_DEVELOP === "1");
+  return env.APP_ATTEST_TEST_ROOT ? { ...policy, roots: [fromB64url(env.APP_ATTEST_TEST_ROOT)] } : policy;
 }
 
 const SUB_HEADER = "x-homerun-sub";
@@ -82,6 +94,7 @@ export class AccountDurableObject extends DurableObject<Env> {
       verifyToken: (t) => verifier(env).verify(t),
       push: apns(env),
       limits: DEFAULT_LIMITS,
+      appAttest: appAttest(env),
       wipe: () => dropAll(sql),
       log: (event, fields) => console.log(JSON.stringify({ event, ...fields })),
     });

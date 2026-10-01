@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import type { Server, ServerWebSocket } from "bun";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { RELAY_PATHS, WS_SUBPROTOCOL } from "@homerun/protocol";
+import { type AppAttestPolicy, productionAppAttestPolicy, RELAY_PATHS, WS_SUBPROTOCOL } from "@homerun/protocol";
 import { ApnsClient, type ApnsConfig, type PushSender } from "./apns";
 import { AuthError, bearerToken, TokenVerifier, type AuthConfig, type VerifiedToken } from "./auth";
 import { DEFAULT_LIMITS, type RelayLimits } from "./config";
@@ -19,6 +19,8 @@ export interface LocalRelayOptions extends Omit<AuthConfig, "fetch"> {
   /** A mock APNs, a real `.p8` configuration, or a sender of your own. */
   apns?: ApnsConfig | PushSender | null;
   limits?: Partial<RelayLimits>;
+  /** Whose App Attest attestations make a device an iPhone. Apple's production root by default. */
+  appAttest?: AppAttestPolicy;
   hostname?: string;
   port?: number;
   /** Keep each account's database in files here, so a restart keeps queues and links. */
@@ -61,6 +63,7 @@ class Account {
     verifyToken: (t: string) => Promise<VerifiedToken>,
     push: PushSender | null,
     limits: RelayLimits,
+    appAttest: AppAttestPolicy,
     log: LocalRelayOptions["log"],
   ) {
     const sql = bunSql(db);
@@ -80,6 +83,7 @@ class Account {
       verifyToken,
       push,
       limits,
+      appAttest,
       wipe: () => dropAll(sql),
       ...(log ? { log } : {}),
     });
@@ -126,6 +130,7 @@ export async function startLocalRelay(opts: LocalRelayOptions): Promise<LocalRel
   const now = opts.now ?? Date.now;
   const verifier = new TokenVerifier({ ...opts, now });
   const limits = { ...DEFAULT_LIMITS, ...opts.limits };
+  const appAttest = opts.appAttest ?? productionAppAttestPolicy(false);
   const push: PushSender | null = !opts.apns ? null : "send" in opts.apns ? opts.apns : new ApnsClient({ ...opts.apns, now });
   const accounts = new Map<string, Account>();
   let stopped = false;
@@ -137,7 +142,7 @@ export async function startLocalRelay(opts: LocalRelayOptions): Promise<LocalRel
       const file = opts.dataDir ? join(opts.dataDir, `${new Bun.CryptoHasher("sha256").update(sub).digest("hex").slice(0, 32)}.sqlite`) : ":memory:";
       const db = new Database(file, { create: true, strict: true });
       db.run("PRAGMA journal_mode = WAL");
-      a = new Account(db, now, !!opts.now, (t) => verifier.verify(t), push, limits, opts.log);
+      a = new Account(db, now, !!opts.now, (t) => verifier.verify(t), push, limits, appAttest, opts.log);
       accounts.set(sub, a);
     }
     return a;

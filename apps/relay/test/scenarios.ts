@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope } from "@homerun/protocol";
+import { testAppAttestCA } from "@homerun/protocol/testing";
 import { fakeDeviceToken, type ApnsMock, type OidcIssuer } from "@homerun/testkit";
 import { b64, type Conn, instruction, pushBody, sessionId, statement, type Target, TestDevice } from "./helpers";
 
@@ -226,6 +227,68 @@ export function sharedScenarios(get: () => Ctx) {
       const links = await pc.next("links");
       expect(links.links.map((l) => l.device_id)).toEqual([desktop.deviceId]);
       for (const x of [dc, pc, sc]) x.close();
+    });
+  });
+
+  describe("App Attest", () => {
+    const answer = (from: TestDevice, to: TestDevice, now: number) =>
+      from.seal(to, { type: "answer", request_id: crypto.randomUUID(), response: { type: "approval", decision: "allow" }, via: "notification" }, { now, ttl: HOUR });
+
+    test("an attested iPhone registers as one", async () => {
+      const c = get();
+      const { tok } = await account(c);
+      const phone = new TestDevice("ios");
+      const r = await phone.register(c.t, tok);
+      expect(((await r.json()) as { device: { kind: string } }).device.kind).toBe("ios");
+    });
+
+    test("an iPhone without a valid attestation registers, links and is treated as a browser", async () => {
+      const c = get();
+      const { sub, tok } = await account(c);
+      const desktop = new TestDevice("desktop");
+      await desktop.register(c.t, tok);
+      const other = testAppAttestCA("someone-else");
+      const someoneElses = new TestDevice("ios");
+      const cases: [TestDevice, Parameters<TestDevice["register"]>[2]][] = [
+        [new TestDevice("ios"), { attestation: null }],
+        [someoneElses, { attestation: someoneElses.attestation({ issuer: other }) }],
+        [new TestDevice("ios"), { attestation: new TestDevice("ios").attestation() }],
+        [new TestDevice("ios"), { attestation: new TestDevice("ios").attestation({ environment: "development" }) }],
+      ];
+      const dc = await desktop.connect(c.t, tok);
+      for (const [phone, o] of cases) {
+        const r = await phone.register(c.t, tok, o);
+        expect(r.status).toBe(200);
+        expect(((await r.json()) as { device: { kind: string } }).device.kind).toBe("web");
+        const pc = await phone.connect(c.t, tok);
+        dc.send({ type: "link_add", statement: await statement(desktop, phone, sub, c.t.now()) });
+        expect((await dc.next("error")).code).toBe("invalid");
+        dc.send({ type: "link_add", statement: await statement(desktop, phone, sub, c.t.now(), "web") });
+        await pc.next("links", (f) => f.links.length === 1);
+        expect((await phone.req(c.t, tok, "POST", RELAY_PATHS.pushToken, { token: fakeDeviceToken(), environment: "sandbox" })).status).toBe(403);
+        expect((await phone.req(c.t, tok, "POST", RELAY_PATHS.sealed, { envelope: await answer(phone, desktop, c.t.now()) })).status).toBe(403);
+        dc.send({ type: "sealed", envelope: await desktop.seal(phone, pushBody(), { now: c.t.now(), ttl: HOUR }) });
+        expect((await dc.next("error")).code).toBe("forbidden");
+        pc.close();
+      }
+      dc.close();
+    });
+
+    test("the role is settled at the first registration", async () => {
+      const c = get();
+      const { tok } = await account(c);
+      const kindOf = async (r: Response) => ((await r.json()) as { device: { kind: string } }).device.kind;
+      const attested = new TestDevice("ios");
+      expect(await kindOf(await attested.register(c.t, tok))).toBe("ios");
+      expect(await kindOf(await attested.register(c.t, tok, { attestation: null }))).toBe("ios");
+      const unattested = new TestDevice("ios");
+      expect(await kindOf(await unattested.register(c.t, tok, { attestation: null }))).toBe("web");
+      expect(await kindOf(await unattested.register(c.t, tok))).toBe("web");
+      // A browser can't later claim to be an iPhone's keys under another kind.
+      const web = new TestDevice("web");
+      await web.register(c.t, tok);
+      const desktopClaim = { device: { ...web.pub, kind: "desktop" }, name: "x" };
+      expect((await web.req(c.t, tok, "POST", RELAY_PATHS.devices, desktopClaim)).status).toBe(409);
     });
   });
 

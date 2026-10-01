@@ -21,6 +21,7 @@ beforeAll(async () => {
     issuer: issuer.url,
     clientId: issuer.clientId,
     apns: { keyP8: apns.p8, keyId: apns.keyId, teamId: apns.teamId, topic: apns.topic, endpoint: apns.url },
+    appAttest: appAttest.policy(),
   });
 });
 afterEach(() => {
