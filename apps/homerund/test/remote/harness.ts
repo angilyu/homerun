@@ -21,6 +21,8 @@ import { LAUNCH_TOKEN, socketRuntime, until, type SocketRuntime } from "../helpe
 export const ON_WORKERD = process.env.HOMERUN_REMOTE_RELAY === "workerd";
 /** Stands in for Apple: desktops trust it, and test iPhones attest with it. */
 export const appAttest = testAppAttestCA();
+/** A root no desktop here trusts: a phone the relay vouched for that a desktop can't verify. */
+export const otherAppAttest = testAppAttestCA("another-root");
 /** Starting workerd takes a few seconds; the Bun relay starts at once. */
 export const WORLD_START_MS = ON_WORKERD ? 60_000 : 5_000;
 

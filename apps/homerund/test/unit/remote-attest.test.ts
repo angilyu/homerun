@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { DeviceId } from "@homerun/core";
 import { fromB64url, generateDeviceKeys, identityFromStored, productionAppAttestPolicy, publicOf, toB64url } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
-import { type DeviceRole, deviceRole } from "../../src/remote/attest";
+import { agreeWithRelay, type DeviceRole, deviceRole } from "../../src/remote/attest";
 
 const ca = testAppAttestCA();
 const now = Date.now();
@@ -39,5 +39,19 @@ describe("a linking device's role (§9.8, §12)", () => {
   test("a browser stays a browser, attested or not", () => {
     const k = keys();
     expect(deviceRole("web", ca.attest(k).attestation, k, ca.policy(), now)).toMatchObject({ platform: "web", claimed_platform: "web", attest_key: null });
+  });
+});
+
+describe("agreeing with the relay's registration (§18 row 102)", () => {
+  const k = keys();
+  const iphone = deviceRole("ios", ca.attest(k).attestation, k, ca.policy(), now);
+  const browser: DeviceRole = { platform: "web", claimed_platform: "ios", attest_key: null, attest_counter: null, approval_key: null };
+
+  test("the lower role wins, never refused", () => {
+    expect(agreeWithRelay(iphone, "ios")).toEqual(iphone);
+    expect(agreeWithRelay(iphone, null)).toEqual(iphone);
+    expect(agreeWithRelay(iphone, "web")).toEqual(browser);
+    expect(agreeWithRelay(browser, "ios")).toEqual(browser);
+    expect(agreeWithRelay(browser, "web")).toEqual(browser);
   });
 });

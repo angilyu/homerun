@@ -16,7 +16,7 @@ import {
   toB64url,
 } from "@homerun/protocol";
 import { log } from "../log";
-import { deviceRole } from "./attest";
+import { agreeWithRelay, deviceRole } from "./attest";
 import type { DeviceRow } from "./devices";
 
 /**
@@ -113,14 +113,10 @@ export class Pairing {
       const account = this.d.account();
       const now = this.d.now();
       const keys = { device_id: f.from, static_public_key: toB64url(read.remoteStatic), signing_public_key: read.hello.signing_public_key };
-      const role = deviceRole(read.hello.platform, read.hello.attestation, keys, this.d.attest, now);
       // The relay registered the sender with the role its own check of the attestation gave;
-      // the link statement must agree with it, and the relay can't make a browser an iPhone.
+      // where the two differ, the device pairs with the lower one (§18 row 102).
+      const role = agreeWithRelay(deviceRole(read.hello.platform, read.hello.attestation, keys, this.d.attest, now), f.device?.kind);
       if (!account) break;
-      if (f.device && f.device.kind !== role.platform) {
-        log.warn("the relay registered the pairing device with another role", { relay: f.device.kind, here: role.platform });
-        break;
-      }
       const row: DeviceRow = { ...keys, ...role, name: read.hello.name, method: "qr", paired_at: now, last_seen_at: now };
       const statement = await linkStatement(me, account, row, now);
       if (this.offers.get(o.offerId) !== o) break;

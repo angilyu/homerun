@@ -1,7 +1,7 @@
 import { type DeviceId, LINK_REQUEST_TTL_MS } from "@homerun/core";
 import { type AppAttestPolicy, type ClientFrame, type DeviceIdentity, fromB64url, LinkResponder, publicOf, type ServerFrame, toB64url } from "@homerun/protocol";
 import { log } from "../log";
-import { type DeviceRole, deviceRole } from "./attest";
+import { agreeWithRelay, type DeviceRole, deviceRole } from "./attest";
 import type { DeviceRow } from "./devices";
 import { linkStatement } from "./pairing";
 
@@ -91,8 +91,7 @@ export class Linking {
         const code = a.r.verify(data);
         const device = a.r.device!;
         const keys = { device_id: a.from, static_public_key: toB64url(a.r.deviceStatic!), signing_public_key: device.signing_public_key };
-        const role = deviceRole(device.platform, device.attestation, keys, this.d.attest, this.d.now());
-        if (a.kind !== null && a.kind !== role.platform) throw new Error("the device's role doesn't match its registration");
+        const role = agreeWithRelay(deviceRole(device.platform, device.attestation, keys, this.d.attest, this.d.now()), a.kind);
         return this.prompt(a, code, device.name, role);
       }
       throw new Error("unexpected linking message");

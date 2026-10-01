@@ -11,6 +11,7 @@ import { fakeDeviceToken } from "@homerun/testkit";
 import { RpcCallError as LocalCallError } from "../../src/rpc/client";
 import { sessionSpec, socketRuntime, until } from "../helpers";
 import { appAttest, connected, desktop, envFor, pairByQr as pairWith, helloLive, linkByCode, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
+import { otherAppAttest } from "./harness";
 
 let w: World;
 beforeAll(async () => {
@@ -195,6 +196,34 @@ describe("App Attest (§9.8): an iPhone Apple didn't vouch for is a browser", ()
     newUser(w);
     const d = await signedInDesktop();
     const p = await aPhone({ attest: false });
+    const linked = linkByCode(d.sh, p.client);
+    await until(() => d.sh.prompts.length === 1, 5000, "link prompt");
+    expect(d.sh.prompts[0]).toMatchObject({ platform: "web", claimed_platform: "ios" });
+    await linked;
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform, x.method])).toEqual([["web", "ios", "code"]]);
+  });
+
+  // The relay checked the phone's attestation against one root and this desktop against another
+  // (as a production desktop would a test root, or a phone's App Attest failing for one desktop):
+  // it pairs with a browser's role instead of being refused (§18 row 102).
+  const unverifiedHere = { remote: { appAttest: otherAppAttest.policy() } };
+
+  test("an iPhone the relay registered but this desktop can't verify pairs by QR as web", async () => {
+    newUser(w);
+    const d = await signedInDesktop(unverifiedHere);
+    const p = await aPhone();
+    const { desk } = await pairByQr(d, p);
+    expect((await list(d)).map((x) => [x.platform, x.claimed_platform])).toEqual([["web", "ios"]]);
+    expect(p.client.role(desk.device_id)).toBe("web");
+    const web = await p.client.openLive(desk.device_id);
+    expect(((await helloLive(web, p.client.deviceId, "web")) as { role: string }).role).toBe("web");
+    web.close();
+  });
+
+  test("and links by code as web", async () => {
+    newUser(w);
+    const d = await signedInDesktop(unverifiedHere);
+    const p = await aPhone();
     const linked = linkByCode(d.sh, p.client);
     await until(() => d.sh.prompts.length === 1, 5000, "link prompt");
     expect(d.sh.prompts[0]).toMatchObject({ platform: "web", claimed_platform: "ios" });
