@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import type { DeviceId, RequestId } from "@homerun/core";
 import { startLocalRelay, type LocalRelay } from "@homerun/relay/local";
 import { decodePairingUrl, encodePairingUrl, generateDeviceKeys, identityFromStored, newPairingCode, RELAY_PATHS, type SealedEnvelope } from "@homerun/protocol";
+import { testAppAttestCA } from "@homerun/protocol/testing";
 import { ApnsMock, fakeDeviceToken, OidcIssuer } from "@homerun/testkit";
 import { Account, LinkDeclinedError, LiveClosedError, MemoryStore, RelayConnection, RemoteClient, RpcCallError, type ConnectionState } from "../src";
 import { FakeDesktop } from "./fake-desktop";
@@ -9,6 +10,8 @@ import { FakeDesktop } from "./fake-desktop";
 let issuer: OidcIssuer;
 let apns: ApnsMock;
 let relay: LocalRelay;
+/** Stands in for Apple: the fake desktop trusts it, and test iPhones attest with it. */
+const appAttest = testAppAttestCA();
 const cleanup: (() => void)[] = [];
 
 beforeAll(async () => {
@@ -48,7 +51,7 @@ async function signIn() {
   return account;
 }
 
-async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: MemoryStore; sent?: SealedEnvelope[] } = {}) {
+async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: MemoryStore; sent?: SealedEnvelope[]; attest?: boolean } = {}) {
   const account = o.account ?? (await signIn());
   const store = o.store ?? new MemoryStore();
   const sent = o.sent;
@@ -59,6 +62,7 @@ async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: Memor
     kind: o.kind ?? "ios",
     name: o.kind === "web" ? "Chrome" : "Wenjing's iPhone",
     reconnect: { initialMs: 50, maxMs: 500 },
+    ...(o.attest === false ? {} : { attest: async (id) => appAttest.attest(id).attestation }),
     // Records sealed POSTs, so a test can replay one.
     fetch: async (input, init) => {
       if (sent && String(input).endsWith(RELAY_PATHS.sealed) && init?.body) sent.push(JSON.parse(new TextDecoder().decode(init.body as Uint8Array)).envelope);
@@ -73,6 +77,7 @@ async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: Memor
 
 async function desktop(sub: string) {
   const d = new FakeDesktop(relay.url, sub, () => issuer.mint({ sub }));
+  d.attest = appAttest.policy();
   await d.start();
   cleanup.push(() => d.stop());
   return d;
@@ -180,6 +185,8 @@ describe("pairing and linking", () => {
     const [view] = client.desktops();
     expect(view).toMatchObject({ device_id: d.deviceId, name: "Studio Mac", online: true });
     expect(view!.statement.method).toBe("qr");
+    // The phone's App Attest attestation made it an iPhone on the desktop.
+    expect(client.role(d.deviceId)).toBe("ios");
     expect(d.peers.has(client.deviceId)).toBe(true);
     expect(Object.keys((await store.load())!.desktops)).toEqual([d.deviceId]);
   });
@@ -210,6 +217,18 @@ describe("pairing and linking", () => {
     expect(phoneCode).toBe(desktopCode);
     expect(pinned.statement.method).toBe("code");
     expect(client.desktops().map((x) => x.device_id)).toEqual([d.deviceId]);
+  });
+
+  test("an iPhone links by code with its App Attest attestation", async () => {
+    const sub = newUser();
+    const d = await desktop(sub);
+    const seen: string[] = [];
+    d.confirmCode = async (_code, device) => (seen.push(device.platform), true);
+    const { client } = await phone();
+    const pinned = await client.linkByCode(d.deviceId, () => {});
+    expect(seen).toEqual(["ios"]);
+    expect(pinned.statement.platform).toBe("ios");
+    expect(client.role(d.deviceId)).toBe("ios");
   });
 
   test("a declined code leaves nothing linked", async () => {
@@ -368,6 +387,7 @@ describe("unpairing and account deletion", () => {
   test("with two desktops, unpairing one keeps the other", async () => {
     const { client, d, sub } = await paired();
     const d2 = new FakeDesktop(relay.url, sub, () => issuer.mint({ sub }), "Laptop");
+    d2.attest = appAttest.policy();
     await d2.start();
     cleanup.push(() => d2.stop());
     await client.pair(d2.openPairing());

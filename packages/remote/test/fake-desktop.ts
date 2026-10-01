@@ -1,5 +1,7 @@
 import type { DeviceId, JsonValue, RpcMessage, SealedBody, SealedInner } from "@homerun/core";
 import {
+  type AppAttestPolicy,
+  attestedRole,
   type DeviceIdentity,
   encodePairingUrl,
   fromB64url,
@@ -24,6 +26,7 @@ import {
   type ServerFrame,
   signLinkStatement,
   toB64url,
+  verifyAttestation,
 } from "@homerun/protocol";
 import { RelayConnection } from "../src";
 
@@ -54,6 +57,8 @@ export class FakeDesktop {
   private unclaimed: Received[] = [];
   /** Decides a code-linking attempt; the test compares the phone's code with this one. */
   confirmCode: (code: string, device: { name: string; platform: RemotePlatform }) => Promise<boolean> = async () => true;
+  /** Whose App Attest attestations make a device an iPhone; like the runtime, anything else is web. */
+  attest: AppAttestPolicy | null = null;
 
   constructor(
     readonly relayUrl: string,
@@ -159,8 +164,9 @@ export class FakeDesktop {
         continue;
       }
       this.offers.delete(offer);
-      const statement = await this.statement(f.from, read.remoteStatic, read.hello.signing_public_key, read.hello.platform, "qr");
-      this.peers.set(f.from, { static: read.remoteStatic, platform: read.hello.platform });
+      const platform = this.role(f.from, read.remoteStatic, read.hello);
+      const statement = await this.statement(f.from, read.remoteStatic, read.hello.signing_public_key, platform, "qr");
+      this.peers.set(f.from, { static: read.remoteStatic, platform });
       const reply = await r.reply({ device_id: this.deviceId, name: this.name, signing_public_key: publicOf(this.id).signing_public_key, statement });
       this.conn.send({ type: "rendezvous", kind: "pair", to: f.from, session: f.session, data: toB64url(reply) });
       this.conn.send({ type: "link_add", statement, offer });
@@ -204,14 +210,21 @@ export class FakeDesktop {
       st.step = 3;
       const code = st.r.verify(data);
       const device = st.r.device!;
-      const ok = await this.confirmCode(code, { name: device.name, platform: device.platform });
+      const platform = this.role(f.from, st.r.deviceStatic!, device);
+      const ok = await this.confirmCode(code, { name: device.name, platform });
       this.linking.delete(key);
       if (!ok) return void send(st.r.declined());
-      const statement = await this.statement(f.from, st.r.deviceStatic!, device.signing_public_key, device.platform, "code");
-      this.peers.set(f.from, { static: st.r.deviceStatic!, platform: device.platform });
+      const statement = await this.statement(f.from, st.r.deviceStatic!, device.signing_public_key, platform, "code");
+      this.peers.set(f.from, { static: st.r.deviceStatic!, platform });
       this.conn.send({ type: "link_add", statement });
       send(st.r.linked(statement));
     }
+  }
+
+  private role(deviceId: string, deviceStatic: Uint8Array, d: { platform: RemotePlatform; signing_public_key: string; attestation?: unknown }): RemotePlatform {
+    if (d.platform !== "ios" || !this.attest || d.attestation === undefined) return "web";
+    const identity = { device_id: deviceId as DeviceId, static_public_key: toB64url(deviceStatic), signing_public_key: d.signing_public_key };
+    return attestedRole(d.platform, verifyAttestation(d.attestation, identity, this.attest, Date.now()));
   }
 
   private statement(deviceId: string, deviceStatic: Uint8Array, signing: string, platform: RemotePlatform, method: "qr" | "code"): Promise<LinkStatement> {

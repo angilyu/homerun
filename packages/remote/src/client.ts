@@ -9,6 +9,8 @@ import {
   type ClientMsgId,
 } from "@homerun/core";
 import {
+  type AppAttestation,
+  type AttestedIdentity,
   decodePairingUrl,
   type DeviceIdentity,
   type DeviceKind,
@@ -65,6 +67,12 @@ export interface RemoteClientOptions {
   reconnect?: { initialMs: number; maxMs: number } | false;
   now?: () => number;
   fetch?: Fetch;
+  /**
+   * An iPhone's App Attest (§9.8): a fresh attestation of this device's keys, sent when it
+   * registers, pairs and links. Without one, the relay and the desktop treat an `ios` device
+   * as a browser.
+   */
+  attest?: (identity: AttestedIdentity) => Promise<AppAttestation>;
 }
 
 export interface DesktopView extends PairedDesktop {
@@ -160,7 +168,8 @@ export class RemoteClient {
 
   /** Registers this device's public keys with the relay under the signed-in account. */
   async register(): Promise<void> {
-    await this.conn.call("POST", RELAY_PATHS.devices, { device: publicOf(this.identity), name: this.state.device.name });
+    const attestation = await this.attestation();
+    await this.conn.call("POST", RELAY_PATHS.devices, { device: publicOf(this.identity), name: this.state.device.name, ...(attestation ? { attestation } : {}) });
   }
 
   /** Connects and keeps reconnecting; resolves when the relay has authenticated us. */
@@ -203,7 +212,7 @@ export class RemoteClient {
     const qr = decodePairingUrl(qrUrl);
     if (!qr) throw new PairingError("not a Homerun pairing code");
     const session = toB64url(systemRandom(16));
-    const init = new PairInitiator({ qr, me: this.identity.noise, hello: this.hello(), sessionId: session });
+    const init = new PairInitiator({ qr, me: this.identity.noise, hello: await this.hello(), sessionId: session });
     const ch = new RendezvousChannel(this.conn, "pair", qr.device_id, session, offerTag(qr.pairing_code));
     const linked = this.waitLinked(qr.device_id, timeoutMs);
     try {
@@ -238,7 +247,7 @@ export class RemoteClient {
       desktopId,
       sessionId: session,
       me: this.identity.noise,
-      info: this.hello(),
+      info: await this.hello(),
     });
     const ch = new RendezvousChannel(this.conn, "link", desktopId as DeviceId, session);
     const linked = this.waitLinked(desktopId, timeoutMs);
@@ -372,13 +381,29 @@ export class RemoteClient {
 
   // ---------------------------------------------------------------- internals
 
-  private hello() {
+  private async attestation(): Promise<AppAttestation | undefined> {
+    if (this.o.kind !== "ios" || !this.o.attest) return undefined;
+    const p = publicOf(this.identity);
+    return this.o.attest({ device_id: this.deviceId, static_public_key: p.static_public_key, signing_public_key: p.signing_public_key });
+  }
+
+  private async hello() {
+    const attestation = await this.attestation();
     return {
       device_id: this.deviceId,
       platform: this.o.kind,
       name: this.state.device.name,
       signing_public_key: publicOf(this.identity).signing_public_key,
+      ...(attestation ? { attestation } : {}),
     };
+  }
+
+  /**
+   * What a paired desktop lets this device do: its link statement's platform. An iPhone the
+   * desktop couldn't attest is linked as a browser (§9.9).
+   */
+  role(desktopId: string): RemotePlatform | null {
+    return this.state.desktops[desktopId]?.statement.platform ?? null;
   }
 
   /** A statement is only good if the desktop we talked to signed it, for us, in our account. */
@@ -393,7 +418,8 @@ export class RemoteClient {
       s.device_id !== this.deviceId ||
       s.device_static_public_key !== me.static_public_key ||
       s.device_signing_public_key !== me.signing_public_key ||
-      s.platform !== this.o.kind ||
+      // The desktop may give an unattested iPhone a browser's role, never the reverse.
+      (s.platform !== this.o.kind && s.platform !== "web") ||
       s.method !== method ||
       (account !== null && s.account !== account)
     ) {
