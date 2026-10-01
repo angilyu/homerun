@@ -127,6 +127,7 @@ function methodArea(m: MethodName): string {
     case "devices.pairing.start":
     case "devices.pairing.cancel":
     case "devices.link.decide":
+    case "devices.renew_approval_key":
       return "remote";
     default:
       return assertNever(m, "method");

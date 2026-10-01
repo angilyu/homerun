@@ -12,6 +12,8 @@ import {
   TaskSpec,
   ToolGrant,
   answerableFromNotification,
+  approvalDecision,
+  needsApprovalProof,
   authorityAfterMessage,
   canTransition,
   checkResponse,
@@ -165,6 +167,21 @@ describe("input rules", () => {
     expect(answerableFromNotification(approval("network"))).toBe(false);
     expect(answerableFromNotification(question)).toBe(true);
     expect(checkResponse(approval("destructive"), allow, { role: "ios", via: "notification" })).not.toEqual([]);
+  });
+
+  test("an iPhone signs with Face ID to allow anything destructive, but never to deny (§9.8)", () => {
+    const deny: InputResponse = { type: "approval", decision: "deny" };
+    expect(needsApprovalProof(approval("destructive"), allow)).toBe(true);
+    expect(needsApprovalProof(approval("destructive"), deny)).toBe(false);
+    expect(needsApprovalProof(approval("write"), allow)).toBe(false);
+    expect(needsApprovalProof(approval("network"), allow)).toBe(false);
+    expect(needsApprovalProof(question, { type: "question", answers: [{ selected: ["a"] }] })).toBe(false);
+    const ambiguous = { type: "ambiguous_tool_call", tool: "Bash", tool_call_id: F.TOOL_CALL, class: "destructive", input: F.inline({}) } as InputPrompt;
+    const notRun: InputResponse = { type: "ambiguous_tool_call", outcome: "not_run" };
+    expect(needsApprovalProof(ambiguous, notRun)).toBe(true);
+    expect(approvalDecision(notRun)).toBe("not_run");
+    expect(approvalDecision(allow)).toBe("allow");
+    expect(approvalDecision({ type: "question", answers: [{ selected: ["a"] }] })).toBeNull();
   });
 
   test("question answers must match the options", () => {

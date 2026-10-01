@@ -323,6 +323,22 @@
         "offer_always"
       ]
     },
+    "ApprovalProof": {
+      "type": "object",
+      "properties": {
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,96}$"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "signature",
+        "expires_at"
+      ]
+    },
     "ApprovalReason": {
       "type": "string",
       "enum": [
@@ -1285,6 +1301,36 @@
         "expires_at"
       ]
     },
+    "DevicesRenewApprovalKeyParams": {
+      "type": "object",
+      "properties": {
+        "approval_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{87}$"
+        },
+        "assertion": {
+          "type": "string",
+          "maxLength": 8192,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "required": [
+        "approval_key",
+        "assertion"
+      ]
+    },
+    "DevicesRenewApprovalKeyResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ]
+    },
     "DevicesUnpairParams": {
       "type": "object",
       "properties": {
@@ -1900,6 +1946,9 @@
         },
         "via": {
           "$ref": "#/$defs/AnswerVia"
+        },
+        "approval": {
+          "$ref": "#/$defs/ApprovalProof"
         }
       },
       "required": [
@@ -2417,7 +2466,8 @@
         "monitor_failed",
         "monitor_paused",
         "missed_checks",
-        "digest"
+        "digest",
+        "device"
       ],
       "description": "What a local notification is about (§8.2, §9.7)"
     },
@@ -3168,6 +3218,18 @@
           "required": [
             "screen"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "screen": {
+              "type": "string",
+              "const": "settings"
+            }
+          },
+          "required": [
+            "screen"
+          ]
         }
       ]
     },
@@ -3231,6 +3293,9 @@
             "code"
           ]
         },
+        "biometric_approvals": {
+          "type": "boolean"
+        },
         "paired_at": {
           "$ref": "#/$defs/TimestampMs"
         },
@@ -3254,6 +3319,7 @@
         "platform",
         "claimed_platform",
         "method",
+        "biometric_approvals",
         "paired_at",
         "online",
         "last_seen_at"
@@ -5178,6 +5244,10 @@
               "label"
             ]
           }
+        },
+        "withdrawn": {
+          "type": "boolean",
+          "const": true
         }
       },
       "required": [

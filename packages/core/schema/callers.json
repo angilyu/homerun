@@ -213,7 +213,8 @@
       "monitors.state.get",
       "monitors.state.set",
       "monitors.state.reset",
-      "blobs.get"
+      "blobs.get",
+      "devices.renew_approval_key"
     ],
     "web": [
       "hello",

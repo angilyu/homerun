@@ -2261,6 +2261,23 @@
     },
     {
       "schema": "InputAnswerParams",
+      "name": "input.answer: with Face ID",
+      "valid": true,
+      "value": {
+        "request_id": "4f5a6b7c-8d9e-4f0a-9b2c-3d4e5f6a7b01",
+        "response": {
+          "type": "approval",
+          "decision": "allow"
+        },
+        "via": "app",
+        "approval": {
+          "signature": "MEUCIQDx7k2v9yJ3bQ8pN4mR6sT1uW5zA0cE2gH4iK6lM8nO0wIgP2rS4tU6vX8yZ0aB2cD4eF6gH8iJ0kL2mN4oP6qR8sT",
+          "expires_at": 1767225660000
+        }
+      }
+    },
+    {
+      "schema": "InputAnswerParams",
       "name": "input.answer: missing via",
       "valid": false,
       "layer": "json_schema",
@@ -2269,6 +2286,23 @@
         "response": {
           "type": "approval",
           "decision": "allow"
+        }
+      }
+    },
+    {
+      "schema": "InputAnswerParams",
+      "name": "input.answer: Face ID proof without expiry",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "request_id": "4f5a6b7c-8d9e-4f0a-9b2c-3d4e5f6a7b01",
+        "response": {
+          "type": "approval",
+          "decision": "allow"
+        },
+        "via": "app",
+        "approval": {
+          "signature": "MEUCIQDx7k2v9yJ3bQ8pN4mR6sT1uW5zA0cE2gH4iK6lM8nO0w"
         }
       }
     },
@@ -2872,6 +2906,7 @@
             "platform": "ios",
             "claimed_platform": "ios",
             "method": "qr",
+            "biometric_approvals": true,
             "paired_at": 1767225600000,
             "online": false,
             "last_seen_at": 1767225660000
@@ -2892,6 +2927,7 @@
             "platform": "desktop",
             "claimed_platform": "ios",
             "method": "qr",
+            "biometric_approvals": true,
             "paired_at": 1767225600000,
             "online": false,
             "last_seen_at": 1767225660000
@@ -2911,11 +2947,68 @@
             "name": "Ada's iPhone",
             "platform": "ios",
             "method": "qr",
+            "biometric_approvals": true,
             "paired_at": 1767225600000,
             "online": false,
             "last_seen_at": 1767225660000
           }
         ]
+      }
+    },
+    {
+      "schema": "DevicesListResult",
+      "name": "devices.list: no Face ID state",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "devices": [
+          {
+            "device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+            "name": "Ada's iPhone",
+            "platform": "ios",
+            "claimed_platform": "ios",
+            "method": "qr",
+            "paired_at": 1767225600000,
+            "online": false,
+            "last_seen_at": 1767225660000
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DevicesRenewApprovalKeyParams",
+      "name": "devices.renew_approval_key: renewed",
+      "valid": true,
+      "value": {
+        "approval_key": "BHqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "assertion": "omlzaWduYXR1cmVYRzBFAiEA"
+      }
+    },
+    {
+      "schema": "DevicesRenewApprovalKeyParams",
+      "name": "devices.renew_approval_key: compressed key",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "approval_key": "Ahqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "assertion": "omlzaWduYXR1cmVYRzBFAiEA"
+      }
+    },
+    {
+      "schema": "DevicesRenewApprovalKeyParams",
+      "name": "devices.renew_approval_key: no assertion",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "approval_key": "BHqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+      }
+    },
+    {
+      "schema": "DevicesRenewApprovalKeyResult",
+      "name": "devices.renew_approval_key: ok",
+      "valid": true,
+      "value": {
+        "ok": true
       }
     },
     {
@@ -3541,6 +3634,22 @@
     },
     {
       "schema": "NotificationRequestedNotification",
+      "name": "notification.requested: an iPhone renewed its Face ID key",
+      "valid": true,
+      "value": {
+        "key": "device:0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02:1767225600000",
+        "kind": "device",
+        "target": {
+          "screen": "settings"
+        },
+        "thread_id": null,
+        "title": "Ada's iPhone renewed its Face ID key",
+        "body": "It can approve destructive calls again.",
+        "created_at": 1767225600000
+      }
+    },
+    {
+      "schema": "NotificationRequestedNotification",
       "name": "notification.requested: title too long",
       "valid": false,
       "layer": "json_schema",
@@ -3644,6 +3753,7 @@
             "platform": "ios",
             "claimed_platform": "ios",
             "method": "qr",
+            "biometric_approvals": true,
             "paired_at": 1767225600000,
             "online": false,
             "last_seen_at": 1767225660000
@@ -3663,6 +3773,7 @@
             "platform": "web",
             "claimed_platform": "ios",
             "method": "qr",
+            "biometric_approvals": false,
             "paired_at": 1767225600000,
             "online": false,
             "last_seen_at": 1767225660000
@@ -3697,6 +3808,7 @@
           "platform": "ios",
           "claimed_platform": "ios",
           "method": "qr",
+          "biometric_approvals": true,
           "paired_at": 1767225600000,
           "online": false,
           "last_seen_at": 1767225660000

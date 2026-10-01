@@ -175,6 +175,47 @@
     },
     {
       "schema": "SealedInner",
+      "name": "withdrawal",
+      "valid": true,
+      "value": {
+        "v": 1,
+        "msg_id": "q83vEjRWeJq83vEjRWeJqw",
+        "sender_device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+        "created_at": 1767225600000,
+        "expires_at": 1767268800000,
+        "body": {
+          "type": "push",
+          "category": "input_request",
+          "title": "Answered",
+          "body": "",
+          "request_id": "4f5a6b7c-8d9e-4f0a-9b2c-3d4e5f6a7b01",
+          "withdrawn": true
+        }
+      }
+    },
+    {
+      "schema": "SealedInner",
+      "name": "withdrawn false",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "v": 1,
+        "msg_id": "q83vEjRWeJq83vEjRWeJqw",
+        "sender_device_id": "0b6f1c1e-6f5a-4c2e-9a51-3d1f0c9e2a02",
+        "created_at": 1767225600000,
+        "expires_at": 1767268800000,
+        "body": {
+          "type": "push",
+          "category": "input_request",
+          "title": "Answered",
+          "body": "",
+          "request_id": "4f5a6b7c-8d9e-4f0a-9b2c-3d4e5f6a7b01",
+          "withdrawn": false
+        }
+      }
+    },
+    {
+      "schema": "SealedInner",
       "name": "lock-screen answer",
       "valid": true,
       "value": {

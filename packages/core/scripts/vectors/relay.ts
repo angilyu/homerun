@@ -35,6 +35,8 @@ export const relay: Vector[] = [
   ok("SealedInner", "instruction running a task", sealed({ ...instruction, thread_id: null, task_id: F.TASK })),
   ok("SealedInner", "push", sealed(push, { sender_device_id: F.DEVICE, expires_at: F.T0 + 24 * H })),
   ok("SealedInner", "push without actions", sealed({ type: "push", category: "run_finished", title: "Done", body: "Opened PR #12" })),
+  ok("SealedInner", "withdrawal", sealed({ type: "push", category: "input_request", title: "Answered", body: "", request_id: F.REQUEST, withdrawn: true })),
+  bad("SealedInner", "withdrawn false", sealed({ type: "push", category: "input_request", title: "Answered", body: "", request_id: F.REQUEST, withdrawn: false })),
   ok("SealedInner", "lock-screen answer", sealed(answer, { expires_at: F.T0 + H })),
   bad("SealedInner", "short msg_id", sealed(instruction, { msg_id: "abc" })),
   bad("SealedInner", "missing expires_at", sealed(instruction, { expires_at: undefined })),

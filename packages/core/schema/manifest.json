@@ -513,7 +513,7 @@
       ],
       "params": "InputAnswerParams",
       "result": "InputAnswerResult",
-      "description": "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller may not answer it (`INPUT_ANSWER_RIGHTS`, `checkResponse`)."
+      "description": "Answer an input request. Fails with AUTHORITY_INSUFFICIENT when the caller may not answer it (`INPUT_ANSWER_RIGHTS`, `checkResponse`), or when an iPhone allows a destructive call without a valid Face ID `approval`."
     },
     "monitors.state.get": {
       "direction": "to_runtime",
@@ -703,6 +703,16 @@
       "params": "DevicesPairingCancelParams",
       "result": "DevicesPairingCancelResult",
       "description": "Close a pairing offer before it expires."
+    },
+    "devices.renew_approval_key": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "ios"
+      ],
+      "params": "DevicesRenewApprovalKeyParams",
+      "result": "DevicesRenewApprovalKeyResult",
+      "description": "An iPhone's Face ID enrolment changed, so its approval key was replaced (§9.8). The desktop pins the new key only if an App Attest assertion with a higher counter vouches for it, and tells the user; otherwise destructive approvals stay on the Mac."
     },
     "devices.link.decide": {
       "direction": "to_runtime",
