@@ -4,6 +4,7 @@ import {
   alwaysAllowable,
   checkResponse,
   grantCovers,
+  requiredAuthority,
   isBuiltinTool,
   type ApprovalPrompt,
   type GrantClass,
@@ -13,6 +14,7 @@ import {
   type Surface,
 } from "@homerun/core";
 import type { InputResolution } from "./threads/timeline";
+import type { ClientRole } from "./transport";
 
 /**
  * Answer drafts for input requests (§5.6): the "Always allow" grant editor and question answers.
@@ -35,9 +37,18 @@ export interface GrantEditor {
   classes: readonly GrantClass[];
 }
 
-/** Whether to offer "Always allow" at all. The runtime decides; core double-checks. */
-export function offersAlways(p: ApprovalPrompt): boolean {
-  return p.offer_always && alwaysAllowable(p);
+/**
+ * Why this client can't answer a prompt, or null if it can (§9.9). The web client answers
+ * questions and approves `read`-class calls only; the runtime enforces the same rule.
+ */
+export function cantAnswer(p: InputPrompt, role: ClientRole = "webview"): string | null {
+  if (role === "web" && requiredAuthority(p) === "full") return "Approve on your phone or Mac";
+  return null;
+}
+
+/** Whether to offer "Always allow" at all. The runtime decides; core double-checks. Never on the web (§9.9). */
+export function offersAlways(p: ApprovalPrompt, role: ClientRole = "webview"): boolean {
+  return role !== "web" && p.offer_always && alwaysAllowable(p);
 }
 
 export function grantEditor(p: ApprovalPrompt): GrantEditor {
@@ -76,13 +87,17 @@ export function checkGrant(p: ApprovalPrompt, d: GrantDraft): GrantCheck {
 
 export type ApprovalDecision = "allow" | "deny" | "allow_always";
 
-export function approvalResponse(p: ApprovalPrompt, decision: ApprovalDecision, grant?: GrantDraft): { response: InputResponse | null; errors: string[] } {
-  if (decision !== "allow_always") return { response: { type: "approval", decision }, errors: [] };
+export function approvalResponse(p: ApprovalPrompt, decision: ApprovalDecision, grant?: GrantDraft, role: ClientRole = "webview"): { response: InputResponse | null; errors: string[] } {
+  if (decision !== "allow_always") {
+    const response: InputResponse = { type: "approval", decision };
+    const errs = checkResponse(p, response, { role, via: "app" });
+    return errs.length ? { response: null, errors: errs } : { response, errors: [] };
+  }
   if (!grant) return { response: null, errors: ["Confirm the pattern first."] };
   const c = checkGrant(p, grant);
   if (!c.proposal || c.errors.length) return { response: null, errors: c.errors };
   const response: InputResponse = { type: "approval", decision, grant: c.proposal };
-  const errs = checkResponse(p, response, { role: "webview", via: "app" });
+  const errs = checkResponse(p, response, { role, via: "app" });
   return errs.length ? { response: null, errors: errs } : { response, errors: [] };
 }
 
@@ -115,7 +130,7 @@ export function setFreeform(d: QuestionDraft, qi: number, text: string): Questio
 }
 
 /** The response, or null until every question has an answer. */
-export function questionResponse(p: QuestionPrompt, d: QuestionDraft): InputResponse | null {
+export function questionResponse(p: QuestionPrompt, d: QuestionDraft, role: ClientRole = "webview"): InputResponse | null {
   const answers = p.questions.map((q, i) => {
     const a = d.answers[i] ?? { selected: [], text: "" };
     const text = q.allow_freeform && a.text.trim() !== "" ? a.text.trim() : undefined;
@@ -123,7 +138,7 @@ export function questionResponse(p: QuestionPrompt, d: QuestionDraft): InputResp
   });
   if (answers.some((a) => a.selected.length === 0 && a.text === undefined)) return null;
   const response: InputResponse = { type: "question", answers };
-  return checkResponse(p, response, { role: "webview", via: "app" }).length ? null : response;
+  return checkResponse(p, response, { role, via: "app" }).length ? null : response;
 }
 
 // ---------------------------------------------------------------- after the fact

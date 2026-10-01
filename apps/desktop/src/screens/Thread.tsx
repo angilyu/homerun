@@ -17,6 +17,7 @@ import {
   type TimelineItem,
   type ToolItem,
   type UserItem,
+  relayedText,
 } from "@homerun/app-state";
 import type { Content } from "@homerun/core";
 import { useApp, useNow, useStore } from "../hooks";
@@ -225,6 +226,8 @@ export function deliveryNote(item: UserItem): string | null {
       return "Sending…";
     case "queued":
       return "Waiting for Homerun to send";
+    case "relayed":
+      return relayedText(item.expires_at, Date.now());
     case "failed":
       return `Not sent: ${item.error ?? "error"}`;
     case "held":

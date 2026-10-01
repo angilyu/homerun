@@ -3,6 +3,7 @@ import type { ApprovalPrompt, QuestionPrompt } from "@homerun/core";
 import {
   alreadyAnswered,
   approvalResponse,
+  cantAnswer,
   checkGrant,
   describeResolution,
   grantEditor,
@@ -75,6 +76,27 @@ describe("Always allow (§5.6)", () => {
   test("never offered for a known destructive call", () => {
     const rm = approvalPrompt("t4", { tool: "Write", class: "destructive", offer_always: true, reason: "destructive" }) as unknown as ApprovalPrompt;
     expect(offersAlways(rm)).toBe(false);
+  });
+});
+
+describe("the web client's reduced authority (§9.9)", () => {
+  const q = questionPrompt("q1") as unknown as QuestionPrompt;
+  const read = approvalPrompt("t5", { class: "read", reason: "not_allowlisted" }) as unknown as ApprovalPrompt;
+
+  test("the web answers questions and read-class approvals; the rest says where to go", () => {
+    expect(cantAnswer(q, "web")).toBeNull();
+    expect(cantAnswer(read, "web")).toBeNull();
+    expect(cantAnswer(bash, "web")).toBe("Approve on your phone or Mac");
+    for (const role of ["webview", "ios"] as const) expect(cantAnswer(bash, role)).toBeNull();
+  });
+
+  test("never offers Always allow, and core refuses it from the web anyway", () => {
+    const allow = approvalPrompt("t6", { class: "read", offer_always: true }) as unknown as ApprovalPrompt;
+    expect(offersAlways(allow)).toBe(true);
+    expect(offersAlways(allow, "web")).toBe(false);
+    expect(approvalResponse(read, "allow", undefined, "web").response).toEqual({ type: "approval", decision: "allow" });
+    expect(approvalResponse(allow, "allow_always", initialGrant(allow), "web").response).toBeNull();
+    expect(approvalResponse(bash, "allow", undefined, "web").response).toBeNull();
   });
 });
 

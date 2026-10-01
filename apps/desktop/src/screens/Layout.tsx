@@ -1,4 +1,4 @@
-import { groupThreads, oneLine, type RuntimeStatus } from "@homerun/app-state";
+import { groupThreads, offlineText, oneLine, type RuntimeStatus } from "@homerun/app-state";
 import type { ThreadSummary } from "@homerun/core";
 import { useApp, useNow, useStore, type Route } from "../hooks";
 import { Time } from "../ui/bits";
@@ -176,6 +176,8 @@ export function runtimeText(s: RuntimeStatus, now: number): string | null {
     }
     case "blocked":
       return s.message;
+    case "offline":
+      return offlineText(s, now);
   }
 }
 

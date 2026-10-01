@@ -1,3 +1,4 @@
+import { requiredAuthority } from "@homerun/core";
 import type {
   InputPrompt,
   InputRequest,
@@ -41,6 +42,8 @@ export interface UserItem {
   sent_at: number | null;
   delivery: Delivery;
   error?: string;
+  /** A relayed message: when the relay drops it if the desktop hasn't come back (§9.4). */
+  expires_at?: number;
 }
 
 export interface AssistantItem {
@@ -202,6 +205,7 @@ export function threadView(s: ThreadState, fallbackActive?: { run_id: string; st
       sent_at: null,
       delivery: o.state,
       error: o.error,
+      ...(o.expires_at !== undefined ? { expires_at: o.expires_at } : {}),
     });
 
   const inWindow = new Set(d.pending.map((p) => p.request_id));
@@ -234,15 +238,10 @@ function fromRequest(r: InputRequest): PendingInput {
     request_id: r.request_id,
     run_id: r.run_id,
     prompt: r.prompt,
-    required_authority: requiredAuthorityOf(r.prompt),
+    required_authority: requiredAuthority(r.prompt),
     requested_at: r.requested_at,
     expires_at: r.expires_at,
   };
-}
-
-function requiredAuthorityOf(p: InputPrompt): "any" | "full" {
-  if (p.type === "question") return "any";
-  return p.class === "read" ? "any" : "full";
 }
 
 function derive(events: readonly StoredEvent[]): Derived {

@@ -7,7 +7,7 @@ import { Store } from "./store";
 import { Tasks } from "./tasks";
 import { ThreadList } from "./threads/list";
 import { ThreadSync } from "./threads/sync";
-import type { RuntimeStatus, Transport, TransportEvent } from "./transport";
+import type { ClientRole, RuntimeStatus, Transport, TransportEvent } from "./transport";
 
 export interface AppClientOptions {
   env?: Env;
@@ -17,6 +17,8 @@ export interface AppClientOptions {
   onProtocolError?: (what: string, detail: unknown) => void;
   /** Load the account and paired devices on connect: the desktop's local UI only (§10). */
   remote?: boolean;
+  /** Who this client is to the runtime; decides what the views offer (§9.9). Default `webview`. */
+  role?: ClientRole;
 }
 
 /**
@@ -26,6 +28,7 @@ export interface AppClientOptions {
  */
 export class AppClient {
   readonly env: Env;
+  readonly role: ClientRole;
   readonly rpc: Rpc;
   readonly runtime: Store<RuntimeStatus>;
   readonly threads: ThreadList;
@@ -47,6 +50,7 @@ export class AppClient {
     private readonly opts: AppClientOptions = {},
   ) {
     this.env = opts.env ?? defaultEnv();
+    this.role = opts.role ?? "webview";
     this.keepMs = opts.keepThreadMs ?? 60_000;
     this.rpc = new Rpc(transport);
     this.runtime = new Store(transport.status());
@@ -88,7 +92,8 @@ export class AppClient {
   retainThread(thread_id: string): { sync: ThreadSync; release: () => void } {
     let entry = this.syncs.get(thread_id);
     if (!entry) {
-      const sync = new ThreadSync({ rpc: this.rpc, env: this.env, connected: () => this.connected }, thread_id);
+      const queue = this.transport.queueInstruction?.bind(this.transport);
+      const sync = new ThreadSync({ rpc: this.rpc, env: this.env, connected: () => this.connected, ...(queue ? { queue } : {}) }, thread_id);
       entry = { sync, refs: 0, timer: null };
       this.syncs.set(thread_id, entry);
       if (this.connected) void sync.open().catch(() => {});

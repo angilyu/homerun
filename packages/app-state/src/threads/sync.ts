@@ -2,6 +2,7 @@ import type { InputResponse, MethodResult, ThreadEvent, UnknownThreadEvent } fro
 import type { Env } from "../env";
 import { NotConnectedError, errorMessage } from "../errors";
 import type { Rpc } from "../rpc";
+import type { QueuedInstruction } from "../transport";
 import { Store } from "../store";
 import { initialThreadState, reduceThread, type ThreadAction, type ThreadState } from "./reducer";
 
@@ -13,6 +14,8 @@ export interface SyncContext {
   env: Env;
   /** Whether the runtime is reachable now. */
   connected(): boolean;
+  /** Seals a message at the relay while the desktop is offline; remote clients only (§9.4). */
+  queue?: (i: QueuedInstruction) => Promise<{ expires_at: number }>;
 }
 
 export type AnswerOutcome = MethodResult<"input.answer">;
@@ -22,7 +25,8 @@ export type AnswerOutcome = MethodResult<"input.answer">;
  * its last seq, so the backlog and live events arrive gap-free. After a reconnect or a seq gap it
  * subscribes again from the last seq it holds. Sending goes through an outbox keyed by
  * `client_msg_id`; `messages.send` is idempotent on it, so a retry after a reconnect never
- * sends twice (§5.7).
+ * sends twice (§5.7). A remote client whose desktop is offline seals the message at the relay
+ * instead (§9.4); the desktop applies it once when it is back.
  */
 export class ThreadSync {
   readonly store: Store<ThreadState>;
@@ -117,8 +121,10 @@ export class ThreadSync {
   async send(text: string): Promise<void> {
     const client_msg_id = this.ctx.env.newId();
     const created_at = this.ctx.env.now();
-    this.dispatch({ type: "outbox_add", item: { client_msg_id, text, created_at, state: this.ctx.connected() ? "sending" : "queued" } });
-    if (this.ctx.connected()) await this.deliver(client_msg_id, text, null);
+    const connected = this.ctx.connected();
+    this.dispatch({ type: "outbox_add", item: { client_msg_id, text, created_at, state: connected ? "sending" : "queued" } });
+    if (connected) await this.deliver(client_msg_id, text, null);
+    else await this.relay(client_msg_id, text);
   }
 
   /** Send a failed or not-delivered message again, as a new message (§5.7). */
@@ -141,12 +147,26 @@ export class ThreadSync {
         ...(sent_at !== null ? { sent_at } : {}),
       });
     } catch (e) {
-      if (e instanceof NotConnectedError) this.dispatch({ type: "outbox_update", client_msg_id, state: "queued" });
-      else this.dispatch({ type: "outbox_update", client_msg_id, state: "failed", error: errorMessage(e) });
+      if (!(e instanceof NotConnectedError)) this.dispatch({ type: "outbox_update", client_msg_id, state: "failed", error: errorMessage(e) });
+      else {
+        this.dispatch({ type: "outbox_update", client_msg_id, state: "queued" });
+        await this.relay(client_msg_id, text);
+      }
     }
   }
 
-  /** Queued messages go out with their original time (§9.4). */
+  /** Sealed at the relay for the desktop, or left queued here if even that fails. */
+  private async relay(client_msg_id: string, text: string): Promise<void> {
+    if (!this.ctx.queue) return;
+    try {
+      const { expires_at } = await this.ctx.queue({ thread_id: this.thread_id, client_msg_id, text });
+      this.dispatch({ type: "outbox_update", client_msg_id, state: "relayed", expires_at });
+    } catch {
+      // Still queued: sent when the desktop is back while this client is open.
+    }
+  }
+
+  /** Queued messages go out with their original time (§9.4). Relayed ones are the desktop's to apply. */
   private async flushOutbox(): Promise<void> {
     for (const o of this.store.get().outbox) {
       if (o.state === "queued" || o.state === "sending") await this.deliver(o.client_msg_id, o.text, o.created_at);
