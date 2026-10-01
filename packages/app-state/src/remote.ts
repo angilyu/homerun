@@ -146,7 +146,7 @@ export function relayText(s: AccountStatus, now: number): string {
 }
 
 /** "Online", "Last seen 5 min ago", "Not seen yet". */
-export function seenText(d: PairedDevice, now: number): string {
+export function seenText(d: Pick<PairedDevice, "online" | "last_seen_at">, now: number): string {
   if (d.online) return "Online";
   return d.last_seen_at !== null ? `Last seen ${ago(d.last_seen_at, now)}` : "Not seen yet";
 }
