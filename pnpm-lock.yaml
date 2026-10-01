@@ -241,6 +241,9 @@ importers:
 
   packages/remote:
     dependencies:
+      '@homerun/app-state':
+        specifier: workspace:*
+        version: link:../app-state
       '@homerun/core':
         specifier: workspace:*
         version: link:../core

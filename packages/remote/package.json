@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The reference remote client (§9, §10): headless and platform-neutral. Signs in with OIDC, registers a device with the relay, pairs by QR or links by code, runs live sessions and sends sealed messages to a desktop, opens pushes and answers them from the lock screen. It plays the phone and web in milestone 9's tests; milestone 10's clients build on it.",
+  "description": "The reference remote client (\u00a79, \u00a710): headless and platform-neutral. Signs in with OIDC, registers a device with the relay, pairs by QR or links by code, runs live sessions and sends sealed messages to a desktop, opens pushes and answers them from the lock screen. It plays the phone and web in milestone 9's tests; milestone 10's clients build on it.",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -12,6 +12,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@homerun/app-state": "workspace:*",
     "@homerun/core": "workspace:*",
     "@homerun/protocol": "workspace:*"
   },

@@ -59,6 +59,8 @@ export class FakeDesktop {
   confirmCode: (code: string, device: { name: string; platform: RemotePlatform }) => Promise<boolean> = async () => true;
   /** Whose App Attest attestations make a device an iPhone; like the runtime, anything else is web. */
   attest: AppAttestPolicy | null = null;
+  /** Refuse every live `hello` with this message. */
+  refuseHello: string | null = null;
 
   constructor(
     readonly relayUrl: string,
@@ -87,6 +89,12 @@ export class FakeDesktop {
 
   stop(): void {
     this.conn.close();
+    this.live.clear();
+  }
+
+  /** Back online after `stop()`, as the same desktop. */
+  async resume(): Promise<void> {
+    await this.conn.connect();
   }
 
   /** Opens a pairing offer and returns the QR code's URL (§9.6). */
@@ -261,8 +269,17 @@ export class FakeDesktop {
     const m = s.decrypt(fromB64url(f.data));
     if (!m || !("method" in m) || !("id" in m)) return;
     this.calls.push({ from: f.from, method: m.method });
+    const params = (m.params ?? {}) as Record<string, JsonValue>;
+    const auth = params.auth as { device_id?: string } | undefined;
+    // Like the runtime (§5.2): a paired device says hello as itself, in the role it was linked with.
+    const helloError =
+      this.refuseHello ?? (params.role !== this.peers.get(f.from)?.platform || auth?.device_id !== f.from ? "role or device does not match the pairing" : null);
     const reply: RpcMessage =
-      m.method === "echo"
+      m.method === "hello"
+        ? helloError
+          ? { jsonrpc: "2.0", id: m.id, error: { code: -32001, message: helloError } }
+          : { jsonrpc: "2.0", id: m.id, result: { protocol: 1, runtime_version: "0.0.0-fake", device_id: this.deviceId, role: params.role as string, capabilities: [] } }
+        : m.method === "echo"
         ? { jsonrpc: "2.0", id: m.id, result: (m.params ?? null) as JsonValue }
         : m.method === "big"
           ? { jsonrpc: "2.0", id: m.id, result: "x".repeat(200_000) }

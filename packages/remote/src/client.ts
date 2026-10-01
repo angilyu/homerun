@@ -119,6 +119,7 @@ export class RemoteClient {
   private delivered = new Set<string>();
   private opening: Promise<unknown> = Promise.resolve();
   private linksListeners = new Set<() => void>();
+  private desktopsListeners = new Set<() => void>();
 
   private constructor(
     private readonly o: RemoteClientOptions,
@@ -209,6 +210,12 @@ export class RemoteClient {
       online: this.presence.get(d.device_id)?.online ?? false,
       last_seen_at: this.presence.get(d.device_id)?.last_seen_at ?? null,
     }));
+  }
+
+  /** Fires when the paired desktops or their presence change. */
+  onDesktops(fn: () => void): () => void {
+    this.desktopsListeners.add(fn);
+    return () => this.desktopsListeners.delete(fn);
   }
 
   onSealed(fn: (e: SealedEvent) => void): () => void {
@@ -519,6 +526,7 @@ export class RemoteClient {
         return this.updateLinks(f.links);
       case "presence":
         this.presence.set(f.device_id, { online: f.online, last_seen_at: f.last_seen_at });
+        this.desktopsChanged();
         return;
       case "receipt":
         if (f.status === "delivered") {
@@ -551,6 +559,7 @@ export class RemoteClient {
       void this.o.store.save(this.state);
     }
     for (const l of [...this.linksListeners]) l();
+    this.desktopsChanged();
   }
 
   private waitLinked(desktopId: string, timeoutMs: number): Promise<void> {
@@ -578,11 +587,13 @@ export class RemoteClient {
   private async pin(d: PairedDesktop): Promise<void> {
     this.state.desktops[d.device_id] = d;
     await this.o.store.save(this.state);
+    this.desktopsChanged();
   }
 
   private async unpin(id: string): Promise<void> {
     delete this.state.desktops[id];
     await this.o.store.save(this.state);
+    this.desktopsChanged();
   }
 
   /** The relay removed this device: drop its keys; a new pairing starts with a new identity. */
@@ -591,6 +602,11 @@ export class RemoteClient {
     this.state.seen = {};
     await this.o.store.clear();
     await this.o.keys?.destroy();
+    this.desktopsChanged();
+  }
+
+  private desktopsChanged(): void {
+    for (const l of [...this.desktopsListeners]) l();
   }
 }
 
