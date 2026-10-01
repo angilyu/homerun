@@ -34,7 +34,20 @@ function setup(script?: FakeScript) {
     [browser, "web"],
   ] as const) {
     const p = publicOf(id);
-    devices.add({ device_id: id.deviceId, name: platform, platform, method: "qr", static_public_key: p.static_public_key, signing_public_key: p.signing_public_key, paired_at: t0, last_seen_at: null });
+    devices.add({
+      device_id: id.deviceId,
+      name: platform,
+      platform,
+      claimed_platform: platform,
+      method: "qr",
+      static_public_key: p.static_public_key,
+      signing_public_key: p.signing_public_key,
+      paired_at: t0,
+      last_seen_at: null,
+      attest_key: null,
+      attest_counter: null,
+      approval_key: null,
+    });
   }
   let now = t0;
   const acked: string[] = [];

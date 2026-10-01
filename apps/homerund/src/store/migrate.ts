@@ -8,6 +8,7 @@ import m0004 from "./migrations/0004_approvals.sql" with { type: "text" };
 import m0005 from "./migrations/0005_read_markers.sql" with { type: "text" };
 import m0006 from "./migrations/0006_cli_tokens.sql" with { type: "text" };
 import m0007 from "./migrations/0007_remote.sql" with { type: "text" };
+import m0008 from "./migrations/0008_app_attest.sql" with { type: "text" };
 
 /**
  * Forward-only, chained migrations (§6.3). Migration `i` takes the schema from version i-1 to i.
@@ -28,6 +29,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 5, sql: m0005 },
   { version: 6, sql: m0006 },
   { version: 7, sql: m0007 },
+  { version: 8, sql: m0008 },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

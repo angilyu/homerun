@@ -7,7 +7,7 @@ import { decodePairingUrl } from "@homerun/protocol";
 import { LinkDeclinedError, LiveClosedError, RpcCallError } from "@homerun/remote";
 import { RpcCallError as LocalCallError } from "../../src/rpc/client";
 import { socketRuntime, until } from "../helpers";
-import { connected, desktop, envFor, pairByQr as pairWith, helloLive, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
+import { appAttest, connected, desktop, envFor, pairByQr as pairWith, helloLive, newUser, phone, relayState, settled, shellFor, ON_WORKERD, startWorld, WORLD_START_MS, type World } from "./harness";
 
 let w: World;
 beforeAll(async () => {
@@ -177,7 +177,7 @@ describe("keys the keychain hasn't stored yet (§5.2)", () => {
     newUser(w);
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
-    const srt = await socketRuntime({ env: envFor(w), remote: { linkBackoff: { initialMs: 50, maxMs: 500 } } });
+    const srt = await socketRuntime({ env: envFor(w), remote: { linkBackoff: { initialMs: 50, maxMs: 500 }, appAttest: appAttest.policy() } });
     cleanup.push(() => srt.close());
     const sh = await shellFor(srt, w.issuer, { hold });
     await sh.c.call("account.sign_in", {});
@@ -211,7 +211,7 @@ describe("linking by matching codes (§10.5)", () => {
     expect(prompt).toMatchObject({ name: "Firefox", platform: "web" });
     await until(() => shown !== "");
     expect(prompt.code).toBe(shown);
-    expect((await d.sh.status()).link_request).toEqual({ name: "Firefox", platform: "web" });
+    expect((await d.sh.status()).link_request).toEqual({ name: "Firefox", platform: "web", claimed_platform: "web" });
     await d.sh.c.call("devices.link.decide", { request_id: prompt.request_id, approve: true });
     const desk = await linked;
     expect(desk.device_id).toBe(deskId);

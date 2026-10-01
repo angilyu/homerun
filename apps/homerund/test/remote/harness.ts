@@ -1,6 +1,7 @@
 import { type AccountStatus, type PairedDevice, PROTOCOL_VERSION } from "@homerun/core";
 import { Account, MemoryStore, RemoteClient, type RemoteLive } from "@homerun/remote";
 import { startLocalRelay, type LocalRelay } from "@homerun/relay/local";
+import { testAppAttestCA } from "@homerun/protocol/testing";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
 import { startWorkerd } from "../../../relay/test/workerd/host";
 import type { FakeScript } from "../../src/agent/fake-engine";
@@ -17,6 +18,8 @@ import { LAUNCH_TOKEN, socketRuntime, until, type SocketRuntime } from "../helpe
  */
 
 export const ON_WORKERD = process.env.HOMERUN_REMOTE_RELAY === "workerd";
+/** Stands in for Apple: desktops trust it, and test iPhones attest with it. */
+export const appAttest = testAppAttestCA();
 /** Starting workerd takes a few seconds; the Bun relay starts at once. */
 export const WORLD_START_MS = ON_WORKERD ? 60_000 : 5_000;
 
@@ -145,7 +148,7 @@ export async function desktop(
     env: { ...envFor(w), ...o.env },
     ...(o.dir ? { dir: o.dir } : {}),
     ...(o.script ? { script: o.script } : {}),
-    remote: { linkBackoff: { initialMs: 50, maxMs: 500 }, ...o.remote },
+    remote: { linkBackoff: { initialMs: 50, maxMs: 500 }, appAttest: appAttest.policy(), ...o.remote },
   });
   const keychain = o.keychain ?? new Map<string, string>();
   // A stand-in key, so runs start (the fake engine never calls Anthropic).
@@ -168,7 +171,7 @@ export async function connected(sh: Shell, timeoutMs = 5000): Promise<void> {
 }
 
 /** A phone (or browser) signed in as the issuer's current user, registered and connected. */
-export async function phone(w: World, o: { kind?: "ios" | "web"; name?: string; store?: MemoryStore } = {}) {
+export async function phone(w: World, o: { kind?: "ios" | "web"; name?: string; store?: MemoryStore; attest?: boolean } = {}) {
   const account = await Account.create({
     issuer: w.issuer.url,
     clientId: w.issuer.clientId,
@@ -185,6 +188,7 @@ export async function phone(w: World, o: { kind?: "ios" | "web"; name?: string; 
     kind,
     name: o.name ?? (kind === "web" ? "Chrome on Linux" : "Ada's iPhone"),
     reconnect: { initialMs: 50, maxMs: 500 },
+    ...(o.attest === false ? {} : { attest: async (id) => appAttest.attest(id).attestation }),
   });
   await client.register();
   await client.connect();

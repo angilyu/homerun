@@ -1,5 +1,6 @@
 import { PAIRING_OFFER_TTL_MS } from "@homerun/core";
 import {
+  type AppAttestPolicy,
   type ClientFrame,
   type DeviceIdentity,
   encodePairingUrl,
@@ -15,6 +16,7 @@ import {
   toB64url,
 } from "@homerun/protocol";
 import { log } from "../log";
+import { deviceRole } from "./attest";
 import type { DeviceRow } from "./devices";
 
 /**
@@ -34,6 +36,8 @@ export interface PairingDeps {
   send: (f: ClientFrame) => boolean;
   now: () => number;
   paired: (offerId: string, row: DeviceRow) => void;
+  /** Whose App Attest attestations make a device an iPhone (§9.8). */
+  attest: AppAttestPolicy;
   ttlMs?: number;
 }
 
@@ -107,19 +111,17 @@ export class Pairing {
       // The offer may have closed (cancelled, expired) while the handshake ran.
       if (this.offers.get(o.offerId) !== o) break;
       const account = this.d.account();
-      // The relay registered the sender; a phone can't claim to be a browser or the reverse.
-      if (!account || (f.device && f.device.kind !== read.hello.platform)) break;
       const now = this.d.now();
-      const row: DeviceRow = {
-        device_id: f.from,
-        name: read.hello.name,
-        platform: read.hello.platform,
-        method: "qr",
-        static_public_key: toB64url(read.remoteStatic),
-        signing_public_key: read.hello.signing_public_key,
-        paired_at: now,
-        last_seen_at: now,
-      };
+      const keys = { device_id: f.from, static_public_key: toB64url(read.remoteStatic), signing_public_key: read.hello.signing_public_key };
+      const role = deviceRole(read.hello.platform, read.hello.attestation, keys, this.d.attest, now);
+      // The relay registered the sender with the role its own check of the attestation gave;
+      // the link statement must agree with it, and the relay can't make a browser an iPhone.
+      if (!account) break;
+      if (f.device && f.device.kind !== role.platform) {
+        log.warn("the relay registered the pairing device with another role", { relay: f.device.kind, here: role.platform });
+        break;
+      }
+      const row: DeviceRow = { ...keys, ...role, name: read.hello.name, method: "qr", paired_at: now, last_seen_at: now };
       const statement = await linkStatement(me, account, row, now);
       if (this.offers.get(o.offerId) !== o) break;
       const reply = await r.reply({ device_id: me.deviceId, name: this.d.name, signing_public_key: publicOf(me).signing_public_key, statement });

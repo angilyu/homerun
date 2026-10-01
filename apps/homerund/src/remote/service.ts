@@ -1,5 +1,5 @@
 import type { AccountStatus, PairedDevice } from "@homerun/core";
-import { type DeviceIdentity, type LinkedDevice, RELAY_PATHS, type ServerFrame } from "@homerun/protocol";
+import { type AppAttestPolicy, type DeviceIdentity, type LinkedDevice, productionAppAttestPolicy, RELAY_PATHS, type ServerFrame } from "@homerun/protocol";
 import { log } from "../log";
 import type { FrameSink, RemotePeer } from "../rpc/server";
 import { RemoteAccount, SignedOutError, TOKEN_HANDOVER_MS, type AccountDeps } from "./account";
@@ -39,10 +39,12 @@ export interface RemoteDeps extends Omit<AccountDeps, "openBrowser" | "accountSw
   linkRequestTtlMs?: number;
   /** What sealed instructions and lock-screen answers do (the run manager). */
   effects?: SealedEffects;
+  /** Whose App Attest attestations make a device an iPhone; Apple's production root by default. */
+  appAttest?: AppAttestPolicy;
 }
 
 /** What tests may shorten or replace. */
-export type RemoteTuning = Pick<RemoteDeps, "fetch" | "signInTimeoutMs" | "handoverMs" | "linkBackoff" | "wakePingMs" | "pairingTtlMs" | "linkRequestTtlMs">;
+export type RemoteTuning = Pick<RemoteDeps, "fetch" | "signInTimeoutMs" | "handoverMs" | "linkBackoff" | "wakePingMs" | "pairingTtlMs" | "linkRequestTtlMs" | "appAttest">;
 
 /** A remote-access call that can't be done as asked. */
 export class RemoteError extends Error {
@@ -83,6 +85,7 @@ export class RemoteService {
     const send = (f: Parameters<RelayLink["send"]>[0]) => this.link?.send(f) ?? false;
     const me = () => this.identity();
     const account = () => this.account.subject;
+    const attest = d.appAttest ?? productionAppAttestPolicy(false);
     this.pairing = new Pairing({
       me,
       name: this.name,
@@ -90,6 +93,7 @@ export class RemoteService {
       send,
       now: d.now,
       ttlMs: d.pairingTtlMs,
+      attest,
       paired: (offerId, row) => {
         this.added(row);
         const device = this.devices.view(row.device_id);
@@ -103,6 +107,7 @@ export class RemoteService {
       send,
       now: d.now,
       ttlMs: d.linkRequestTtlMs,
+      attest,
       toShell: (m, p) => d.broadcast(m, p),
       linked: (row) => this.added(row),
       changed: () => this.changed(),
