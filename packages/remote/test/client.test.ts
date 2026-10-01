@@ -4,7 +4,7 @@ import { startLocalRelay, type LocalRelay, WorkosAdmin } from "@homerun/relay/lo
 import { decodePairingUrl, encodePairingUrl, generateDeviceKeys, identityFromStored, newPairingCode, RELAY_PATHS, type SealedEnvelope } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
 import { ApnsMock, fakeDeviceToken, OidcIssuer } from "@homerun/testkit";
-import { Account, LinkDeclinedError, LiveClosedError, MemoryStore, RelayConnection, RemoteClient, RpcCallError, type ConnectionState } from "../src";
+import { Account, LinkDeclinedError, LiveClosedError, MemoryKeyDb, MemoryStore, RelayConnection, RemoteClient, RpcCallError, WebCryptoKeys, supportsWebCryptoKeys, type ConnectionState, type DeviceKeyStore } from "../src";
 import { FakeDesktop } from "./fake-desktop";
 
 let issuer: OidcIssuer;
@@ -53,7 +53,7 @@ async function signIn() {
   return account;
 }
 
-async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: MemoryStore; sent?: SealedEnvelope[]; attest?: boolean } = {}) {
+async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: MemoryStore; keys?: DeviceKeyStore; sent?: SealedEnvelope[]; attest?: boolean } = {}) {
   const account = o.account ?? (await signIn());
   const store = o.store ?? new MemoryStore();
   const sent = o.sent;
@@ -61,6 +61,7 @@ async function phone(o: { kind?: "ios" | "web"; account?: Account; store?: Memor
     relayUrl: relay.url,
     account,
     store,
+    keys: o.keys,
     kind: o.kind ?? "ios",
     name: o.kind === "web" ? "Chrome" : "Wenjing's iPhone",
     reconnect: { initialMs: 50, maxMs: 500 },
@@ -241,6 +242,69 @@ describe("pairing and linking", () => {
     await expect(client.linkByCode(d.deviceId, () => {})).rejects.toBeInstanceOf(LinkDeclinedError);
     expect(client.desktops()).toEqual([]);
     expect(d.peers.size).toBe(0);
+  });
+});
+
+describe("web keys and redirect sign-in (§9.9)", () => {
+  test("the browser makes X25519 and Ed25519 keys", async () => {
+    expect(await supportsWebCryptoKeys()).toBe(true);
+    expect(await supportsWebCryptoKeys({} as SubtleCrypto)).toBe(false);
+  });
+
+  test("signs in across a redirect: the pending half survives as JSON", async () => {
+    const sub = newUser();
+    const account = await Account.create({ issuer: issuer.url, clientId: issuer.clientId, allowInsecureLoopback: true, redirectUri: "http://127.0.0.1:53682/callback" });
+    const pending = JSON.parse(JSON.stringify(await account.beginRedirect()));
+    const callback = await issuer.browse(pending.url);
+    await account.completeRedirect(pending, callback);
+    expect(account.subject).toBe(sub);
+    await expect((await Account.create({ issuer: issuer.url, clientId: issuer.clientId, allowInsecureLoopback: true, redirectUri: "http://x/" })).signIn()).rejects.toThrow(/beginRedirect/);
+  });
+
+  test("links with non-extractable keys, keeps none in the store, and resumes with them", async () => {
+    const sub = newUser();
+    const d = await desktop(sub);
+    d.confirmCode = async () => true;
+    const db = new MemoryKeyDb();
+    const store = new MemoryStore();
+    const account = await signIn();
+    const { client } = await phone({ kind: "web", account, store, keys: new WebCryptoKeys(db) });
+    await client.linkByCode(d.deviceId, () => {});
+    const saved = (await store.load())!;
+    expect(saved.device.keys).toBeUndefined();
+    const kept = await db.get(`${client.deviceId}/x25519`);
+    expect(kept!.privateKey.extractable).toBe(false);
+    expect((await db.get(`${client.deviceId}/ed25519`))!.privateKey.extractable).toBe(false);
+    client.close();
+
+    // A reload: the same store and key database give the same device, still linked.
+    const again = await phone({ kind: "web", account, store, keys: new WebCryptoKeys(db) });
+    expect(again.client.deviceId).toBe(client.deviceId);
+    expect(again.client.desktops().map((x) => x.device_id)).toEqual([d.deviceId]);
+    const live = await again.client.openLive(d.deviceId);
+    expect(await live.request("echo", { ok: 1 })).toEqual({ ok: 1 });
+    live.close();
+  });
+
+  test("lost keys start a new device with nothing linked", async () => {
+    const { client, d, store, account } = await paired({ kind: "web" });
+    expect(client.desktops()).toHaveLength(1);
+    client.close();
+    const fresh = await phone({ kind: "web", account, store, keys: new WebCryptoKeys(new MemoryKeyDb()) });
+    expect(fresh.client.deviceId).not.toBe(client.deviceId);
+    expect(fresh.client.desktops()).toEqual([]);
+    expect(d.peers.has(fresh.client.deviceId)).toBe(false);
+  });
+
+  test("unpairing the last desktop destroys the keys", async () => {
+    const sub = newUser();
+    const d = await desktop(sub);
+    d.confirmCode = async () => true;
+    const db = new MemoryKeyDb();
+    const { client } = await phone({ kind: "web", keys: new WebCryptoKeys(db) });
+    await client.linkByCode(d.deviceId, () => {});
+    await client.unpair(d.deviceId);
+    expect(await db.get(`${client.deviceId}/x25519`)).toBeUndefined();
   });
 });
 

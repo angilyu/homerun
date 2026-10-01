@@ -38,7 +38,8 @@ import {
   toB64url,
   verifyLinkStatement,
 } from "@homerun/protocol";
-import type { Account } from "./account";
+import type { TokenSource } from "./account";
+import type { DeviceKeyStore } from "./keys";
 import { LiveClosedError, RemoteLive } from "./live";
 import { type ConnectionState, type Fetch, RelayConnection, RelayError } from "./relay-connection";
 import { RendezvousChannel } from "./rendezvous";
@@ -58,8 +59,10 @@ type SealedPush = Omit<SealedInner, "body"> & { body: SealedPushBody };
 
 export interface RemoteClientOptions {
   relayUrl: string;
-  account: Account;
+  account: TokenSource;
   store: RemoteStore;
+  /** Where the secret keys live. Without one they are kept, raw, in `store`. */
+  keys?: DeviceKeyStore;
   kind: Platform;
   /** Shown on the desktop's paired-devices list. */
   name: string;
@@ -120,9 +123,10 @@ export class RemoteClient {
   private constructor(
     private readonly o: RemoteClientOptions,
     state: RemoteState,
+    identity: DeviceIdentity,
   ) {
     this.state = state;
-    this.identity = identityFromStored(state.device.device_id, state.device.kind, state.device.keys);
+    this.identity = identity;
     this.conn = new RelayConnection({
       url: o.relayUrl,
       identity: this.identity,
@@ -141,16 +145,27 @@ export class RemoteClient {
 
   /** Loads this device from the store, or creates a new identity (§9.6 step 1). */
   static async create(o: RemoteClientOptions): Promise<RemoteClient> {
-    let state = await o.store.load();
-    if (!state || state.device.kind !== o.kind) {
-      state = {
-        device: { device_id: crypto.randomUUID() as DeviceId, kind: o.kind, name: o.name, keys: generateDeviceKeys() },
-        desktops: {},
-        seen: {},
-      };
-      await o.store.save(state);
+    const state = await o.store.load();
+    if (state && state.device.kind === o.kind) {
+      const { device_id, kind } = state.device;
+      if (o.keys) {
+        const k = await o.keys.load(device_id);
+        if (k) return new RemoteClient(o, state, { deviceId: device_id, kind, ...k });
+      } else if (state.device.keys) {
+        return new RemoteClient(o, state, identityFromStored(device_id, kind, state.device.keys));
+      }
+      // The keys are gone (cleared site data, a restored backup): its pairings went with them.
     }
-    return new RemoteClient(o, state);
+    const device_id = crypto.randomUUID() as DeviceId;
+    const fresh: RemoteState = { device: { device_id, kind: o.kind, name: o.name }, desktops: {}, seen: {} };
+    let identity: DeviceIdentity;
+    if (o.keys) identity = { deviceId: device_id, kind: o.kind, ...(await o.keys.create(device_id)) };
+    else {
+      fresh.device.keys = generateDeviceKeys();
+      identity = identityFromStored(device_id, o.kind, fresh.device.keys);
+    }
+    await o.store.save(fresh);
+    return new RemoteClient(o, fresh, identity);
   }
 
   private now() {
@@ -294,7 +309,6 @@ export class RemoteClient {
     else await this.unpin(desktopId);
   }
 
-  /** Deletes the account's relay data everywhere (§10.9), forgets this device and signs out. */
   /**
    * Deletes the account, every device's data at the relay and the user at the identity provider
    * (§10.9). The answer says whether the provider's user went too: "pending" means the relay is
@@ -576,6 +590,7 @@ export class RemoteClient {
     this.state.desktops = {};
     this.state.seen = {};
     await this.o.store.clear();
+    await this.o.keys?.destroy();
   }
 }
 

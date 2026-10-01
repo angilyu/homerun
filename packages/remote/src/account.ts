@@ -1,4 +1,4 @@
-import { OidcClient, type OidcConfig, OidcError, type OidcTokens } from "@homerun/protocol";
+import { OidcClient, type OidcConfig, OidcError, type OidcTokens, type PendingAuthorization } from "@homerun/protocol";
 
 /**
  * The signed-in account (§10.4): OIDC Authorization Code with PKCE through a browser the app
@@ -9,9 +9,18 @@ import { OidcClient, type OidcConfig, OidcError, type OidcTokens } from "@homeru
 
 export type Browser = (authorizeUrl: string) => Promise<URL>;
 
+/** What a `RemoteClient` needs from the account: an access token for the relay, and sign-out. */
+export interface TokenSource {
+  readonly subject: string | null;
+  accessToken(): Promise<string>;
+  refresh(): Promise<{ accessToken: string }>;
+  signOut(): Promise<void>;
+}
+
 export interface AccountOptions extends OidcConfig {
   redirectUri: string;
-  browser: Browser;
+  /** Opens the authorization page and resolves with the callback URL. A page that redirects away uses `beginRedirect` instead. */
+  browser?: Browser;
   /** Called with every new refresh token, and with null on sign-out. */
   onRefreshToken?: (token: string | null) => void | Promise<void>;
   /** Refresh this long before expiry. */
@@ -23,7 +32,7 @@ export class SignedOutError extends Error {
   override name = "SignedOutError";
 }
 
-export class Account {
+export class Account implements TokenSource {
   private tokens: OidcTokens | null = null;
   private refreshing: Promise<OidcTokens> | null = null;
 
@@ -51,8 +60,21 @@ export class Account {
   }
 
   async signIn(): Promise<void> {
-    const pending = await this.client.begin(this.o.redirectUri);
-    const callback = await this.o.browser(pending.url);
+    if (!this.o.browser) throw new Error("no browser: use beginRedirect");
+    const pending = await this.beginRedirect();
+    await this.completeRedirect(pending, await this.o.browser(pending.url));
+  }
+
+  /**
+   * The first half of a sign-in that leaves the page (§9.9): go to `url`, and keep the rest
+   * (the PKCE verifier, state and nonce) where only this tab can read it until the callback.
+   */
+  beginRedirect(): Promise<PendingAuthorization> {
+    return this.client.begin(this.o.redirectUri);
+  }
+
+  /** The second half: checks the callback against what `beginRedirect` kept and redeems the code. */
+  async completeRedirect(pending: PendingAuthorization, callback: URL): Promise<void> {
     this.tokens = await this.client.complete(pending, callback);
     await this.o.onRefreshToken?.(this.tokens.refreshToken ?? null);
   }

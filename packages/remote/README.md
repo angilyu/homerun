@@ -7,7 +7,10 @@ clients build on it: they supply a browser for sign-in, a `RemoteStore`, and the
 
 - **`Account`** signs in with OIDC Authorization Code + PKCE (§10.4) through a `browser` the app
   supplies. It refreshes access tokens one at a time before they expire, and passes each rotated
-  refresh token to `onRefreshToken` to persist. `signOut()` revokes the refresh token.
+  refresh token to `onRefreshToken` to persist. `signOut()` revokes the refresh token. A page
+  that must leave for the provider uses `beginRedirect()`, keeps the serializable pending half
+  (verifier, state, nonce) in session storage, and calls `completeRedirect()` on the callback.
+  `RemoteClient` needs only the narrower `TokenSource`.
 - **`RelayConnection`** is one device's link to the relay:
   - HTTPS calls signed with the device key (`homerun-device`).
   - A WebSocket that answers the relay's challenge and re-authenticates before the token expires.
@@ -32,7 +35,14 @@ clients build on it: they supply a browser for sign-in, a `RemoteStore`, and the
   - `unpair()` and `deleteAccount()`.
   - Sealed messages from the relay's queue are opened, checked against the seen-set and acked.
 - **`MemoryStore`** holds the device keys, pinned desktops and the seen-set. Real clients keep
-  these in the Keychain or IndexedDB.
+  these in an encrypted database or IndexedDB.
+- **`DeviceKeyStore`** keeps the secret keys out of the store, as handles whose `dh` and `sign`
+  are async. `WebCryptoKeys` is the web client's (§9.9): X25519 and Ed25519 made with
+  `extractable: false` and kept in IndexedDB through a `CryptoKeyDb`. A page can use them but
+  never read them out. `supportsWebCryptoKeys()` says whether a browser can; there is no raw-key
+  fallback. If the keys are gone (cleared site data), the client starts as a new device with
+  nothing linked. Unpairing the last desktop or deleting the account destroys them. iOS uses a
+  Keychain-backed store (milestone 10b).
 
 The desktop decides what a remote may do (§5.2, §13). A refused call comes back as an ordinary
 JSON-RPC error on the live session. It can also be a sealed answer the desktop drops, such as a
@@ -50,7 +60,9 @@ against the real runtime is `homerund`'s remote suite
 
 The tests cover:
 
-- **Sign-in:** PKCE sign-in, and refresh after revocation.
+- **Sign-in:** PKCE sign-in, across a redirect too, and refresh after revocation.
+- **Web keys:** linking with non-extractable WebCrypto keys and none in the store, resuming with
+  them after a reload, a new device when they are lost, and their destruction on unpair.
 - **Connection:** both WebSocket auth forms, reconnect after a relay restart, and re-authenticating
   before token expiry.
 - **Pairing and linking:** QR pairing, a wrong code, and code linking, both matched and declined.
