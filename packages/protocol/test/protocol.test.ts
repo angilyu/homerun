@@ -262,3 +262,26 @@ describe("device proofs", () => {
     expect(parseDeviceProof("nope")).toBeNull();
   });
 });
+
+describe("collapse ids and approvals", () => {
+  test("a collapse id is per phone and request, 22 characters, and only pushes carry one", async () => {
+    const { collapseId } = await import("../src/approval");
+    const secret = new Uint8Array(32).fill(7);
+    const a = collapseId(secret, "phone-a", "req-1");
+    expect(a).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(collapseId(secret, "phone-b", "req-1")).not.toBe(a);
+    expect(collapseId(secret, "phone-a", "req-2")).not.toBe(a);
+    expect(collapseId(new Uint8Array(32), "phone-a", "req-1")).not.toBe(a);
+    const phone = dev("ios");
+    const desktop = dev("desktop");
+    const m = {
+      v: 1,
+      msg_id: newMsgId(),
+      sender_device_id: phone.deviceId,
+      created_at: NOW,
+      expires_at: NOW + 60_000,
+      body: { type: "instruction", thread_id: null, client_msg_id: crypto.randomUUID(), text: "x" },
+    } as SealedInner;
+    await expect(seal({ inner: m, to: desktop.deviceId, collapseId: a, sender: phone.noise, recipientStatic: desktop.noise.publicKey })).rejects.toThrow();
+  });
+});

@@ -42,6 +42,11 @@ export const SealedHeader = z.strictObject({
   to_device_id: DeviceId,
   from_device_id: DeviceId,
   expires_at: TimestampMs,
+  /**
+   * Pushes only: APNs `apns-collapse-id` (`collapseId`), so a withdrawal replaces the push it
+   * withdraws. Opaque to the relay; bound by the prologue like everything else.
+   */
+  collapse_id: z.string().regex(/^[A-Za-z0-9_-]{22}$/).optional(),
 });
 export type SealedHeader = z.infer<typeof SealedHeader>;
 
@@ -52,7 +57,10 @@ export const SealedEnvelope = z.strictObject({
 export type SealedEnvelope = z.infer<typeof SealedEnvelope>;
 
 export function sealedPrologue(h: SealedHeader): Uint8Array {
-  return framed(SEALED_LABEL, String(h.v), h.mode, h.kind, h.msg_id, h.to_device_id, h.from_device_id, String(h.expires_at));
+  const fields = [SEALED_LABEL, String(h.v), h.mode, h.kind, h.msg_id, h.to_device_id, h.from_device_id, String(h.expires_at)];
+  // Appended only when present, so headers without one keep their M9 prologue.
+  if (h.collapse_id !== undefined) fields.push(h.collapse_id);
+  return framed(...fields);
 }
 
 export function newMsgId(random: Random = systemRandom): string {
@@ -62,6 +70,8 @@ export function newMsgId(random: Random = systemRandom): string {
 export interface SealOptions {
   inner: SealedInner;
   to: string;
+  /** Pushes only (`collapseId`). */
+  collapseId?: string;
   sender: DhKey;
   recipientStatic: Uint8Array;
   random?: Random;
@@ -81,7 +91,9 @@ export async function seal(o: SealOptions): Promise<SealedEnvelope> {
     to_device_id: DeviceId.parse(o.to),
     from_device_id: inner.sender_device_id,
     expires_at: inner.expires_at,
+    ...(o.collapseId !== undefined ? { collapse_id: o.collapseId } : {}),
   };
+  if (o.collapseId !== undefined && inner.body.type !== "push") throw new NoiseError("only pushes carry a collapse id");
   return sealRaw({ ...o, header, plaintext: utf8(JSON.stringify(inner)) });
 }
 
@@ -217,7 +229,7 @@ export async function openSealed(raw: unknown, o: OpenOptions): Promise<OpenResu
   if (!parsed.success) return { ok: false, reason: "malformed" };
   const inner = parsed.data;
   if (inner.sender_device_id !== header.from_device_id) return { ok: false, reason: "sender_mismatch" };
-  if (inner.msg_id !== header.msg_id || inner.expires_at !== header.expires_at || inner.body.type !== header.kind) {
+  if (inner.msg_id !== header.msg_id || inner.expires_at !== header.expires_at || inner.body.type !== header.kind || (header.collapse_id !== undefined && header.kind !== "push")) {
     return { ok: false, reason: "header_mismatch" };
   }
   if (o.now > inner.expires_at + CLOCK_SKEW_MS) return { ok: false, reason: "expired" };

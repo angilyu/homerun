@@ -14,6 +14,7 @@ export * from "./oidc";
 export * from "./der";
 export * from "./cbor";
 export * from "./app-attest";
+export * from "./approval";
 export * from "./vectors/cacophony";
 export * from "./vectors/verify";
 export { seededRandom } from "./vectors/seeded";

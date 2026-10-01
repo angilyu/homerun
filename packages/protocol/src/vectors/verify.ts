@@ -8,6 +8,7 @@ import { openSealed, seal, sealRaw } from "../sealed";
 import { linkStatementBytes, signLinkStatement, verifyLinkStatement } from "../statement";
 import { ClientFrame, challengeBytes, requestBytes, ServerFrame, signChallenge, signRequest, verifySignature } from "../wire";
 import { attestationClientDataHash, IOS_APP_ID, verifyAssertion, verifyAttestation } from "../app-attest";
+import { approvalMessage, approvalRenewalClientDataHash, checkApprovalProof } from "../approval";
 import { identityOf, type VectorDeviceKeys } from "./fixtures";
 import { type CacophonyVector, verifyCacophony } from "./cacophony";
 
@@ -59,7 +60,7 @@ export async function verifySealedVectors(v: Json): Promise<CaseResult[]> {
         const sender = idOf(devices[c.sender]!);
         const common = { sender: sender.noise, recipientStatic: fromB64url(c.recipient_static), e: eph(c.ephemeral_secret) };
         const env = c.inner
-          ? await seal({ ...common, inner: c.inner, to: c.to_device_id, maxChunk: c.max_chunk ?? undefined })
+          ? await seal({ ...common, inner: c.inner, to: c.to_device_id, maxChunk: c.max_chunk ?? undefined, collapseId: c.collapse_id })
           : await sealRaw({ ...common, header: c.header, plaintext: utf8(c.plaintext) });
         return eq(env, c.envelope) ? undefined : "envelope differs";
       }),
@@ -303,6 +304,33 @@ export async function verifyAppAttestVectors(v: Json): Promise<CaseResult[]> {
   return out;
 }
 
+export async function verifyApprovalVectors(v: Json): Promise<CaseResult[]> {
+  const F = "approval.json";
+  const out: CaseResult[] = [];
+  for (const c of v.message as Json[]) out.push(await run(F, "message", () => (toHex(approvalMessage(c)) === c.hex ? undefined : "differs")));
+  for (const c of v.verify as Json[]) {
+    out.push(
+      await run(F, `verify: ${c.name}`, () => {
+        const r = checkApprovalProof(c.proof, c, c.approval_key, { now: c.now, requestExpiresAt: c.request_expires_at });
+        const got = r.ok ? "ok" : r.reason;
+        return got === c.expect ? undefined : `expected ${c.expect}, got ${got}`;
+      }),
+    );
+  }
+  const rn = v.renewal;
+  out.push(await run(F, "renewal: client data hash", () => (toHex(approvalRenewalClientDataHash(rn.device_id, rn.approval_key)) === rn.client_data_hash ? undefined : "differs")));
+  for (const c of rn.assertions as Json[]) {
+    out.push(
+      await run(F, `renewal: ${c.name}`, () => {
+        const r = verifyAssertion(fromB64url(c.assertion), fromHex(c.client_data_hash), fromB64url(rn.credential_public_key), c.last_counter, { appId: v.app_id });
+        if (r.ok !== c.valid) return `expected valid=${c.valid}`;
+        if (r.ok && r.counter !== c.counter) return "counter differs";
+      }),
+    );
+  }
+  return out;
+}
+
 export async function verifyCacophonyVectors(v: Json): Promise<CaseResult[]> {
   const out: CaseResult[] = [];
   for (const c of v.vectors as CacophonyVector[]) {
@@ -323,6 +351,7 @@ export const VERIFIERS: Record<string, (v: Json) => Promise<CaseResult[]>> = {
   "relay-wire.json": verifyWireVectors,
   "encoding.json": verifyEncodingVectors,
   "app-attest.json": verifyAppAttestVectors,
+  "approval.json": verifyApprovalVectors,
 };
 
 /** Runs every verifier over the given files (name → parsed JSON). Missing files fail. */
