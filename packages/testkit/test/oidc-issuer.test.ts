@@ -133,3 +133,21 @@ describe("minted tokens", () => {
     await expect(jwtVerify(before, fresh)).rejects.toThrow();
   });
 });
+
+describe("the management API", () => {
+  test("deletes a user with the admin key, once, and ends its refresh tokens", async () => {
+    const c = await client();
+    issuer.consent = { user: { sub: "user_to_delete", email: "gone@example.com" } };
+    const t = await signIn(c);
+    const del = (key: string) => fetch(`${issuer.url}/user_management/users/user_to_delete`, { method: "DELETE", headers: { authorization: `Bearer ${key}` } });
+    expect((await del("sk_test_wrong")).status).toBe(401);
+    expect(issuer.deletedUsers.has("user_to_delete")).toBe(false);
+    issuer.failAdmin = [503];
+    expect((await del(issuer.adminKey)).status).toBe(503);
+    expect((await del(issuer.adminKey)).status).toBe(202);
+    expect(issuer.deletedUsers.has("user_to_delete")).toBe(true);
+    expect((await del(issuer.adminKey)).status).toBe(404);
+    await expect(c.refresh(t.refreshToken!, t)).rejects.toThrow(OidcError);
+    issuer.consent = { user: { sub: "user_01TESTUSER000000000000000", email: "tester@example.com" } };
+  });
+});

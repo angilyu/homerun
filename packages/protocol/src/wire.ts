@@ -121,6 +121,14 @@ export const PushTokenBody = z.strictObject({
   environment: z.enum(["sandbox", "production"]),
 });
 
+/**
+ * `DELETE /v1/account` (202): the relay data is gone; this is what happened to the user at the
+ * identity provider (§10.9). `pending`: the relay keeps retrying and refuses the account's
+ * tokens until it's done. `manual`: this relay can't delete it, the user does that themselves.
+ */
+export const AccountDeleted = z.strictObject({ provider: z.enum(["deleted", "pending", "manual"]) });
+export type AccountDeleted = z.infer<typeof AccountDeleted>;
+
 export const RelayErrorCode = z.enum([
   "unauthenticated",
   "token_expired",
