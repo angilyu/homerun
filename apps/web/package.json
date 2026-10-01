@@ -1,0 +1,32 @@
+{
+  "name": "@homerun/web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "The web client (§9.9): the desktop's views over the relay, with a browser's reduced authority. Static files for Cloudflare Pages.",
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test test/unit",
+    "test:e2e": "playwright test -c test/e2e/playwright.config.ts"
+  },
+  "dependencies": {
+    "@homerun/app-state": "workspace:*",
+    "@homerun/core": "workspace:*",
+    "@homerun/desktop": "workspace:*",
+    "@homerun/protocol": "workspace:*",
+    "@homerun/remote": "workspace:*",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@homerun/homerund": "workspace:*",
+    "@homerun/relay": "workspace:*",
+    "@homerun/testkit": "workspace:*",
+    "@playwright/test": "1.63.0",
+    "@types/bun": "1.3.14",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "5.9.3"
+  }
+}

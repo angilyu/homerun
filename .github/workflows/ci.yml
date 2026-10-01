@@ -193,6 +193,28 @@ jobs:
       - name: Web build
         run: pnpm --filter @homerun/desktop build
 
+  web:
+    name: apps/web
+    # The web client (§9.9): its storage, its session (sign-in by redirect, linking by code,
+    # unlinking, account deletion) against the real runtime, the relay's Bun adapter and the
+    # local issuer, and the build with its CSP and security headers. About 2 seconds of tests.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/web..."
+      - name: Typecheck
+        run: pnpm --filter @homerun/web typecheck
+      - name: Test
+        run: pnpm --filter @homerun/web test
+        env:
+          ANTHROPIC_API_KEY: ""
+
   desktop-e2e:
     name: apps/desktop end-to-end
     # The production views in a browser, over a bridge that stands in for the Tauri shell, against
