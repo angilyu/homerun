@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { CLOCK_SKEW_MS, type ClientMsgId, type DeviceId, type SealedBody, type SealedInner, SEALED_EXPIRY_DEFAULT_MS } from "@homerun/core";
-import { type DeviceIdentity, generateDeviceKeys, identityFromStored, newMsgId, publicOf, seal, type SealedEnvelope } from "@homerun/protocol";
+import { type DeviceIdentity, generateDeviceKeys, identityFromStored, newMsgId, openSealed, publicOf, seal, type SealedEnvelope } from "@homerun/protocol";
 import type { FakeScript } from "../../src/agent/fake-engine";
 import { PairedDevices } from "../../src/remote/devices";
 import { actionsFor, SealedMessages } from "../../src/remote/sealed";
@@ -211,6 +211,12 @@ describe("lock-screen answers (§9.7)", () => {
     expect(s.r.logs.join("\n")).toContain("this request must be answered in the app");
   });
 
+  test("a question offers its options as buttons only when every label fits on one", () => {
+    const q = (labels: string[]) => ({ type: "question", questions: [{ question: "Which?", header: "Pick", options: labels.map((label) => ({ label })), multi_select: false, allow_freeform: false }] }) as never;
+    expect(actionsFor(q(["Yes", "No"]))).toEqual({ actions: [{ id: "option:0", label: "Yes" }, { id: "option:1", label: "No" }] });
+    expect(actionsFor(q(["Yes", "x".repeat(65)]))).toEqual({});
+  });
+
   test("an answer older than an hour is expired", async () => {
     const input = { file_path: "/tmp/hr-report.md", content: "x" };
     const s = setup(oneCall("Write", input));
@@ -237,5 +243,30 @@ describe("pushes (§9.7)", () => {
     expect(s.posted.map((e) => [e.header.to_device_id, e.header.kind])).toEqual([[s.phone.deviceId, "push"]]);
     expect(s.posted[0]!.header.expires_at - s.now).toBe(SEALED_EXPIRY_DEFAULT_MS.push);
     expect(JSON.stringify(s.posted)).not.toContain("Reports");
+  });
+
+  test("a withdrawal replaces only a request this runtime pushed, under the same collapse id", async () => {
+    const input = { file_path: "/tmp/hr-report.md", content: "x" };
+    const s = setup(oneCall("Write", input));
+    const task = s.r.manager.createTask(sessionSpec({ builtin: ["Write"] }) as never);
+    const run = s.r.manager.sendMessage({ thread_id: task.thread.thread_id, client_msg_id: uuid(), text: "go" }, DESKTOP(s.r.ctx.device.device_id));
+    await until(() => pendingInputRequests(s.r.store, { runId: run.run_id }).length === 1);
+    const req = pendingInputRequests(s.r.store, { runId: run.run_id })[0]!;
+    s.m.withdraw(`input:${req.request_id}`); // never pushed: nothing to withdraw
+    s.m.push({ key: `input:${req.request_id}`, kind: "approval", target: { screen: "thread", thread_id: task.thread.thread_id }, thread_id: task.thread.thread_id, title: "Homerun", body: "Approval needed: Write (write)", created_at: s.now } as never);
+    s.m.push({ key: "missed:1", kind: "missed_checks", target: { screen: "health" }, thread_id: null, title: "Monitors missed checks", body: "x", created_at: s.now } as never);
+    await until(() => s.posted.length === 2);
+    s.m.withdraw(`input:${req.request_id}`);
+    s.m.withdraw(`input:${req.request_id}`); // once only
+    s.m.withdraw("missed:1");
+    await until(() => s.posted.length === 3);
+    await Bun.sleep(5);
+    expect(s.posted).toHaveLength(3);
+    const [original, other, withdrawal] = s.posted;
+    expect(original!.header.collapse_id).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(other!.header.collapse_id).toBeUndefined();
+    expect(withdrawal!.header.collapse_id).toBe(original!.header.collapse_id);
+    const opened = await openSealed(withdrawal, { me: s.phone, senderStatic: () => s.me.noise.publicKey, now: s.now, seen: () => false });
+    expect(opened.ok && opened.inner.body).toEqual({ type: "push", category: "input_request", title: "Answered", body: "", request_id: req.request_id, withdrawn: true } as never);
   });
 });

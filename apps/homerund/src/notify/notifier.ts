@@ -83,6 +83,22 @@ export class Notifier {
     this.emit({ key: `digest:${d.generated_at}`, kind: "digest", target: { screen: "health" }, thread_id: null, title: "Daily monitor summary", body: body(parts.join(" · ")), created_at: d.generated_at });
   }
 
+  /**
+   * An iPhone replaced its Face ID approval key (§18 row 116). The user should know: if they
+   * didn't just change Face ID on that phone, they unpair it in Settings.
+   */
+  approvalKeyRenewed(device: { device_id: string; name: string }, at: number): void {
+    this.emit({
+      key: `device:${device.device_id.toLowerCase()}:${at}`,
+      kind: "device",
+      target: { screen: "settings" },
+      thread_id: null,
+      title: "Face ID approvals changed",
+      body: body(`${title(device.name, "An iPhone")} has a new Face ID key for approvals. If you didn't change Face ID on it, unpair it in Settings.`),
+      created_at: at,
+    });
+  }
+
   private onEvent(e: ThreadEvent): void {
     if (!("seq" in e)) return;
     try {
