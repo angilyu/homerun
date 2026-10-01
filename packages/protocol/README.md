@@ -108,8 +108,11 @@ allows (instruction 72 h, push 24 h, answer 1 h); and the caller's seen-set. The
 
 ## Test vectors
 
-`vectors/` holds plain JSON so every client can use it: the TypeScript clients here, and in M10
-the React Native app and the Swift notification extension. Test keys only; they are published on purpose.
+`vectors/` holds plain JSON so every client can use it: the TypeScript clients here (under Bun
+and workerd), the iPhone app's JavaScript under Hermes, and its Swift (`HomerunKit`, shared by
+the app and the Notification Service Extension). Test keys only; they are published on purpose.
+CI runs them under Bun on every pull request, under `swift test` on macOS when the Swift or the
+vectors change, and under Hermes on the iOS simulator nightly (§18 rows 129–130).
 
 | File | What it pins |
 | --- | --- |
@@ -135,7 +138,7 @@ the files contain, and `verifyAllVectors()` runs in any JavaScript runtime (the 
 inside workerd). Regenerate with `pnpm --filter @homerun/protocol vectors` after a deliberate
 protocol change; CI runs `vectors:check`, so a drift fails the build.
 
-### For the Swift notification extension (M10)
+### For the Swift notification extension
 
 CryptoKit has everything: `Curve25519.KeyAgreement` (X25519), `ChaChaPoly` (note that CryptoKit's
 nonce is the 12-byte Noise nonce: four zero bytes then the little-endian counter), `SHA256`,
@@ -143,4 +146,8 @@ nonce is the 12-byte Noise nonce: four zero bytes then the little-endian counter
 (Ed25519). Ed25519 signatures here are deterministic (RFC 8032), so a Swift signer that randomises
 signatures verifies the vectors but won't reproduce them; compare by verifying, not by bytes.
 The same holds for the P-256 approval signatures: the Secure Enclave randomises them, so Swift
-checks `approval.json` by verifying. `apps/ios/native/HomerunKit` runs these files in `swift test`.
+checks `approval.json` by verifying. [`HomerunKit`](../../apps/ios/README.md#homerunkit) runs `noise-cacophony`, `sealed`, `apns-payload`,
+`relay-wire`, `encoding` and `approval` in `swift test`, and the client data hashes of `app-attest`:
+what the extension and the lock-screen answer need. Live sessions, pairing and linking run in the
+app's JavaScript, which passes every file but `app-attest.json` under Hermes; only desktops and
+the relay verify attestations.

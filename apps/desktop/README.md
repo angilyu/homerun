@@ -672,3 +672,5 @@ to Pages: [`apps/web`](../web/README.md#deploying))
     Quit Homerun: the page says the Mac is offline, and a message sent then says it will send
     when the Mac is back; reopen Homerun and it arrives once. Unlink the browser in the Mac's
     Settings: the page says it was unlinked.
+
+**The iPhone app (milestone 10b)** continues at 37, in [`apps/ios`'s manual checks](../ios/README.md#manual-checks).

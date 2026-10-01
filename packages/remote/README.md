@@ -57,8 +57,12 @@ clients build on it: they supply a browser for sign-in, a `RemoteStore`, and the
   `extractable: false` and kept in IndexedDB through a `CryptoKeyDb`. A page can use them but
   never read them out. `supportsWebCryptoKeys()` says whether a browser can; there is no raw-key
   fallback. If the keys are gone (cleared site data), the client starts as a new device with
-  nothing linked. Unpairing the last desktop or deleting the account destroys them. iOS uses a
-  Keychain-backed store (milestone 10b).
+  nothing linked. Unpairing the last desktop or deleting the account destroys them. The
+  [iOS app](../../apps/ios/README.md) implements the store over Keychain items that JavaScript
+  can only ask to `dh` and `sign` (§18 row 120).
+- **`attest`** (an option) makes the App Attest attestation for registration, pairing and
+  linking. It may resolve to nothing, where App Attest is unavailable or fails: the phone then
+  registers and pairs as a browser (§18 rows 84, 121).
 
 The desktop decides what a remote may do (§5.2, §13). A refused call comes back as an ordinary
 JSON-RPC error on the live session. It can also be a sealed answer the desktop drops, such as a
