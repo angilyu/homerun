@@ -93,7 +93,7 @@ To run a relay on your machine:
 OIDC_ISSUER=https://issuer.example OIDC_CLIENT_ID=client_... bun run dev   # port 8787
 ```
 
-It also reads `OIDC_AUDIENCE`, `RELAY_PORT`, `RELAY_DATA_DIR`, `APP_ATTEST_ALLOW_DEVELOP`, `PROVIDER_ADMIN`, `WORKOS_API_KEY` and `WEB_ORIGINS` (add `http://127.0.0.1:5173` for the web client's dev server). Push is off unless `APNS_KEY_P8_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are all set.
+It also reads `OIDC_AUDIENCE`, `RELAY_PORT`, `RELAY_DATA_DIR`, `APP_ATTEST_ALLOW_DEVELOP`, `PROVIDER_ADMIN`, `WORKOS_API_KEY` and `WEB_ORIGINS` (add the origin you serve a `--dev` build of [`apps/web`](../web/README.md) from, such as `http://127.0.0.1:5173`). Push is off unless `APNS_KEY_P8_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are all set.
 
 ## Deploying
 
@@ -114,7 +114,7 @@ The relay uses only standard OIDC, so another provider is the same three values 
 2. Note its **Key ID** and your **Team ID**.
 3. Keep the `.p8` out of the repository and pass it only to `wrangler secret put`.
 
-The topic is the iOS app's bundle id, `com.angilyu.homerun.ios`. Real delivery to a phone is checked in milestone 10, with the iOS app ([§18 row 78](../../docs/design.md#18-decision-log)).
+The topic is the iOS app's bundle id, `com.angilyu.homerun.ios`. Real delivery to a phone is checked in milestone 10b, with the iOS app ([§18 row 78](../../docs/design.md#18-decision-log)).
 
 ### 3. Cloudflare (the relay)
 
@@ -144,7 +144,7 @@ export HOMERUND_OIDC_CLIENT_ID=client_...
 scripts/macos/package.sh                                   # or apps/desktop/scripts/stage-sidecars.ts --release
 ```
 
-None of them is a secret: the client id is public (a desktop app can't keep a secret, which is why it uses PKCE). Then sign in from **Settings → Remote access** and check the relay shows **Connected**. Pairing a phone needs the iOS app (milestone 10); until then the reference client in [`packages/remote`](../../packages/remote) can play the phone against a real relay.
+None of them is a secret: the client id is public (a desktop app can't keep a secret, which is why it uses PKCE). Then sign in from **Settings → Remote access** and check the relay shows **Connected**. To use it from a browser, deploy [`apps/web`](../web/README.md#deploying) and add its origin to `WEB_ORIGINS`. Pairing a phone needs the iOS app (milestone 10b); until then the reference client in [`packages/remote`](../../packages/remote) can play the phone against a real relay.
 
 To try it all on your machine without any account, run a development desktop against a local relay and issuer: `HOMERUN_RELAY_URL`, `HOMERUN_OIDC_ISSUER` and `HOMERUN_OIDC_CLIENT_ID` in its environment (development builds only, plain http on `127.0.0.1` allowed; [`apps/homerund`](../homerund/README.md#remote-access-9-10-milestone-9)).
 
