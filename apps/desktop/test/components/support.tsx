@@ -190,3 +190,25 @@ export async function renderApp(opts: { t?: FakeTransport; shell?: FakeShell; ro
   if (shell.key.present && shell.shellPrefs.keep_running_asked) await waitFor(() => expect(screen.getByRole("navigation")).toBeTruthy());
   return { t, shell, client, go: app.go };
 }
+
+export interface WebHarness {
+  t: FakeTransport;
+  client: AppClient;
+  retried: number;
+  go(r: Route): void;
+}
+
+/** Render the app as the web client renders it: no shell, the web role, its own settings (§9.9). */
+export async function renderWeb(opts: { t?: FakeTransport; route?: Route; connect?: boolean } = {}): Promise<WebHarness> {
+  const t = opts.t ?? baseTransport();
+  const client = new AppClient(t, { keepThreadMs: 0, role: "web" });
+  const h: WebHarness = { t, client, retried: 0, go: () => {} };
+  const app = createApp({ transport: t, shell: null, role: "web", settings: () => <section aria-label="This browser">Signed in on the web</section>, retry: () => void h.retried++ }, client);
+  h.go = app.go;
+  if (opts.route) app.route.set(opts.route);
+  client.start();
+  if (opts.connect !== false) t.ready();
+  render(<AppRoot app={app} />);
+  await waitFor(() => expect(screen.getByRole("navigation")).toBeTruthy());
+  return h;
+}

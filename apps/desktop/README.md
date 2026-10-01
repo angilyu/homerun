@@ -120,6 +120,12 @@ signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
   editor, monitors (on the task page), health, and settings.
 - `ui/Markdown.tsx` renders app-state's markdown tree. It never renders HTML, and images are
   shown as links (§13).
+- The web client (`apps/web`, milestone 10a) renders these same views with no shell
+  (`Platform.shell` is null) and the `web` role. Root skips key onboarding. Settings shows only
+  the web client's own section and a read-only daily summary. `AppClient.may` hides what core's
+  allowlists refuse the web: creating, editing or archiving tasks, pausing schedules, editing
+  monitor state. Input cards it can't answer say *Approve on your phone or Mac*, and every card
+  waits while the desktop is offline (§9.9; `test/components/web.test.tsx`).
 
 ## In the background (milestone 8)
 

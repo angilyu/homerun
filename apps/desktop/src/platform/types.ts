@@ -1,4 +1,5 @@
-import type { Transport } from "@homerun/app-state";
+import type { ComponentType } from "react";
+import type { ClientRole, Transport } from "@homerun/app-state";
 
 /**
  * What the React views need from the platform (§9.8): the runtime `Transport` for the state
@@ -130,7 +131,14 @@ export function shellCommands(call: <T>(cmd: string, args?: Record<string, unkno
 
 export interface Platform {
   transport: Transport;
-  shell: ShellApi;
+  /** The desktop shell; null in the web client, which has none (§9.9). */
+  shell: ShellApi | null;
+  /** Who this client is to the runtime; the desktop's own window by default. */
+  role?: ClientRole;
+  /** The web client's own settings (its sign-in and its desktops), shown in Settings. */
+  settings?: ComponentType;
+  /** Reconnect after a blocked status, for a client without a shell to restart the runtime. */
+  retry?: () => void;
 }
 
 /** A shell error that isn't a runtime error: "keychain_approval" means the keychain is waiting for the user (§11). */

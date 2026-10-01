@@ -28,6 +28,7 @@ export function Layout({ keyError }: { keyError: string | null }) {
 }
 
 function Screen({ route }: { route: Route }) {
+  const app = useApp();
   switch (route.name) {
     case "home":
     case "new_chat":
@@ -41,6 +42,7 @@ function Screen({ route }: { route: Route }) {
     case "task":
       return <TaskPage key={route.task_id} task_id={route.task_id} />;
     case "task_edit":
+      if (!app.client.may(route.task_id ? "tasks.update" : "tasks.create")) return <p className="muted">Create and edit tasks on your Mac.</p>;
       return <TaskEditor key={route.task_id ?? `new-${route.kind}`} task_id={route.task_id} kind={route.kind} from_thread_id={route.from_thread_id} />;
     case "health":
       return <Health />;
@@ -138,19 +140,25 @@ export function RuntimeBanner() {
   useNow(1000);
   const text = runtimeText(s, Date.now());
   if (!text) return null;
-  const canRestart = s.state === "crash_loop" || s.state === "blocked" || s.state === "restarting";
+  const shell = app.shell;
+  const canRestart = shell !== null && (s.state === "crash_loop" || s.state === "blocked" || s.state === "restarting");
   return (
     <div className={`banner ${s.state === "blocked" || s.state === "crash_loop" ? "danger" : "warn"}`} role="status" aria-live="polite">
       <span>{text}</span>
       <span className="actions">
         {canRestart && (
-          <button type="button" onClick={() => void app.shell.restartRuntime().catch(() => {})}>
+          <button type="button" onClick={() => void shell.restartRuntime().catch(() => {})}>
             Restart now
           </button>
         )}
-        {(s.state === "crash_loop" || s.state === "blocked") && (
-          <button type="button" onClick={() => void app.shell.revealLogs().catch(() => {})}>
+        {shell && (s.state === "crash_loop" || s.state === "blocked") && (
+          <button type="button" onClick={() => void shell.revealLogs().catch(() => {})}>
             Show logs
+          </button>
+        )}
+        {!shell && app.retry && s.state === "blocked" && (
+          <button type="button" onClick={app.retry}>
+            Try again
           </button>
         )}
       </span>
@@ -195,7 +203,7 @@ function UpdateBanner() {
           Homerun {u.version} is ready. It installs when you quit Homerun.{u.note ? ` ${u.note}` : ""}
         </span>
         <span className="actions">
-          <button type="button" className="primary" onClick={() => void app.shell.restartToUpdate().catch(() => {})}>
+          <button type="button" className="primary" onClick={() => void app.shell?.restartToUpdate().catch(() => {})}>
             Restart now
           </button>
           <button type="button" onClick={() => setHidden(u.version)}>
@@ -211,7 +219,7 @@ function UpdateBanner() {
           Homerun {u.version} is available. {u.reason}
         </span>
         <span className="actions">
-          <button type="button" onClick={() => void app.shell.openExternal(DOWNLOAD_PAGE).catch(() => {})}>
+          <button type="button" onClick={() => app.openExternal(DOWNLOAD_PAGE)}>
             Download
           </button>
           <button type="button" onClick={() => setHidden(u.version)}>

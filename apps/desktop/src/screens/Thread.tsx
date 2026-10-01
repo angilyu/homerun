@@ -118,7 +118,7 @@ function ThreadBody({ sync }: { sync: ThreadSync }) {
           )}
         </div>
         <div className="actions">
-          {!summary?.task_id && view.items.length > 0 && (
+          {!summary?.task_id && view.items.length > 0 && app.client.may("tasks.create") && (
             <button type="button" onClick={() => app.go({ name: "task_edit", kind: "session", from_thread_id: sync.thread_id })}>
               Save as task…
             </button>

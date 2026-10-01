@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, type ComponentType, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AppClient, Store, errorMessage } from "@homerun/app-state";
 import type { KeyStatus, ShellApi, ShellTarget, UpdateState } from "./platform/types";
 
@@ -20,7 +20,14 @@ export type Route =
 
 export interface App {
   client: AppClient;
-  shell: ShellApi;
+  /** Null in the web client: no keychain, runtime process or updater (§9.9). */
+  shell: ShellApi | null;
+  /** Open a link outside the app: the shell's browser, or a new tab. */
+  openExternal(url: string): void;
+  /** The web client's own settings section, if any. */
+  settings: ComponentType | null;
+  /** Try connecting again after a blocked status, where there's no shell to restart. */
+  retry: (() => void) | null;
   route: Store<Route>;
   /** The API key's status; null until the shell answers. */
   key: Store<KeyStatus | null>;
@@ -48,6 +55,13 @@ export function useApp(): App {
   const a = useContext(AppContext);
   if (!a) throw new Error("no AppContext");
   return a;
+}
+
+/** The desktop shell, for views that only the desktop shows (the key, login item, updater). */
+export function useShell(): ShellApi {
+  const shell = useApp().shell;
+  if (!shell) throw new Error("no shell in this client");
+  return shell;
 }
 
 /** The current time, ticking every `ms` while mounted, for "in 12 min" labels. */

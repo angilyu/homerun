@@ -39,15 +39,19 @@ export function TaskPage({ task_id }: { task_id: string }) {
                 New chat
               </button>
             )}
-            <button type="button" onClick={() => app.go({ name: "task_edit", task_id })}>
-              Edit
-            </button>
-            <ConfirmButton
-              label="Archive"
-              danger
-              confirm={monitor ? "Stop checking and archive?" : "Archive this task?"}
-              onConfirm={() => void app.client.tasks.archive(task_id).then(() => app.go({ name: "tasks" }), () => task.reload())}
-            />
+            {app.client.may("tasks.update") && (
+              <button type="button" onClick={() => app.go({ name: "task_edit", task_id })}>
+                Edit
+              </button>
+            )}
+            {app.client.may("tasks.archive") && (
+              <ConfirmButton
+                label="Archive"
+                danger
+                confirm={monitor ? "Stop checking and archive?" : "Archive this task?"}
+                onConfirm={() => void app.client.tasks.archive(task_id).then(() => app.go({ name: "tasks" }), () => task.reload())}
+              />
+            )}
           </>
         )
       }
@@ -105,9 +109,11 @@ function MonitorSection({ task }: { task: Task }) {
           </p>
           {s.missed_since_last_run > 0 && <p className="warn-text">{s.missed_since_last_run} missed since the last check that ran.</p>}
           <div className="row">
-            <button type="button" disabled={toggle.busy} onClick={() => void toggle.run(s.schedule_id, !s.enabled)}>
-              {s.enabled ? "Pause" : "Resume"}
-            </button>
+            {app.client.may("schedules.set_enabled") && (
+              <button type="button" disabled={toggle.busy} onClick={() => void toggle.run(s.schedule_id, !s.enabled)}>
+                {s.enabled ? "Pause" : "Resume"}
+              </button>
+            )}
             <button type="button" disabled={runNow.busy} onClick={() => void runNow.run()}>
               Check now
             </button>
@@ -283,21 +289,23 @@ function StateSection({ task_id }: { task_id: string }) {
           <p className="muted small">
             Updated <Time ts={s.updated_at} relative />
           </p>
-          <div className="row">
-            <button type="button" onClick={() => setEditing(JSON.stringify(s.state, null, 2))}>
-              Edit
-            </button>
-            <ConfirmButton
-              label="Reset"
-              danger
-              confirm="Forget it? The next check starts fresh."
-              onConfirm={() =>
-                void app.client.rpc
-                  .call("monitors.state.reset", { task_id, expected_version: s.version })
-                  .then(() => st.reload(), onErr)
-              }
-            />
-          </div>
+          {app.client.may("monitors.state.set") && (
+            <div className="row">
+              <button type="button" onClick={() => setEditing(JSON.stringify(s.state, null, 2))}>
+                Edit
+              </button>
+              <ConfirmButton
+                label="Reset"
+                danger
+                confirm="Forget it? The next check starts fresh."
+                onConfirm={() =>
+                  void app.client.rpc
+                    .call("monitors.state.reset", { task_id, expected_version: s.version })
+                    .then(() => st.reload(), onErr)
+                }
+              />
+            </div>
+          )}
         </>
       )}
       {s && editing !== null && (
