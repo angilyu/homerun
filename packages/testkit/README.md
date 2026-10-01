@@ -15,6 +15,8 @@ Nothing here ships. Keys are generated per run and never written to disk.
   - A management API like WorkOS's: `DELETE /user_management/users/{id}` with `adminKey` deletes
     the user and ends its refresh tokens, as the relay does on account deletion. `failAdmin`
     scripts its failures.
+  - `corsOrigins` lets those exact browser origins call discovery, JWKS, token and revocation,
+    as a provider allows a public web client's origin (§9.9). The management API never gets CORS.
 - **`ApnsMock`**: Apple's provider API (`POST /3/device/<token>`) over plain HTTP/1.1.
   - It checks the ES256 provider token (kid, team, age), topic, push type, device token and the
     4 KB payload limit, and answers with APNs's statuses and reasons.

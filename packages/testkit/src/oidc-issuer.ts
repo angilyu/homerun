@@ -24,6 +24,11 @@ export interface IssuerOptions {
   rotateRefresh?: boolean;
   user?: IssuerUser;
   port?: number;
+  /**
+   * Browser origins allowed to call discovery, JWKS, token and revocation (CORS), as a provider
+   * allows a public web client's registered origin. Exact matches; none by default.
+   */
+  corsOrigins?: string[];
 }
 
 interface Key {
@@ -68,6 +73,7 @@ export type Consent = { user: IssuerUser } | "deny";
 export class OidcIssuer {
   readonly clientId: string;
   readonly redirectUris: string[];
+  readonly corsOrigins: string[];
   audience: string | undefined;
   accessTtlSec: number;
   rotateRefresh: boolean;
@@ -97,6 +103,7 @@ export class OidcIssuer {
   private constructor(o: IssuerOptions) {
     this.clientId = o.clientId ?? "client_homerun_test";
     this.redirectUris = o.redirectUris ?? ["http://127.0.0.1/callback"];
+    this.corsOrigins = o.corsOrigins ?? [];
     this.audience = o.audience;
     this.accessTtlSec = o.accessTtlSec ?? 300;
     this.rotateRefresh = o.rotateRefresh ?? true;
@@ -172,6 +179,24 @@ export class OidcIssuer {
   }
 
   private async handle(req: Request): Promise<Response> {
+    const origin = req.headers.get("origin");
+    const allowed = origin !== null && this.corsOrigins.includes(origin) ? origin : null;
+    const res = await this.route(req, allowed);
+    if (allowed && !req.url.includes("/user_management/")) {
+      res.headers.set("access-control-allow-origin", allowed);
+      res.headers.set("vary", "origin");
+    }
+    return res;
+  }
+
+  private async route(req: Request, corsOrigin: string | null): Promise<Response> {
+    if (req.method === "OPTIONS") {
+      if (!corsOrigin) return new Response(null, { status: 403 });
+      return new Response(null, {
+        status: 204,
+        headers: { "access-control-allow-methods": "GET, POST", "access-control-allow-headers": "content-type, dpop", "access-control-max-age": "600" },
+      });
+    }
     if (this.down) return json({ error: "temporarily_unavailable" }, 503);
     const url = new URL(req.url);
     switch (`${req.method} ${url.pathname}`) {

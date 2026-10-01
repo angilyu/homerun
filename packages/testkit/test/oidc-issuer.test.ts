@@ -151,3 +151,28 @@ describe("the management API", () => {
     issuer.consent = { user: { sub: "user_01TESTUSER000000000000000", email: "tester@example.com" } };
   });
 });
+
+describe("browser CORS, as for a public web client (§9.9)", () => {
+  test("only the configured origins; never the management API", async () => {
+    const web = await OidcIssuer.start({ corsOrigins: ["https://web.example"] });
+    try {
+      const get = (origin: string, path = "/.well-known/openid-configuration") => fetch(`${web.url}${path}`, { headers: { origin } });
+      expect((await get("https://web.example")).headers.get("access-control-allow-origin")).toBe("https://web.example");
+      expect((await get("https://evil.example")).headers.get("access-control-allow-origin")).toBeNull();
+      const pre = await fetch(`${web.url}/token`, { method: "OPTIONS", headers: { origin: "https://web.example", "access-control-request-method": "POST" } });
+      expect(pre.status).toBe(204);
+      expect(pre.headers.get("access-control-allow-origin")).toBe("https://web.example");
+      expect((await fetch(`${web.url}/token`, { method: "OPTIONS", headers: { origin: "https://evil.example" } })).status).toBe(403);
+      const del = await fetch(`${web.url}/user_management/users/u1`, { method: "DELETE", headers: { origin: "https://web.example" } });
+      expect(del.headers.get("access-control-allow-origin")).toBeNull();
+      expect((await get("https://web.example")).status).toBe(200);
+    } finally {
+      await web.stop();
+    }
+  });
+
+  test("no origins by default", async () => {
+    const res = await fetch(`${issuer.url}/jwks`, { headers: { origin: "https://web.example" } });
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
