@@ -33,7 +33,7 @@ import callers from "../../../../packages/core/schema/callers.json";
 import { LAUNCH_TOKEN, sessionSpec, socketRuntime, type SocketRuntime } from "../../../homerund/test/helpers";
 import { HOMERUND_DIR, Homerund, REPLAY_KEY, scratchDir } from "../../../homerund/test/replay/harness";
 import { ReplayServer } from "../../../homerund/test/replay/replay-server";
-import { envFor, newUser, phone, startWorld, type World } from "../../../homerund/test/remote/harness";
+import { appAttest, envFor, newUser, phone, startWorld, type World } from "../../../homerund/test/remote/harness";
 import { e2eScript } from "./fake-script";
 
 const PORT = Number(process.env.HOMERUN_E2E_PORT ?? 5179);
@@ -292,7 +292,13 @@ class Shell {
     this.setStatus({ state: "ready", connection: ++this.connection, device_id: h.device_id, runtime_version: h.runtime_version, protocol: h.protocol });
   }
 
-  async fake(key: string | null, remote = false): Promise<Record<string, unknown>> {
+  /**
+   * `trustTestAttest`: the runtime trusts the test App Attest root, as the relay and the
+   * reference iPhone do. Without it the runtime trusts only Apple's, like a production desktop,
+   * so the relay registers the phone as an iPhone that this desktop can't verify: it pairs as an
+   * unverified iPhone, with a browser's authority (§18 row 102).
+   */
+  async fake(key: string | null, remote = false, trustTestAttest = false): Promise<Record<string, unknown>> {
     await this.stop();
     this.setStatus({ state: "starting" });
     this.keys = new Map(key ? [[API_KEY, key]] : []);
@@ -303,7 +309,7 @@ class Shell {
     const srt = await socketRuntime({
       script: e2eScript,
       verifyKey: async (k) => (GOOD_KEY.test(k) ? { outcome: "valid" } : { outcome: "invalid", detail: "Anthropic didn't accept this key (401)." }),
-      ...(world ? { env: envFor(world), remote: { linkBackoff: { initialMs: 50, maxMs: 500 } } } : {}),
+      ...(world ? { env: envFor(world), remote: { linkBackoff: { initialMs: 50, maxMs: 500 }, ...(trustTestAttest ? { appAttest: appAttest.policy() } : {}) } } : {}),
     });
     const socketPath = srt.rt.config.socketPath;
     this.active = { kind: "fake", srt, socketPath, world };
@@ -582,10 +588,10 @@ const server = Bun.serve({
     if (url.pathname === "/bridge") return srv.upgrade(req) ? undefined : new Response("upgrade failed", { status: 400 });
     if (url.pathname === "/__e2e/health") return Response.json({ ok: true });
     if (url.pathname === "/__e2e/scene" && req.method === "POST") {
-      const body = (await req.json()) as { mode: "fake" | "replay" | "live"; key?: string | null; scenario?: string; remote?: boolean };
+      const body = (await req.json()) as { mode: "fake" | "replay" | "live"; key?: string | null; scenario?: string; remote?: boolean; trustTestAttest?: boolean };
       try {
         const out =
-          body.mode === "replay" ? await shell.replay(body.scenario ?? "") : body.mode === "live" ? await shell.live() : await shell.fake(body.key === undefined ? "sk-ant-mock-not-a-real-key" : body.key, body.remote === true);
+          body.mode === "replay" ? await shell.replay(body.scenario ?? "") : body.mode === "live" ? await shell.live() : await shell.fake(body.key === undefined ? "sk-ant-mock-not-a-real-key" : body.key, body.remote === true, body.trustTestAttest === true);
         shell.opened = [];
         return Response.json(out);
       } catch (e) {
