@@ -15,8 +15,7 @@ import { MemoryKv, TokenVault, type Kv } from "../../src/storage";
 const ORIGIN = "http://127.0.0.1:5199";
 let w: World;
 beforeAll(async () => {
-  w = await startWorld();
-  w.issuer.redirectUris.push(`http://127.0.0.1${CALLBACK_PATH}`);
+  w = await startWorld({ webOrigins: [ORIGIN] });
 }, WORLD_START_MS);
 afterAll(async () => {
   await w.stop();

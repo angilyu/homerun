@@ -215,6 +215,39 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ""
 
+  web-e2e:
+    name: apps/web end-to-end
+    # The web bundle in Chrome under its own CSP and Trusted Types, served with the headers Pages
+    # applies, against a real homerund, the relay's Bun adapter and the local issuer: sign-in by
+    # redirect, linking by code with the desktop's prompt answered, chat, steering, a question,
+    # an approval that has to wait for a phone or Mac, unlinking and account deletion. About 10
+    # seconds of tests.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/web..."
+      # The runner image's Google Chrome, so there is no browser download.
+      - name: End-to-end tests
+        run: pnpm --filter @homerun/web test:e2e
+        env:
+          ANTHROPIC_API_KEY: ""
+          HOMERUN_E2E_CHANNEL: chrome
+      - name: Upload the report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e
+          path: |
+            apps/web/test/e2e/report
+            apps/web/test/e2e/results
+          retention-days: 7
+
   desktop-e2e:
     name: apps/desktop end-to-end
     # The production views in a browser, over a bridge that stands in for the Tauri shell, against
