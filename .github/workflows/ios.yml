@@ -5,7 +5,7 @@ name: iOS
 # `swift test` against the same packages/protocol/vectors JSON as bun test, on pull requests that
 # touch the Swift or the vectors. About a minute.
 # ios-sim: nightly and on demand, the whole app: prebuild, CocoaPods, a Release simulator build
-# (the JavaScript bundled by Metro, compiled by hermesc; C and C++ through ccache), then the app
+# (the JavaScript bundled by Metro, compiled by hermesc), then the app
 # launched with `-HomerunSelfTest 1` runs the protocol vectors under Hermes on the simulator
 # (apps/ios/scripts/sim-selftest.sh). The JavaScript side runs per pull request on Linux (ci.yml
 # ios-js).
@@ -51,12 +51,10 @@ jobs:
     name: apps/ios simulator build and Hermes self-test
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: macos-26
-    # The agreed exception to 3 minutes (plan §8): a cold React Native build, about 9 minutes.
-    timeout-minutes: 20
-    env:
-      USE_CCACHE: "1"
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 2G
+    # The agreed exception to 3 minutes (plan §8): nightly and on demand only. A cold React Native
+    # build is 9 to 14 minutes; the build step has its own bound, so the job's always-steps still
+    # save the caches and the logs.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -83,61 +81,66 @@ jobs:
           echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
           xcrun simctl list devices | grep "$udid"
           perl -e 'alarm 60; exec @ARGV' xcrun simctl boot "$udid" || echo "simctl boot didn't return; the self-test waits for the boot"
-      - name: ccache
-        run: |
-          command -v ccache || HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ccache
-          ccache --zero-stats
       - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/ios..."
       # No relay or issuer: the self-test needs neither, and the build carries no account config.
       - name: Prebuild
         run: pnpm --filter @homerun/ios exec expo prebuild --platform ios --clean --no-install
-      - uses: actions/cache@v4
+      # Podfile.lock doesn't exist until pod install (prebuild generates ios/), so the key is what
+      # decides it: the generated Podfile, the lockfile that pins every pod's podspec, the podspecs.
+      - name: Pods cache key
+        id: podkey
+        run: echo "key=pods-${{ runner.os }}-${{ hashFiles('apps/ios/ios/Podfile', 'apps/ios/ios/Podfile.properties.json', 'pnpm-lock.yaml', 'apps/ios/modules/**/*.podspec') }}-${EXPO_USE_PRECOMPILED_MODULES:-1}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: pods-restore
         with:
           path: |
             apps/ios/ios/Pods
             ~/Library/Caches/CocoaPods
-          key: pods-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'apps/ios/app.config.ts', 'apps/ios/modules/**/*.podspec', 'apps/ios/targets/**/pods.rb') }}-${{ env.EXPO_USE_PRECOMPILED_MODULES }}
-      # USE_CCACHE=1 makes the Podfile route clang through ccache (react_native_post_install).
+          key: ${{ steps.podkey.outputs.key }}
       - name: CocoaPods
+        id: pods
         working-directory: apps/ios/ios
         run: pod install
-      # ccache is content-addressed, so any earlier cache helps: restore the newest, save a new one.
-      - uses: actions/cache/restore@v4
+      # Saved as soon as pod install succeeds, whatever the build does later.
+      - uses: actions/cache/save@v4
+        if: ${{ always() && steps.pods.outcome == 'success' && steps.pods-restore.outputs.cache-hit != 'true' }}
         with:
-          path: .ccache
-          key: ccache-${{ runner.os }}-${{ hashFiles('apps/ios/ios/Podfile.lock', 'apps/ios/modules/**/*.swift', 'apps/ios/targets/**/*.swift') }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ hashFiles('apps/ios/ios/Podfile.lock', 'apps/ios/modules/**/*.swift', 'apps/ios/targets/**/*.swift') }}-
-            ccache-${{ runner.os }}-
+          path: |
+            apps/ios/ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: ${{ steps.podkey.outputs.key }}
+      # Each line of build.log carries the seconds since the build started, so even a build cut
+      # off by the timeout shows where the time went (scripts/build-timing.pl).
       - name: Release simulator build
         id: build
         working-directory: apps/ios/ios
+        timeout-minutes: 25
         run: |
           set -o pipefail
           xcodebuild -workspace Homerun.xcworkspace -scheme Homerun -configuration Release \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
-            -showBuildTimingSummary build > build.log 2>&1 || { tail -80 build.log; exit 1; }
-          tail -5 build.log
-          # Where the time goes, longest first.
-          sed -n '/Build Timing Summary/,/BUILD SUCCEEDED/p' build.log | grep -E '\| *[0-9.]+ seconds' | sort -t'|' -k2 -rn | head -15
-          ccache --show-stats
-      - uses: actions/cache/save@v4
-        if: ${{ always() && steps.build.outcome == 'success' }}
-        with:
-          path: .ccache
-          key: ccache-${{ runner.os }}-${{ hashFiles('apps/ios/ios/Podfile.lock', 'apps/ios/modules/**/*.swift', 'apps/ios/targets/**/*.swift') }}-${{ github.run_id }}
+            -showBuildTimingSummary build 2>&1 |
+            perl -MTime::HiRes=time -pe 'BEGIN { $| = 1; $t = time } printf "%7.1f ", time - $t' > build.log
+          tail -3 build.log
+      - name: Where the build's time went
+        if: ${{ always() && steps.build.outcome != 'skipped' }}
+        working-directory: apps/ios/ios
+        run: |
+          [ "${{ steps.build.outcome }}" = success ] || tail -60 build.log
+          ../scripts/build-timing.pl build.log | tee build-timing.txt
       # The app writes "HomerunSelfTest vectors: N passed" to stdout and a file in its container.
       - name: Protocol vectors under Hermes on the simulator
         working-directory: apps/ios/ios
         timeout-minutes: 4
         run: ../scripts/sim-selftest.sh build/Build/Products/Release-iphonesimulator/Homerun.app "$RUNNER_TEMP/selftest"
       - uses: actions/upload-artifact@v4
-        if: ${{ failure() }}
+        if: ${{ always() }}
         with:
-          name: ios-sim-selftest
+          name: ios-sim-logs
           path: |
             ${{ runner.temp }}/selftest
             apps/ios/ios/build.log
+            apps/ios/ios/build-timing.txt
           if-no-files-found: ignore
           retention-days: 7

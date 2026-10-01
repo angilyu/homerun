@@ -153,8 +153,10 @@ CI (§18 rows 129–130): `ios-js` in `ci.yml` runs the first three on Linux for
 `HomerunSelfTest vectors: N passed` to stdout and to `Library/Caches/HomerunSelfTest.txt`.
 `scripts/sim-selftest.sh` boots the simulator, installs, launches and reads that line, with every
 wait bounded. On failure it prints what it saw (the app's output, whether it's running, its log)
-and keeps a screenshot, which the job uploads. It runs locally too, given a simulator runtime and a
-Release build. There are no Detox or Maestro tests yet (§17).
+and keeps a screenshot. The job uploads these every run with `build.log` and `build-timing.txt`,
+where `scripts/build-timing.pl` shows where the build's time went, even for a build cut off by its
+timeout. `sim-selftest.sh` runs locally too, given a simulator runtime and a Release build. There
+are no Detox or Maestro tests yet (§17).
 
 ## Manual checks
 
