@@ -115,8 +115,19 @@ export function deletedText(p: ProviderDeletion): string {
   }
 }
 
-export function platformName(p: PairedDevice["platform"]): string {
-  return p === "ios" ? "iPhone" : "Web browser";
+/**
+ * "iPhone", "Web browser", or "Unverified iPhone": one that said it was an iPhone app without an
+ * App Attest attestation the desktop could verify, so it has a browser's authority (§9.9, §12).
+ */
+export function platformName(d: Pick<PairedDevice, "platform" | "claimed_platform">): string {
+  if (d.platform === "ios") return "iPhone";
+  return d.claimed_platform === "ios" ? "Unverified iPhone" : "Web browser";
+}
+
+/** The subject of "… called “name” is asking to link". */
+export function linkerText(r: Pick<PairedDevice, "platform" | "claimed_platform">): string {
+  if (r.platform === "ios") return "An iPhone";
+  return r.claimed_platform === "ios" ? "An iPhone that Apple couldn’t verify (it would link with a browser’s access)" : "A web browser";
 }
 
 /** "Connected", "Connecting…", "Offline since 9:41". The last failure, if any, is `relay.error`. */

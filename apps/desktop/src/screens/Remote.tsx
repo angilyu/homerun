@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { deletedText, platformName, relayText, seenText, type PairingOffer } from "@homerun/app-state";
+import { deletedText, linkerText, platformName, relayText, seenText, type PairingOffer } from "@homerun/app-state";
 import type { AccountStatus, PairedDevice } from "@homerun/core";
 import { encode } from "uqr";
 import { useAction, useApp, useNow, useStore } from "../hooks";
@@ -34,7 +34,7 @@ export function RemoteSection() {
       <ErrorText error={act.error} />
       {account.link_request && (
         <p className="notice info" role="status">
-          {account.link_request.platform === "ios" ? "An iPhone" : "A web browser"} called “{account.link_request.name}” is asking to link. Compare the code in the
+          {linkerText(account.link_request)} called “{account.link_request.name}” is asking to link. Compare the code in the
           Homerun dialog with the one it shows.
         </p>
       )}
@@ -129,7 +129,7 @@ function Devices({ devices }: { devices: readonly PairedDevice[] | null }) {
       <ul className="plain">
         {devices.map((d) => (
           <li key={d.device_id}>
-            {d.name} <Badge>{platformName(d.platform)}</Badge>{" "}
+            {d.name} <Badge>{platformName(d)}</Badge>{" "}
             <span className="muted">
               paired <Time ts={d.paired_at} /> · {seenText(d, now)}
             </span>{" "}

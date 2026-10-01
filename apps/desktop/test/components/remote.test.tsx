@@ -137,6 +137,14 @@ describe("Settings → Remote access (§10)", () => {
     expect(within(s).queryByRole("button", { name: /Link|Allow/ })).toBeNull();
   });
 
+  test("an iPhone App Attest didn't vouch for is named as one, with a browser's access (§12)", async () => {
+    const t = remoteTransport(signedIn({ link_request: { name: "Old phone", platform: "web", claimed_platform: "ios" } }), [phone({ platform: "web" })]);
+    await renderApp({ t, route: { name: "settings" } });
+    const s = await section();
+    expect((await within(s).findByText(/is asking to link/)).textContent).toContain("An iPhone that Apple couldn’t verify (it would link with a browser’s access)");
+    expect(within(within(s).getByRole("group", { name: "Paired devices" })).getByText("Unverified iPhone")).toBeTruthy();
+  });
+
   test("sign out and delete account ask first", async () => {
     const t = remoteTransport(signedIn(), [phone()]);
     await renderApp({ t, route: { name: "settings" } });
