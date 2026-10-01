@@ -591,7 +591,9 @@ export class AccountRelay {
     if (s.account !== this.account()) return fail("invalid", "the statement is for another account");
     const d = this.device(s.device_id);
     if (!d) return fail("device_unknown", "the linked device is not registered");
-    if (d.kind !== s.platform || d.static_public_key !== s.device_static_public_key || d.signing_public_key !== s.device_signing_public_key) {
+    // A desktop that couldn't verify an iPhone links it as a browser; it can never raise a role (§18 row 102).
+    const role = d.kind === s.platform || (d.kind === "ios" && s.platform === "web");
+    if (!role || d.static_public_key !== s.device_static_public_key || d.signing_public_key !== s.device_signing_public_key) {
       return fail("invalid", "the statement doesn't match the device's registration");
     }
     this.sql.tx(() => {

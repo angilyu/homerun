@@ -304,6 +304,21 @@ export function sharedScenarios(get: () => Ctx) {
       expect(((await r.json()) as { device: { kind: string } }).device.kind).toBe("ios");
     });
 
+    test("a desktop that couldn't verify an attested iPhone links it as a browser (§18 row 102)", async () => {
+      const c = get();
+      const { sub, tok } = await account(c);
+      const desktop = new TestDevice("desktop");
+      await desktop.register(c.t, tok);
+      const phone = new TestDevice("ios");
+      await phone.register(c.t, tok);
+      const dc = await desktop.connect(c.t, tok);
+      const pc = await phone.connect(c.t, tok);
+      dc.send({ type: "link_add", statement: await statement(desktop, phone, sub, c.t.now(), "web") });
+      const links = await pc.next("links", (f) => f.links.length === 1);
+      expect(links.links.map((l) => l.device_id)).toEqual([desktop.deviceId]);
+      for (const x of [dc, pc]) x.close();
+    });
+
     test("an iPhone without a valid attestation registers, links and is treated as a browser", async () => {
       const c = get();
       const { sub, tok } = await account(c);
