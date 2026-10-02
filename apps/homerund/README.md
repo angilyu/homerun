@@ -209,7 +209,10 @@ A call that needs the user, and every `AskUserQuestion`, gets an `input_requests
   the web answers questions and `read` approvals, and "Did this happen?" needs full authority.
 - **"Always allow"** (`allow_always` with a grant) and `grants.create` ("Trust this tool") add
   a `tool_grants` row for the task; `grants.revoke` ends it. A grant affects later decisions
-  only.
+  only. A tainted `WebFetch` outside the egress allowlist offers the domain
+  (`suggested_grant`) and, where that grant is allowed and the host is a name, all web fetches
+  for the task (`suggested_grant_all`, a `WebFetch` grant for `*`). A `*` grant covers any
+  `http(s)` host name but not IP addresses or `localhost`; the hard denylist still comes first.
 - **Timeouts.** `runs/input-timeouts.ts` applies a task's `input_timeout`: `deny` expires the
   request and the call gets "Nobody answered in time"; `cancel_run` cancels the run; `wait`
   never expires. It keeps one timer for the earliest deadline and also runs at startup.
