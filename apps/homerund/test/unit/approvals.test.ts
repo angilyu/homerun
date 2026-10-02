@@ -415,6 +415,52 @@ describe("always allow and grants (§5.6)", () => {
     await s.rt.scheduler.idle();
   });
 
+  test("'Allow all web fetches for this task': a tainted fetch offers it; its grant covers every host until revoked", async () => {
+    const s = setup(
+      async (x) => {
+        const i = (await x.nextInput())!;
+        // The first fetch taints the run; the second leaves the (empty) egress allowlist.
+        await x.tool({ toolCallId: `a${x.index}`, tool: "WebFetch", input: { url: "https://one.example/", prompt: "p" } });
+        await x.tool({ toolCallId: `b${x.index}`, tool: "WebFetch", input: { url: `https://host${x.index}.example/?q=secret`, prompt: "p" } });
+        x.result([i.uuid]);
+      },
+      { builtin: ["WebFetch"] },
+    );
+    const all = { tool: "WebFetch", pattern: "*", class: "network" } as const;
+    const r1 = s.send("one");
+    await until(() => s.pending(r1.run_id).length === 1);
+    const [req] = s.pending(r1.run_id);
+    expect(req!.prompt).toMatchObject({
+      reason: "tainted_egress",
+      offer_always: true,
+      suggested_grant: { tool: "WebFetch", pattern: "host0.example", class: "network" },
+      suggested_grant_all: all,
+    });
+    // Not from a notification or the web (§5.6, §9.9).
+    expect(() => s.answer(req!.request_id, { type: "approval", decision: "allow_always", grant: all }, "ios", "notification")).toThrow(AnswerRejected);
+    expect(() => s.answer(req!.request_id, { type: "approval", decision: "allow_always", grant: all }, "web")).toThrow(AnswerRejected);
+    expect(s.answer(req!.request_id, { type: "approval", decision: "allow_always", grant: all }).status).toBe("applied");
+    await s.rt.scheduler.idle();
+    const [g] = listGrants(s.rt.store, s.task.task.task_id);
+    expect(g).toMatchObject(all);
+
+    const r2 = s.send("two");
+    await s.rt.scheduler.idle();
+    expect(s.pending(r2.run_id)).toHaveLength(0);
+    expect(findToolEvent(s.rt.store, s.threadId, "tool.call", "b1")!.payload).toMatchObject({ policy: "granted", grant_id: g!.grant_id, class: "network" });
+
+    revokeGrant(s.rt.store, g!.grant_id, Date.now());
+    const r3 = s.send("three");
+    await until(() => s.pending(r3.run_id).length === 1);
+    expect(s.pending(r3.run_id)[0]!.prompt).toMatchObject({ reason: "tainted_egress", suggested_grant_all: all });
+    // The thread is still tainted, so each fetch asks again.
+    s.answer(s.pending(r3.run_id)[0]!.request_id, deny);
+    await until(() => s.pending(r3.run_id).length === 1);
+    expect(s.pending(r3.run_id)[0]!.prompt).toMatchObject({ suggested_grant: { pattern: "host2.example" }, suggested_grant_all: all });
+    s.answer(s.pending(r3.run_id)[0]!.request_id, deny);
+    await s.rt.scheduler.idle();
+  });
+
   test("a grant that does not cover the call is refused", async () => {
     const s = setup(async (x) => {
       const i = (await x.nextInput())!;

