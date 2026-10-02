@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bashPatternMatches, egressAllowed, egressDomainMatches, egressHostOf, grantCovers } from "../src/patterns";
+import { BashCommandPattern } from "../src/tools";
+import { GrantProposal, effectiveEgressDomains, type ToolGrant } from "../src/grants";
+import { ANY_DOMAIN, bashPatternMatches, egressAllowed, egressDomainMatches, egressHostOf, grantCovers } from "../src/patterns";
 
 describe("Bash command patterns (§5.5)", () => {
   test("whole-command match with * wildcards", () => {
@@ -62,6 +64,41 @@ describe("grantCovers (§5.6)", () => {
     expect(grantCovers(g, { tool: "WebFetch", input: { url: "https://api.github.com/x" } })).toBe(true);
     expect(grantCovers(g, { tool: "WebFetch", input: { url: "https://github.com/x" } })).toBe(false);
     expect(grantCovers({ tool: "WebFetch", pattern: null }, { tool: "WebFetch", input: { url: "https://github.com/x" } })).toBe(false);
+  });
+
+  test("an all-domains WebFetch grant (*) covers any http(s) host name", () => {
+    const g = { tool: "WebFetch", pattern: ANY_DOMAIN };
+    const fetch = (url: string) => grantCovers(g, { tool: "WebFetch", input: { url } });
+    expect(fetch("https://api.github.com/x?q=1")).toBe(true);
+    expect(fetch("http://example.com/")).toBe(true);
+    expect(fetch("https://bücher.de/")).toBe(true);
+    expect(fetch("HTTPS://Evil.Example.NET./a")).toBe(true);
+    expect(grantCovers(g, { tool: "WebSearch", input: { query: "x" } })).toBe(false);
+    expect(grantCovers(g, { tool: "Bash", input: { command: "curl https://example.com" } })).toBe(false);
+  });
+
+  test("an all-domains grant never covers what a per-domain wildcard can't", () => {
+    const any = { tool: "WebFetch", pattern: ANY_DOMAIN };
+    const wildcard = { tool: "WebFetch", pattern: "*.example.com" };
+    for (const url of ["file:///etc/passwd", "ftp://example.com/", "not a url", "", "http://127.0.0.1/", "http://10.0.0.1:8080/x", "http://[::1]/", "https://[fe80::1]/"]) {
+      expect(grantCovers(any, { tool: "WebFetch", input: { url } })).toBe(false);
+      expect(grantCovers(wildcard, { tool: "WebFetch", input: { url } })).toBe(false);
+    }
+    expect(grantCovers(any, { tool: "WebFetch", input: {} })).toBe(false);
+    // Loopback by name reaches this machine, not a website.
+    for (const url of ["http://localhost:3000/", "http://LOCALHOST./", "http://app.localhost/"]) expect(grantCovers(any, { tool: "WebFetch", input: { url } })).toBe(false);
+  });
+
+  test("* is a grant pattern for WebFetch only, never an egress domain or a Bash pattern", () => {
+    expect(GrantProposal.safeParse({ tool: "WebFetch", pattern: "*", class: "network" }).success).toBe(true);
+    expect(GrantProposal.safeParse({ tool: "WebFetch", pattern: "*.*", class: "network" }).success).toBe(false);
+    expect(GrantProposal.safeParse({ tool: "WebFetch", pattern: "*", class: "read" }).success).toBe(false);
+    expect(GrantProposal.safeParse({ tool: "Bash", pattern: "*", class: "write" }).success).toBe(false);
+    expect(BashCommandPattern.safeParse("*").success).toBe(false);
+    expect(grantCovers({ tool: "Bash", pattern: "*" }, { tool: "Bash", input: { command: "rm -rf ~" } })).toBe(true); // why the schema refuses it
+    expect(egressDomainMatches("*", "example.com")).toBe(false);
+    const g = (pattern: string, revoked_at: number | null = null) => ({ tool: "WebFetch", pattern, revoked_at }) as ToolGrant;
+    expect(effectiveEgressDomains(["docs.example.com"], [g("*"), g("api.github.com"), g("old.example.com", 1)])).toEqual(["docs.example.com", "api.github.com"]);
   });
 
   test("MCP trust covers every call; other built-ins are not grantable yet", () => {

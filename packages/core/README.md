@@ -175,7 +175,9 @@ has `layer: "refinement"` vectors.
 - **Grant shape:**
   - `Bash` grants need a metacharacter-free pattern;
   - the class must match the built-in class table;
-  - `WebFetch` grants take a domain pattern.
+  - `WebFetch` grants take a domain pattern, or `*` (`ANY_DOMAIN`) for every domain. `*` covers
+    any http(s) host name, but never an IP literal or a `localhost` name, and is never an egress
+    allowlist entry (`effectiveEgressDomains` leaves it out). `Bash` never takes a bare `*`.
 - **Answer rules** (`checkResponse`, `INPUT_ANSWER_RIGHTS`): these take context (the answering
   role and `via`), so they aren't schema-level at all. Use `vectors/answer-rules.json`.
 - **Release builds refuse `cli_dev`** (`DEV_ONLY_ROLES`). This is a build-time rule, not a
@@ -313,7 +315,8 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
 
 - **D9. Network "Always allow"** creates a `WebFetch` grant for the domain; it does not edit the
   spec or bump its version. The effective egress allowlist is the spec's domains ∪ the network
-  grants (`effectiveEgressDomains`).
+  grants (`effectiveEgressDomains`). *"Allow all web fetches for this task"* is a `WebFetch` grant
+  with pattern `*`: `grantCovers` matches it against the host, and it never joins the allowlist.
 - Shell metacharacters are the design's list plus a lone `&`, newline and carriage return.
 - "Trusted tools" are grants, created from settings through `grants.create`, not a separate list
   in the spec.
