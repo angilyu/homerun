@@ -79,6 +79,19 @@ const taintedFetch = F.approvalPrompt({
   suggested_grant: { tool: "WebFetch", pattern: "api.github.com", class: "network" },
 });
 
+const ALL_DOMAINS = { tool: "WebFetch", pattern: "*", class: "network" };
+/** A tainted fetch that also offers "Allow all web fetches for this task". */
+const taintedFetchAll = { ...taintedFetch, suggested_grant_all: ALL_DOMAINS };
+const ipFetchAll = F.approvalPrompt({
+  tool: "WebFetch",
+  class: "network",
+  reason: "tainted_egress",
+  input: F.inline({ url: "http://203.0.113.7/x", prompt: "p" }),
+  url: "http://203.0.113.7/x",
+  suggested_grant: { tool: "WebFetch", pattern: "203.0.113.7", class: "network" },
+  suggested_grant_all: ALL_DOMAINS,
+});
+
 export const answerRules: AnswerRuleCase[] = [
   ...Object.entries(IN_APP).flatMap(([role, row]) =>
     PROMPTS.map(([what, prompt, response], i) => ({
@@ -109,6 +122,14 @@ export const answerRules: AnswerRuleCase[] = [
   { name: "shell: always allow a domain in a tainted run", prompt: taintedFetch, response: alwaysFor({ tool: "WebFetch", pattern: "api.github.com", class: "network" }), from: { role: "shell", via: "app" }, allowed: true },
   { name: "shell: a wildcard domain grant covers a subdomain", prompt: taintedFetch, response: alwaysFor({ tool: "WebFetch", pattern: "*.github.com", class: "network" }), from: { role: "shell", via: "app" }, allowed: true },
   { name: "shell: a domain grant must cover the host", prompt: taintedFetch, response: alwaysFor({ tool: "WebFetch", pattern: "github.com", class: "network" }), from: { role: "shell", via: "app" }, allowed: false },
+  { name: "shell: allow all web fetches where offered", prompt: taintedFetchAll, response: alwaysFor(ALL_DOMAINS), from: { role: "shell", via: "app" }, allowed: true },
+  { name: "ios: allow all web fetches where offered", prompt: taintedFetchAll, response: alwaysFor(ALL_DOMAINS), from: { role: "ios", via: "app" }, allowed: true },
+  { name: "shell: the domain grant is still offered beside all web fetches", prompt: taintedFetchAll, response: alwaysFor({ tool: "WebFetch", pattern: "api.github.com", class: "network" }), from: { role: "shell", via: "app" }, allowed: true },
+  { name: "shell: all web fetches only where offered", prompt: taintedFetch, response: alwaysFor(ALL_DOMAINS), from: { role: "shell", via: "app" }, allowed: false },
+  { name: "web: never all web fetches", prompt: taintedFetchAll, response: alwaysFor(ALL_DOMAINS), from: { role: "web", via: "app" }, allowed: false },
+  { name: "ios notification: never all web fetches", prompt: taintedFetchAll, response: alwaysFor(ALL_DOMAINS), from: { role: "ios", via: "notification" }, allowed: false },
+  { name: "cli: never all web fetches", prompt: taintedFetchAll, response: alwaysFor(ALL_DOMAINS), from: { role: "cli", via: "app" }, allowed: false },
+  { name: "shell: all web fetches never cover an IP address", prompt: ipFetchAll, response: alwaysFor(ALL_DOMAINS), from: { role: "shell", via: "app" }, allowed: false },
   { name: "cli: deny is still an approval answer", prompt: approval("write"), response: { type: "approval", decision: "deny" }, from: { role: "cli", via: "app" }, allowed: false },
   { name: "cli: did this happen, completed", prompt: ambiguous, response: { type: "ambiguous_tool_call", outcome: "completed" }, from: { role: "cli", via: "app" }, allowed: false },
 ];

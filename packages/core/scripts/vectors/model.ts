@@ -211,6 +211,22 @@ export const input: Vector[] = [
     reason: "tainted_egress",
     suggested_grant: { tool: "WebFetch", pattern: "evil.example.net", class: "network" },
   })),
+  ok("InputPrompt", "network approval offering all web fetches", F.approvalPrompt({
+    tool: "WebFetch",
+    class: "network",
+    input: F.inline({ url: "https://evil.example.net/?q=secret" }),
+    url: "https://evil.example.net/?q=secret",
+    reason: "tainted_egress",
+    suggested_grant: { tool: "WebFetch", pattern: "evil.example.net", class: "network" },
+    suggested_grant_all: { tool: "WebFetch", pattern: "*", class: "network" },
+  })),
+  bad("InputPrompt", "all web fetches with a domain", F.approvalPrompt({
+    tool: "WebFetch",
+    class: "network",
+    reason: "tainted_egress",
+    suggested_grant_all: { tool: "WebFetch", pattern: "evil.example.net", class: "network" },
+  })),
+  bad("InputPrompt", "all web fetches for another tool", F.approvalPrompt({ suggested_grant_all: { tool: "Bash", pattern: "*", class: "network" } })),
   ok("InputPrompt", "destructive approval", F.approvalPrompt({ class: "destructive", reason: "destructive", offer_always: false, suggested_grant: undefined })),
   ok("InputPrompt", "question", F.questionPrompt()),
   ok("InputPrompt", "ambiguous tool call", {

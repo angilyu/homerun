@@ -2,11 +2,18 @@ import { z } from "zod";
 import { named } from "./registry";
 import { Content, DeviceId, RequestId, RunId, TimestampMs, ToolCallId } from "./common";
 import { GrantProposal } from "./grants";
-import { grantCovers } from "./patterns";
+import { ANY_DOMAIN, grantCovers } from "./patterns";
 import { ToolClass, ToolName } from "./tools";
 import { SURFACE_OF_ROLE, type CallerRole } from "./protocol/handshake";
 
 // ---------------------------------------------------------------- prompts (§5.6)
+
+/** The grant behind "Allow all web fetches for this task" (§5.6): every `WebFetch` host. */
+export const AllDomainsGrant = named(
+  "AllDomainsGrant",
+  z.object({ tool: z.literal("WebFetch"), pattern: z.literal(ANY_DOMAIN), class: z.literal("network") }),
+);
+export type AllDomainsGrant = z.infer<typeof AllDomainsGrant>;
 
 export const ApprovalReason = named(
   "ApprovalReason",
@@ -39,6 +46,12 @@ export const ApprovalPrompt = named(
     offer_always: z.boolean(),
     /** The pattern pre-filled in the "Always allow" editor. */
     suggested_grant: GrantProposal.optional(),
+    /**
+     * A second "Always allow" choice beside `suggested_grant`: "Allow all web fetches for this
+     * task". Offered only on a tainted `WebFetch` whose per-domain grant is offered. A client
+     * that doesn't know it still offers the per-domain grant.
+     */
+    suggested_grant_all: AllDomainsGrant.optional(),
   }),
 );
 export type ApprovalPrompt = z.infer<typeof ApprovalPrompt>;
@@ -173,6 +186,8 @@ export function checkResponse(prompt: InputPrompt, response: InputResponse, from
   if (prompt.type === "approval" && response.type === "approval" && response.decision === "allow_always") {
     if (!prompt.offer_always || !alwaysAllowable(prompt)) errs.push("always allow is not offered for this request");
     if (surface === "web" || from.via === "notification") errs.push("grants need the full app on desktop or iOS");
+    if (response.grant?.tool === "WebFetch" && response.grant.pattern === ANY_DOMAIN && !prompt.suggested_grant_all)
+      errs.push("allowing every domain is not offered for this request");
     if (response.grant && response.grant.tool !== prompt.tool) errs.push("the grant must be for the requested tool");
     else if (response.grant && prompt.input.kind === "inline" && !grantCovers(response.grant, { tool: prompt.tool, input: prompt.input.value }))
       errs.push("the grant must cover the requested call");
