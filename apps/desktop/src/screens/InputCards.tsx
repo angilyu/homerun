@@ -1,6 +1,9 @@
 import { useState } from "react";
 import {
+  ALL_WEB_FETCHES,
+  ALL_WEB_FETCHES_WARNING,
   CLASS_LABEL,
+  allWebFetchesResponse,
   alreadyAnswered,
   approvalResponse,
   cantAnswer,
@@ -11,6 +14,7 @@ import {
   grantEditor,
   initialAnswers,
   initialGrant,
+  offersAllWebFetches,
   offersAlways,
   questionResponse,
   setFreeform,
@@ -118,10 +122,18 @@ export function ApprovalCard({ prompt, onAnswer, footer, role = "webview", notic
   const editor = grantEditor(prompt);
   const check = checkGrant(prompt, grant);
   const always = offersAlways(prompt, role) && editor.classes.length > 0;
+  // "Allow all web fetches for this task" (§5.6): its own choice, confirmed against its warning.
+  const [confirmAll, setConfirmAll] = useState(false);
+  const allFetches = always && offersAllWebFetches(prompt, role);
 
   const decide = (d: ApprovalDecision) => {
     const r = approvalResponse(prompt, d, d === "allow_always" ? grant : undefined, role);
     if (!r.response) return setError(r.errors.join(" ") || "Check the pattern.");
+    void submit(r.response);
+  };
+  const allowAll = () => {
+    const r = allWebFetchesResponse(prompt, role);
+    if (!r.response) return setError(r.errors.join(" "));
     void submit(r.response);
   };
 
@@ -186,7 +198,23 @@ export function ApprovalCard({ prompt, onAnswer, footer, role = "webview", notic
           </div>
         </fieldset>
       )}
-      {!editing && !notice && (
+      {confirmAll && !editing && !notice && (
+        <fieldset className="grant-editor all-web-fetches">
+          <legend>{ALL_WEB_FETCHES}?</legend>
+          <p className="error" role="note">
+            {ALL_WEB_FETCHES_WARNING}
+          </p>
+          <div className="row">
+            <button type="button" className="danger" disabled={busy} onClick={allowAll}>
+              Allow all web fetches
+            </button>
+            <button type="button" onClick={() => setConfirmAll(false)}>
+              Back
+            </button>
+          </div>
+        </fieldset>
+      )}
+      {!editing && !confirmAll && !notice && (
         <div className="row">
           <button type="button" className="primary" disabled={busy} onClick={() => decide("allow")}>
             Allow once
@@ -197,6 +225,18 @@ export function ApprovalCard({ prompt, onAnswer, footer, role = "webview", notic
           {always && (
             <button type="button" disabled={busy} onClick={() => setEditing(true)}>
               Always allow…
+            </button>
+          )}
+          {allFetches && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setConfirmAll(true);
+              }}
+            >
+              {ALL_WEB_FETCHES}…
             </button>
           )}
         </div>

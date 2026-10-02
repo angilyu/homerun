@@ -94,6 +94,44 @@ test("a task: approval with an edited Always allow, the grant revoked, a questio
   await expect(page.getByRole("region", { name: "Approve Bash" })).toHaveCount(0);
 });
 
+test("a tainted web fetch: 'Allow all web fetches for this task' after its warning; the grant listed and revoked (§5.5, §5.6)", async ({ page, request }) => {
+  await fakeScene(page, request);
+  await page.getByRole("navigation").getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Reader");
+  await page.getByLabel("Instructions").fill("Read some pages.");
+  await page.getByRole("checkbox", { name: /^WebFetch/ }).check();
+  await page.getByRole("button", { name: "Create task" }).click();
+  await expect(page.getByRole("heading", { name: "Reader", level: 1 })).toBeVisible();
+  await page.getByRole("region", { name: "Chats" }).getByRole("button", { name: "Reader" }).click();
+
+  await send(page, "fetch the pages");
+  const approval = page.getByRole("region", { name: "Approve WebFetch" });
+  await expect(approval).toContainText("https://two.example/");
+  await expect(approval.getByRole("button", { name: "Always allow…" })).toBeVisible();
+  await approval.getByRole("button", { name: "Allow all web fetches for this task…" }).click();
+  await expect(approval.getByText(/send data it has read to any website/)).toBeVisible();
+  await approval.getByRole("button", { name: "Allow all web fetches", exact: true }).click();
+  // The third page, on another domain, needs no answer.
+  const log = page.getByRole("log");
+  await expect(log.getByText("Fetched 3 of 3 pages.")).toBeVisible();
+  await expect(approval).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Task: Reader" }).click();
+  const grants = page.getByRole("region", { name: "Always allowed" });
+  await expect(grants.getByText("WebFetch · any domain")).toBeVisible();
+  await grants.getByRole("button", { name: "Revoke" }).click();
+  await page.getByRole("group", { name: "Ask again next time?" }).getByRole("button", { name: "Revoke" }).click();
+  await expect(grants.getByText("WebFetch · any domain")).toHaveCount(0);
+  await page.getByRole("region", { name: "Chats" }).getByRole("button", { name: "Reader" }).click();
+
+  // Revoked: asked again.
+  await send(page, "fetch the pages");
+  await expect(page.getByRole("region", { name: "Approve WebFetch" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Approve WebFetch" })).toHaveCount(0, { timeout: 15_000 });
+});
+
 test("a monitor: created in the editor, with its next check; paused and resumed (§8)", async ({ page, request }) => {
   await fakeScene(page, request);
   await page.getByRole("navigation").getByRole("button", { name: "Tasks" }).click();

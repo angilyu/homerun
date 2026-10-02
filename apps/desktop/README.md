@@ -473,7 +473,8 @@ cd src-tauri && cargo test -p homerun-shell-core
   the real `AppClient` over app-state's `FakeTransport`. They cover:
   - onboarding and key changes;
   - streaming, steering, stop, held and not-delivered messages;
-  - approvals, including an edited Always allow;
+  - approvals, including an edited Always allow and "Allow all web fetches for this task" behind
+    its warning (never on the web);
   - questions and *Did this happen?*;
   - the task editor, monitors and grants;
   - runtime banners;
@@ -486,7 +487,8 @@ cd src-tauri && cargo test -p homerun-shell-core
   with the launch token, forwards only the `webview` allowlist, and verifies and hands over the
   key. It runs against a real `homerund` in two modes:
   - The fake engine (`fake-script.ts`) covers onboarding, a steered and stopped stream, a task
-    made in the editor, an edited Always allow and its revocation, a question, a message left
+    made in the editor, an edited Always allow and its revocation, "Allow all web fetches for this
+    task" on a tainted fetch and its revocation, a question, a message left
     undelivered, and a monitor with pause, resume and a reply. `cli-access.spec.ts` runs
     `homerun login` from source (a file token store and no peer check). The bridge plays the
     access prompt: Don't Allow, then Allow. The token shows in Settings, Revoke signs it

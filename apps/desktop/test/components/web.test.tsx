@@ -41,6 +41,25 @@ describe("the web client (§9.9)", () => {
     expect(t.called("input.answer")[0]!.params).toMatchObject({ request_id: r, response: { type: "approval", decision: "allow" } });
   });
 
+  test("never offers 'Allow all web fetches for this task' (§5.6, §9.9)", async () => {
+    const r = uuid();
+    const prompt = approvalPrompt("tc1", {
+      tool: "WebFetch",
+      class: "network",
+      input: { kind: "inline", value: { url: "https://evil.test/x" } },
+      url: "https://evil.test/x",
+      reason: "tainted_egress",
+      suggested_grant: { tool: "WebFetch", pattern: "evil.test", class: "network" },
+      suggested_grant_all: { tool: "WebFetch", pattern: "*", class: "network" },
+    });
+    const t = threadWith([userMsg(1, "Look"), started(2), toolCall(3, "tc1", "WebFetch", { url: "https://evil.test/x" }, "needs_approval"), requested(4, r, prompt)]);
+    await renderWeb({ t, route: { name: "thread", thread_id: THREAD } });
+    const card = await screen.findByRole("region", { name: "Approve WebFetch" });
+    expect(within(card).getByRole("note").textContent).toBe("Approve on your phone or Mac");
+    expect(within(card).queryByRole("button", { name: /Allow all web fetches|Always allow/ })).toBeNull();
+    expect(within(card).queryByText(/any website/)).toBeNull();
+  });
+
   test("questions are answered from the web", async () => {
     const q = uuid();
     const t = threadWith([userMsg(1, "Go"), started(2), requested(3, q, questionPrompt())]);
