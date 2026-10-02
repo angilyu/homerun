@@ -214,6 +214,10 @@ export function promptLines(p: InputPrompt): string[] {
         ...(p.url ? [`url: ${p.url}`] : []),
         `reason: ${p.reason.replaceAll("_", " ")}` +
           (p.offer_always && p.suggested_grant ? ` · always allow: ${p.suggested_grant.tool}${p.suggested_grant.pattern ? ` "${p.suggested_grant.pattern}"` : ""} as ${p.suggested_grant.class}` : ""),
+        // Never a one-word answer: allowing every domain is typed out, and says what it means (§5.6).
+        ...(p.offer_always && p.suggested_grant && p.suggested_grant_all
+          ? ["or allow all web fetches for this task (approve --always --pattern '*'): its agent can then send what it has read to any website"]
+          : []),
       ];
     }
     case "ambiguous_tool_call":
