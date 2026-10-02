@@ -119,6 +119,8 @@ describe("task editor (§8.1)", () => {
 describe("grants (§5.6)", () => {
   test("text and active list", () => {
     expect(grantText({ tool: "Bash", pattern: "git status *" })).toBe("Bash · git status *");
+    expect(grantText({ tool: "WebFetch", pattern: "docs.github.com" })).toBe("WebFetch · docs.github.com");
+    expect(grantText({ tool: "WebFetch", pattern: "*" })).toBe("WebFetch · any domain");
     expect(grantText({ tool: "mcp__github__create_issue", pattern: null })).toBe("github · create_issue · every call");
     const g = (id: string, granted_at: number, revoked_at: number | null) => ({ grant_id: id, granted_at, revoked_at }) as never;
     expect(activeGrants([g("a", 1, null), g("b", 3, 4), g("c", 2, null)]).map((x: any) => x.grant_id)).toEqual(["c", "a"]);

@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ApprovalPrompt, QuestionPrompt } from "@homerun/core";
 import {
+  ALL_WEB_FETCHES,
+  ALL_WEB_FETCHES_WARNING,
+  allWebFetchesResponse,
   alreadyAnswered,
+  answerVerb,
   approvalResponse,
   cantAnswer,
   checkGrant,
@@ -9,6 +13,7 @@ import {
   grantEditor,
   initialAnswers,
   initialGrant,
+  offersAllWebFetches,
   offersAlways,
   questionResponse,
   setFreeform,
@@ -76,6 +81,46 @@ describe("Always allow (§5.6)", () => {
   test("never offered for a known destructive call", () => {
     const rm = approvalPrompt("t4", { tool: "Write", class: "destructive", offer_always: true, reason: "destructive" }) as unknown as ApprovalPrompt;
     expect(offersAlways(rm)).toBe(false);
+  });
+});
+
+describe("Allow all web fetches for this task (§5.6)", () => {
+  const all = { tool: "WebFetch", pattern: "*", class: "network" } as const;
+  const fetch = approvalPrompt("t7", {
+    tool: "WebFetch",
+    class: "network",
+    input: { kind: "inline", value: { url: "https://evil.test/x?q=1" } },
+    url: "https://evil.test/x?q=1",
+    reason: "tainted_egress",
+    suggested_grant: { tool: "WebFetch", pattern: "evil.test", class: "network" },
+    suggested_grant_all: all,
+  }) as unknown as ApprovalPrompt;
+
+  test("offered beside the domain where the runtime offers it; the warning says what it allows", () => {
+    expect(ALL_WEB_FETCHES).toBe("Allow all web fetches for this task");
+    expect(ALL_WEB_FETCHES_WARNING).toContain("send data it has read to any website");
+    for (const role of ["webview", "ios"] as const) {
+      expect(offersAlways(fetch, role)).toBe(true);
+      expect(offersAllWebFetches(fetch, role)).toBe(true);
+      expect(allWebFetchesResponse(fetch, role)).toEqual({ response: { type: "approval", decision: "allow_always", grant: all }, errors: [] });
+    }
+    // The domain choice is unchanged.
+    expect(approvalResponse(fetch, "allow_always", initialGrant(fetch)).response).toMatchObject({ grant: { pattern: "evil.test" } });
+    expect(answerVerb(fetch, { type: "approval", decision: "allow_always", grant: all })).toBe("Allowed all web fetches");
+    expect(answerVerb(fetch, { type: "approval", decision: "allow_always", grant: fetch.suggested_grant })).toBe("Always allowed");
+  });
+
+  test("not on the web, not where the runtime didn't offer it, and not by typing * as the domain", () => {
+    expect(offersAllWebFetches(fetch, "web")).toBe(false);
+    expect(allWebFetchesResponse(fetch, "web").response).toBeNull();
+    const { suggested_grant_all: _, ...domainOnly } = fetch;
+    expect(offersAllWebFetches(domainOnly as ApprovalPrompt)).toBe(false);
+    expect(allWebFetchesResponse(domainOnly as ApprovalPrompt).response).toBeNull();
+    expect(offersAllWebFetches({ ...fetch, offer_always: false })).toBe(false);
+    const typed = checkGrant(fetch, { pattern: " * ", class: "network" });
+    expect(typed.proposal).toBeNull();
+    expect(typed.errors.join()).toContain(ALL_WEB_FETCHES);
+    expect(approvalResponse(fetch, "allow_always", { pattern: "*", class: "network" }).response).toBeNull();
   });
 });
 
