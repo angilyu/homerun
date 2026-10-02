@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { named } from "./registry";
 import { DeviceId, GrantId, TaskId, TimestampMs } from "./common";
+import { ANY_DOMAIN } from "./patterns";
 import { BUILTIN_TOOL_CLASS, BashCommandPattern, ToolName, isBuiltinTool } from "./tools";
 import { EgressDomain } from "./task-spec";
 
@@ -13,7 +14,7 @@ type GrantShape = { tool: string; pattern: string | null; class: GrantClass };
 /**
  * Shared rules for a grant and for the grant proposed in an "Always allow" answer:
  * - `Bash` needs an exact command pattern with no shell metacharacters, never bare `Bash`;
- * - `WebFetch` patterns are domains;
+ * - `WebFetch` patterns are domains, or `*` for every domain ("Allow all web fetches", §5.6);
  * - other built-ins keep their built-in class;
  * - third-party MCP tools ("Trust this tool", §5.5) take any non-destructive class.
  */
@@ -27,8 +28,8 @@ export function checkGrantShape(g: GrantShape, ctx: z.RefinementCtx) {
   if (isBuiltinTool(g.tool)) {
     const cls = BUILTIN_TOOL_CLASS[g.tool];
     if (cls !== g.class) ctx.addIssue({ code: "custom", path: ["class"], message: `${g.tool} is ${cls}` });
-    if (g.tool === "WebFetch" && g.pattern !== null && !EgressDomain.safeParse(g.pattern).success)
-      ctx.addIssue({ code: "custom", path: ["pattern"], message: "a WebFetch grant pattern is a domain" });
+    if (g.tool === "WebFetch" && g.pattern !== null && g.pattern !== ANY_DOMAIN && !EgressDomain.safeParse(g.pattern).success)
+      ctx.addIssue({ code: "custom", path: ["pattern"], message: "a WebFetch grant pattern is a domain, or * for every domain" });
   }
 }
 
@@ -60,10 +61,11 @@ export type GrantProposal = z.infer<typeof GrantProposal>;
 
 /**
  * Egress allowlist in effect for a run: the spec's domains plus the domains of active `WebFetch`
- * grants. An "Always allow" on a tainted request adds a grant; it does not edit the spec.
+ * grants. An "Always allow" on a tainted request adds a grant; it does not edit the spec. An
+ * all-domains grant (`*`) is not a domain and is left out: `grantCovers` decides what it covers.
  */
 export function effectiveEgressDomains(specDomains: readonly string[], grants: readonly ToolGrant[]): string[] {
   const out = new Set(specDomains);
-  for (const g of grants) if (g.revoked_at === null && g.tool === "WebFetch" && g.pattern !== null) out.add(g.pattern);
+  for (const g of grants) if (g.revoked_at === null && g.tool === "WebFetch" && g.pattern !== null && g.pattern !== ANY_DOMAIN) out.add(g.pattern);
   return [...out];
 }

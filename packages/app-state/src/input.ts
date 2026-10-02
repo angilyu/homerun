@@ -1,4 +1,5 @@
 import {
+  ANY_DOMAIN,
   BUILTIN_TOOL_CLASS,
   GrantProposal,
   alwaysAllowable,
@@ -53,6 +54,30 @@ export function offersAlways(p: ApprovalPrompt, role: ClientRole = "webview"): b
   return role !== "web" && p.offer_always && alwaysAllowable(p);
 }
 
+/** The second "always" choice on a tainted web fetch (§5.6): a grant for every domain, for this task. */
+export const ALL_WEB_FETCHES = "Allow all web fetches for this task";
+
+/** What the user confirms before allowing all web fetches: the risk, stated plainly (§5.6). */
+export const ALL_WEB_FETCHES_WARNING =
+  "This task's agent will be able to send data it has read to any website, without asking you again. " +
+  "It applies to web fetches in this task only, and you can revoke it from the task's grants.";
+
+/**
+ * Whether to offer "Allow all web fetches for this task": only where the runtime offers it beside
+ * the domain's "Always allow", so never on the web or from a notification (§5.6, §9.9).
+ */
+export function offersAllWebFetches(p: ApprovalPrompt, role: ClientRole = "webview"): boolean {
+  return offersAlways(p, role) && p.suggested_grant_all !== undefined;
+}
+
+/** The answer that allows all web fetches for this task, once the user has confirmed the warning. */
+export function allWebFetchesResponse(p: ApprovalPrompt, role: ClientRole = "webview"): { response: InputResponse | null; errors: string[] } {
+  if (!offersAllWebFetches(p, role)) return { response: null, errors: ["Allowing all web fetches is not offered for this request."] };
+  const response: InputResponse = { type: "approval", decision: "allow_always", grant: { tool: "WebFetch", pattern: ANY_DOMAIN, class: "network" } };
+  const errs = checkResponse(p, response, { role, via: "app" });
+  return errs.length ? { response: null, errors: errs } : { response, errors: [] };
+}
+
 export function grantEditor(p: ApprovalPrompt): GrantEditor {
   if (p.tool === "Bash") return { pattern_editable: true, pattern_label: "Command pattern (* matches anything)", classes: ["read", "write", "network"] };
   if (p.tool === "WebFetch") return { pattern_editable: true, pattern_label: "Domain", classes: ["network"] };
@@ -80,6 +105,8 @@ export interface GrantCheck {
 
 export function checkGrant(p: ApprovalPrompt, d: GrantDraft): GrantCheck {
   const pattern = d.pattern.trim() === "" ? null : d.pattern.trim();
+  // Every domain has its own choice, with its warning: the domain field doesn't take it.
+  if (p.tool === "WebFetch" && pattern === ANY_DOMAIN) return { proposal: null, errors: [`Enter one domain. To allow every domain, use “${ALL_WEB_FETCHES}”.`], covers: null };
   const parsed = GrantProposal.safeParse({ tool: p.tool, pattern, class: d.class });
   if (!parsed.success) return { proposal: null, errors: parsed.error.issues.map((i) => i.message), covers: null };
   const covers = p.input.kind === "inline" ? grantCovers(parsed.data, { tool: p.tool, input: p.input.value }) : null;
@@ -174,6 +201,7 @@ export function answerVerb(prompt: InputPrompt, response: InputResponse | null):
   if (!response) return "Answered";
   switch (response.type) {
     case "approval":
+      if (response.decision === "allow_always" && response.grant?.tool === "WebFetch" && response.grant.pattern === ANY_DOMAIN) return "Allowed all web fetches";
       return response.decision === "allow" ? "Allowed once" : response.decision === "deny" ? "Denied" : "Always allowed";
     case "question":
       return "Answered";

@@ -386,6 +386,22 @@ describe("grants (§5.6)", () => {
   });
 });
 
+describe("grants (§5.6): all web fetches", () => {
+  test("a WebFetch grant for every domain (*) is created like any other; Bash * is refused", async () => {
+    srt = await socketRuntime();
+    const shell = await srt.shell();
+    const dev = await srt.dev();
+    const task = await shell.call("tasks.create", { spec: sessionSpec({ name: "g", builtin: ["WebFetch"] }) as never });
+    const all = { tool: "WebFetch", pattern: "*", class: "network" as const };
+    const { grant } = await shell.call("grants.create", { task_id: task.task.task_id, grant: all });
+    expect(grant).toMatchObject({ ...all, task_id: task.task.task_id, revoked_at: null });
+    expect((await dev.call("grants.create", { task_id: task.task.task_id, grant: all })).grant.grant_id).toBe(grant.grant_id);
+    expect((await shell.call("grants.list", { task_id: task.task.task_id })).grants).toEqual([grant]);
+    for (const bad of [{ tool: "Bash", pattern: "*", class: "write" }, { tool: "WebFetch", pattern: "*", class: "read" }, { tool: "WebFetch", pattern: "https://*", class: "network" }])
+      expect((await rejects(shell.raw("grants.create", { task_id: task.task.task_id, grant: bad }))).code).toBe(RPC_ERROR.INVALID_PARAMS);
+  });
+});
+
 describe("single instance", () => {
   test("a second runtime on the same data dir refuses to start", async () => {
     srt = await socketRuntime();

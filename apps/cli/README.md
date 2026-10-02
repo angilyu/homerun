@@ -47,10 +47,10 @@ pnpm homerun chat
 | `health [digest] [--days N]` | The health digest over the last N days (default 1): per monitor, runs, changes, failures, misses by cause, fires caught up late, cost; then when the Mac slept or Homerun was not running |
 | `health settings [--on\|--off] [--time HH:MM] [--timezone ZONE]` | When the daily digest is made. Without options, shows it |
 | `requests [--thread T] [--run R]` (also `input list`) | Unanswered approvals, questions and "Did this happen?", and where each can be answered |
-| `approve REQUEST [--always [--pattern P] [--class C]]`, `deny REQUEST` | Allow or deny a tool call waiting for approval. `--always` also grants the suggested pattern (edited by `--pattern`/`--class`) to the task, where the runtime offers it. Development builds only |
+| `approve REQUEST [--always [--pattern P] [--class C]]`, `deny REQUEST` | Allow or deny a tool call waiting for approval. `--always` also grants the suggested pattern (edited by `--pattern`/`--class`) to the task, where the runtime offers it. For a web fetch in a tainted run it may also offer all web fetches for this task: `--always --pattern '*'`, which lets the task's agent send what it has read to any website. Development builds only |
 | `answer REQUEST --choice [N=]LABEL… [--text [N=]TEXT…]` | Answer the agent's question (`AskUserQuestion`): an option by label (any case) or number; `N=` says which question when there are several. `--text` where the question takes free text |
 | `answer REQUEST --completed\|--not-run` | Answer "Did this happen?" for a call a crash interrupted (development builds) |
-| `grants list TASK [--all]`, `grants add TASK --tool T [--pattern P] --class C`, `grants revoke GRANT` | A task's grants (§5.6): what runs without asking. `add` is "Trust this tool" for an MCP tool, or a Bash or WebFetch pattern (development builds) |
+| `grants list TASK [--all]`, `grants add TASK --tool T [--pattern P] --class C`, `grants revoke GRANT` | A task's grants (§5.6): what runs without asking. `add` is "Trust this tool" for an MCP tool, or a Bash or WebFetch pattern (development builds). `--tool WebFetch --pattern '*' --class network` allows a fetch to any domain (not IP addresses or localhost); it shows as "WebFetch · any domain" |
 | `blob SHA256 [-o FILE]` | A stored tool input or output (over 4 KB), to stdout or a 0600 file |
 | `version`, `help [COMMAND]` | |
 

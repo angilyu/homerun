@@ -13,6 +13,17 @@ export const e2eScript: FakeScript = async (s) => {
       if (s.interrupted) break;
       say(s, i.uuid, d.allow ? "All 12 tests passed." : "I didn't run the tests.");
       s.result([i.uuid]);
+    } else if (/fetch the pages/i.test(text)) {
+      // The first page taints the run (§5.5); the rest leave the egress allowlist.
+      let fetched = 0;
+      for (const host of ["one.example", "two.example", "three.example"]) {
+        const d = await s.tool({ toolCallId: `fetch-${host}-${i.uuid}`, tool: "WebFetch", input: { url: `https://${host}/`, prompt: "p" } }, async () => ({ ok: true, output: `${host} page` }));
+        if (s.interrupted) break;
+        if (d.allow) fetched++;
+      }
+      if (s.interrupted) break;
+      say(s, i.uuid, `Fetched ${fetched} of 3 pages.`);
+      s.result([i.uuid]);
     } else if (/ask me/i.test(text)) {
       const q = "Which colour do you prefer?";
       const d = await s.tool({

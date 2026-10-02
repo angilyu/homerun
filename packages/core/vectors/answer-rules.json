@@ -1894,6 +1894,345 @@
       "allowed": false
     },
     {
+      "name": "shell: allow all web fetches where offered",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1",
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "ios: allow all web fetches where offered",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1",
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "ios",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "shell: the domain grant is still offered beside all web fetches",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1",
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": true
+    },
+    {
+      "name": "shell: all web fetches only where offered",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1"
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
+      "name": "web: never all web fetches",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1",
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "web",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
+      "name": "ios notification: never all web fetches",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1",
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "ios",
+        "via": "notification"
+      },
+      "allowed": false
+    },
+    {
+      "name": "cli: never all web fetches",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "https://api.github.com/repos?q=1",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "api.github.com",
+          "class": "network"
+        },
+        "url": "https://api.github.com/repos?q=1",
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "cli",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
+      "name": "shell: all web fetches never cover an IP address",
+      "prompt": {
+        "type": "approval",
+        "tool": "WebFetch",
+        "tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+        "class": "network",
+        "input": {
+          "kind": "inline",
+          "value": {
+            "url": "http://203.0.113.7/x",
+            "prompt": "p"
+          }
+        },
+        "reason": "tainted_egress",
+        "offer_always": true,
+        "suggested_grant": {
+          "tool": "WebFetch",
+          "pattern": "203.0.113.7",
+          "class": "network"
+        },
+        "url": "http://203.0.113.7/x",
+        "suggested_grant_all": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "response": {
+        "type": "approval",
+        "decision": "allow_always",
+        "grant": {
+          "tool": "WebFetch",
+          "pattern": "*",
+          "class": "network"
+        }
+      },
+      "from": {
+        "role": "shell",
+        "via": "app"
+      },
+      "allowed": false
+    },
+    {
       "name": "cli: deny is still an approval answer",
       "prompt": {
         "type": "approval",

@@ -64,7 +64,7 @@ test/               bun test
 | Task spec | `TaskSpec` = `SessionSpec` \| `MonitorSpec`; `ModelChoice` `Budget` `McpServerSpec` `ToolsSpec` `EgressPolicy` `BashPattern` `InputTimeoutPolicy` `TaskPolicy` | §2.1, §5.3, §5.5, §5.6, §7.3, §7.4, §8 |
 | Checks | `RuleCheck` (http json_path/css/regex, rss, file_hash, homerun_tool) `ModelCheck` `CheckSpec` `CheckResult` | §8.3 |
 | Grants | `ToolGrant` | §5.6 |
-| Input | `ApprovalPrompt` `QuestionPrompt` `AmbiguousCallPrompt` `InputPrompt` `InputResponse` `InputRequest` `AnswerVia` | §5.4, §5.6, §9.7, §9.9 |
+| Input | `ApprovalPrompt` (with `AllDomainsGrant`) `QuestionPrompt` `AmbiguousCallPrompt` `InputPrompt` `InputResponse` `InputRequest` `AnswerVia` | §5.4, §5.6, §9.7, §9.9 |
 | Domain | `Device` `TaskKind` `Task` `TaskVersion` `Thread` `ThreadSummary` `RunState` `RunTrigger` `Authority` `RunOutcome` `RunError` `Run` `MonitorState` | §2.1, §5.3, §6, §8.3, §9.9 |
 | Events | `PersistedThreadEvent` `LiveThreadEvent` `ThreadEvent` and one schema per event type (below) | §5.3, §5.4, §5.6, §6.1, §8.2 |
 | IPC | `RpcRequest` `RpcNotification` `RpcResponse` `RpcError` `HelloParams` `HelloResult`, `<Method>Params`/`<Method>Result` per method, `<Name>Notification` per notification | §5.1, §5.2, §9.6, §14 |
@@ -175,7 +175,9 @@ has `layer: "refinement"` vectors.
 - **Grant shape:**
   - `Bash` grants need a metacharacter-free pattern;
   - the class must match the built-in class table;
-  - `WebFetch` grants take a domain pattern.
+  - `WebFetch` grants take a domain pattern, or `*` (`ANY_DOMAIN`) for every domain. `*` covers
+    any http(s) host name, but never an IP literal or a `localhost` name, and is never an egress
+    allowlist entry (`effectiveEgressDomains` leaves it out). `Bash` never takes a bare `*`.
 - **Answer rules** (`checkResponse`, `INPUT_ANSWER_RIGHTS`): these take context (the answering
   role and `via`), so they aren't schema-level at all. Use `vectors/answer-rules.json`.
 - **Release builds refuse `cli_dev`** (`DEV_ONLY_ROLES`). This is a build-time rule, not a
@@ -313,7 +315,11 @@ design leaves open; the schemas enforce them. D-numbers are cited from code and 
 
 - **D9. Network "Always allow"** creates a `WebFetch` grant for the domain; it does not edit the
   spec or bump its version. The effective egress allowlist is the spec's domains ∪ the network
-  grants (`effectiveEgressDomains`).
+  grants (`effectiveEgressDomains`). *"Allow all web fetches for this task"* is a `WebFetch` grant
+  with pattern `*`: `grantCovers` matches it against the host, and it never joins the allowlist.
+  The runtime offers it as `ApprovalPrompt.suggested_grant_all`, beside the per-domain
+  `suggested_grant`. It is an optional field, so a client that predates it still offers the
+  domain, and `checkResponse` accepts a `*` grant only where the prompt offers it.
 - Shell metacharacters are the design's list plus a lone `&`, newline and carriage return.
 - "Trusted tools" are grants, created from settings through `grants.create`, not a separate list
   in the spec.

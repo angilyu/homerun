@@ -1,7 +1,10 @@
 import { useState, type ReactNode } from "react";
 import { Pressable, TextInput, View } from "react-native";
 import {
+  ALL_WEB_FETCHES,
+  ALL_WEB_FETCHES_WARNING,
   CLASS_LABEL,
+  allWebFetchesResponse,
   alreadyAnswered,
   approvalResponse,
   cantAnswer,
@@ -13,6 +16,7 @@ import {
   inTime,
   initialAnswers,
   initialGrant,
+  offersAllWebFetches,
   offersAlways,
   questionResponse,
   setFreeform,
@@ -127,9 +131,17 @@ function ApprovalCard({ prompt, onAnswer, footer, role, notice }: { prompt: Appr
   const editor = grantEditor(prompt);
   const check = checkGrant(prompt, grant);
   const always = offersAlways(prompt, role) && editor.classes.length > 0;
+  // "Allow all web fetches for this task" (§5.6): its own choice, confirmed against its warning.
+  const [confirmAll, setConfirmAll] = useState(false);
+  const allFetches = always && offersAllWebFetches(prompt, role);
   const decide = (d: ApprovalDecision) => {
     const r = approvalResponse(prompt, d, d === "allow_always" ? grant : undefined, role);
     if (!r.response) return setError(r.errors.join(" ") || "Check the pattern.");
+    void submit(r.response);
+  };
+  const allowAll = () => {
+    const r = allWebFetchesResponse(prompt, role);
+    if (!r.response) return setError(r.errors.join(" "));
     void submit(r.response);
   };
   return (
@@ -183,11 +195,24 @@ function ApprovalCard({ prompt, onAnswer, footer, role, notice }: { prompt: Appr
           </View>
         </View>
       ) : null}
-      {!editing && !notice ? (
+      {confirmAll && !editing && !notice ? (
+        <View style={{ gap: 8 }}>
+          <T style={s.h2}>{ALL_WEB_FETCHES}?</T>
+          <T tone="danger" style={s.small}>
+            {ALL_WEB_FETCHES_WARNING}
+          </T>
+          <View style={s.row}>
+            <Button kind="danger" title="Allow all web fetches" busy={busy} onPress={allowAll} />
+            <Button title="Back" onPress={() => setConfirmAll(false)} />
+          </View>
+        </View>
+      ) : null}
+      {!editing && !confirmAll && !notice ? (
         <View style={s.row}>
           <Button kind="primary" title="Allow once" busy={busy} onPress={() => decide("allow")} />
           <Button title="Deny" disabled={busy} onPress={() => decide("deny")} />
           {always ? <Button title="Always allow…" disabled={busy} onPress={() => setEditing(true)} /> : null}
+          {allFetches ? <Button title={`${ALL_WEB_FETCHES}…`} disabled={busy} onPress={() => (setError(null), setConfirmAll(true))} /> : null}
         </View>
       ) : null}
       <ErrorText error={error} />

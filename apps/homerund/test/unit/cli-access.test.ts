@@ -347,6 +347,7 @@ describe("what the release CLI may not do (§5.2)", () => {
     const task = (await shell.call("tasks.create", { spec: sessionSpec() as never })).task;
     const forbidden: Array<[string, unknown]> = [
       ["grants.create", { task_id: task.task_id, grant: { tool: "WebFetch", pattern: "example.com", class: "network" } }],
+      ["grants.create", { task_id: task.task_id, grant: { tool: "WebFetch", pattern: "*", class: "network" } }],
       ["cli.tokens.list", {}],
       ["cli.tokens.revoke", { token_id: uuid() }],
       ["cli.approve", { request_id: uuid() }],

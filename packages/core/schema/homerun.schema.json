@@ -225,6 +225,28 @@
         "model"
       ]
     },
+    "AllDomainsGrant": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "type": "string",
+          "const": "WebFetch"
+        },
+        "pattern": {
+          "type": "string",
+          "const": "*"
+        },
+        "class": {
+          "type": "string",
+          "const": "network"
+        }
+      },
+      "required": [
+        "tool",
+        "pattern",
+        "class"
+      ]
+    },
     "AmbiguousCallPrompt": {
       "type": "object",
       "properties": {
@@ -311,6 +333,9 @@
         },
         "suggested_grant": {
           "$ref": "#/$defs/GrantProposal"
+        },
+        "suggested_grant_all": {
+          "$ref": "#/$defs/AllDomainsGrant"
         }
       },
       "required": [

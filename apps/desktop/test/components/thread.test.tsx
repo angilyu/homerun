@@ -155,6 +155,72 @@ describe("approvals (§5.6)", () => {
     expect(card.queryByRole("button", { name: "Always allow…" })).toBeNull();
   });
 
+  const fetchPrompt = (over: Record<string, unknown> = {}) =>
+    approvalPrompt("tc2", {
+      tool: "WebFetch",
+      class: "network",
+      input: { kind: "inline", value: { url: "https://evil.test/x?q=1", prompt: "p" } },
+      url: "https://evil.test/x?q=1",
+      reason: "tainted_egress",
+      suggested_grant: { tool: "WebFetch", pattern: "evil.test", class: "network" },
+      suggested_grant_all: { tool: "WebFetch", pattern: "*", class: "network" },
+      ...over,
+    });
+  const fetchCard = async (prompt = fetchPrompt()) => {
+    const r = uuid();
+    const t = threadWith([userMsg(1, "Look"), started(2), toolCall(3, "tc2", "WebFetch", { url: "https://evil.test/x?q=1", prompt: "p" }, "needs_approval"), requested(4, r, prompt)]);
+    await open(t);
+    return { t, r, card: within(await screen.findByRole("region", { name: "Approve WebFetch" })) };
+  };
+
+  test("a tainted web fetch offers 'Allow all web fetches for this task' beside the domain, behind its warning", async () => {
+    const { t, r, card } = await fetchCard();
+    expect(card.getByRole("button", { name: "Always allow…" })).toBeTruthy();
+    fireEvent.click(card.getByRole("button", { name: "Allow all web fetches for this task…" }));
+    // The warning comes first; nothing is sent yet.
+    expect(card.getByText(/send data it has read to any website/)).toBeTruthy();
+    expect(card.queryByRole("button", { name: "Allow once" })).toBeNull();
+    expect(t.called("input.answer")).toHaveLength(0);
+    fireEvent.click(card.getByRole("button", { name: "Back" }));
+    expect(card.queryByText(/send data it has read to any website/)).toBeNull();
+    fireEvent.click(card.getByRole("button", { name: "Allow all web fetches for this task…" }));
+    fireEvent.click(card.getByRole("button", { name: "Allow all web fetches" }));
+    await waitFor(() =>
+      expect(t.called("input.answer")[0]?.params).toEqual({
+        request_id: r,
+        response: { type: "approval", decision: "allow_always", grant: { tool: "WebFetch", pattern: "*", class: "network" } },
+        via: "app",
+      }),
+    );
+  });
+
+  test("the domain's Always allow is unchanged, and its field doesn't take *", async () => {
+    const { t, card } = await fetchCard();
+    fireEvent.click(card.getByRole("button", { name: "Always allow…" }));
+    const domain = card.getByLabelText("Domain") as HTMLInputElement;
+    expect(domain.value).toBe("evil.test");
+    fireEvent.change(domain, { target: { value: "*" } });
+    expect(card.getByText(/To allow every domain, use “Allow all web fetches for this task”/)).toBeTruthy();
+    expect((card.getByRole("button", { name: "Save and allow" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(domain, { target: { value: "evil.test" } });
+    fireEvent.click(card.getByRole("button", { name: "Save and allow" }));
+    await waitFor(() =>
+      expect(t.called("input.answer")[0]?.params.response).toEqual({ type: "approval", decision: "allow_always", grant: { tool: "WebFetch", pattern: "evil.test", class: "network" } }),
+    );
+  });
+
+  test("no 'Allow all web fetches' where the runtime doesn't offer it", async () => {
+    const { card } = await fetchCard(fetchPrompt({ suggested_grant_all: undefined }));
+    expect(card.getByRole("button", { name: "Always allow…" })).toBeTruthy();
+    expect(card.queryByRole("button", { name: /Allow all web fetches/ })).toBeNull();
+  });
+
+  test("neither always choice where grants aren't allowed", async () => {
+    const { card } = await fetchCard(fetchPrompt({ offer_always: false, suggested_grant: undefined, suggested_grant_all: undefined }));
+    expect(card.getByRole("button", { name: "Allow once" })).toBeTruthy();
+    expect(card.queryByRole("button", { name: /Allow all web fetches|Always allow/ })).toBeNull();
+  });
+
   test("first answer wins: a late answer says who answered", async () => {
     const { t, card } = await setup();
     t.handlers["input.answer"] = () => ({ status: "already_resolved", state: "answered", answered_by: OTHER_DEVICE });

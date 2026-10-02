@@ -1,8 +1,10 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import {
+  ANY_DOMAIN,
   BUILTIN_TOOL_CLASS,
   BashCommandPattern,
   UNTRUSTED_SOURCE_BUILTINS,
+  anyDomainCovers,
   bashCommandOf,
   bashPatternMatches,
   effectiveEgressDomains,
@@ -13,6 +15,7 @@ import {
   hasShellMetacharacters,
   isBuiltinTool,
   ToolName,
+  type AllDomainsGrant,
   type ApprovalPrompt,
   type Authority,
   type BuiltinTool,
@@ -35,7 +38,8 @@ export { canonicalPath } from "./paths";
  * - read: allowed. A read outside the roots is allowed but taints the run.
  * - write: allowed inside the roots, otherwise approval.
  * - network: allowed; once the run is tainted and egress is an allowlist, only to allowlisted
- *   domains (the spec's plus `WebFetch` grants), otherwise approval.
+ *   domains (the spec's plus `WebFetch` grants, or any host name under an all-domains `*`
+ *   grant), otherwise approval, which may offer a grant for the domain or for every domain.
  * - destructive: approval for each call (§13), unless a `Bash` pattern or grant classifies the
  *   command as something else. An untrusted MCP tool is destructive until trusted.
  * A `web_read_only` run (§9.9) needs approval for anything that is not read-class.
@@ -79,6 +83,8 @@ export interface ApprovalAsk {
   reason: ApprovalPrompt["reason"];
   offerAlways: boolean;
   suggestedGrant?: GrantProposal;
+  /** "Allow all web fetches for this task", offered beside a `WebFetch` domain grant (§5.6). */
+  suggestedGrantAll?: AllDomainsGrant;
   url?: string;
 }
 
@@ -199,7 +205,19 @@ function decideFull(ctx: PolicyContext, tool: string, input: unknown): Decision 
     if (host && egressAllowed(domains, host)) return ok(cls, true);
     if (host && covering) return ok(cls, true, covering.grant_id);
     const grantable = ctx.grantsAllowed && host !== null && !host.startsWith("[");
-    return ask(cls, { reason: "tainted_egress", offerAlways: grantable, url, ...(grantable ? { suggestedGrant: { tool: "WebFetch", pattern: host!, class: "network" } } : {}) }, true);
+    // "Allow all web fetches for this task" only where its grant would cover this call.
+    const all = grantable && anyDomainCovers(host!);
+    return ask(
+      cls,
+      {
+        reason: "tainted_egress",
+        offerAlways: grantable,
+        url,
+        ...(grantable ? { suggestedGrant: { tool: "WebFetch", pattern: host!, class: "network" } } : {}),
+        ...(all ? { suggestedGrantAll: { tool: "WebFetch", pattern: ANY_DOMAIN, class: "network" } } : {}),
+      },
+      true,
+    );
   }
   if (tool === "WebSearch") return byClass(cls, UNTRUSTED_SOURCE_BUILTINS.includes(tool));
 

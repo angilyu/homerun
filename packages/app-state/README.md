@@ -55,6 +55,10 @@ React DOM; the [iOS app](../../apps/ios/README.md) renders the same stores with 
 - `input.ts`: drafts for the input cards (§5.6).
   - Approvals: the Always-allow editor and `checkGrant`, which uses core's `grantCovers` so an
     edited pattern must still cover the call.
+  - "Allow all web fetches for this task" (`ALL_WEB_FETCHES`, `offersAllWebFetches`,
+    `allWebFetchesResponse`): the second "always" choice on a tainted web fetch, a `WebFetch`
+    grant for `*`. Offered only where the runtime offers it beside the domain, never on the web.
+    The UI confirms it with `ALL_WEB_FETCHES_WARNING` first; the domain field refuses a typed `*`.
   - Questions: single and multiple choice plus freeform.
   - The resolution text, for example "Allowed once on iPhone". This client's own answers say
     "on this Mac", "on this iPhone" or "on this browser" by its role (`THIS_DEVICE`); the
@@ -69,7 +73,7 @@ React DOM; the [iOS app](../../apps/ios/README.md) renders the same stores with 
 - `offline.ts`: what a remote client says while its desktop is away: `offlineText` ("Your Mac is
   offline — questions and approvals can be answered when it's back") and `relayedText` ("Will send
   when your Mac is back — expires in 12 h").
-- `grants.ts`, `format.ts`: display text.
+- `grants.ts`, `format.ts`: display text. A `WebFetch` grant for `*` reads "WebFetch · any domain".
 - `markdown.ts`: model markdown as a neutral block and inline tree, never HTML. Raw HTML stays
   text. Only http(s) and mailto links keep a target, and images become links (§13).
 - `remote.ts`: the desktop's remote access (§10): the account and relay status, the paired

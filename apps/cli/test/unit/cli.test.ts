@@ -33,7 +33,8 @@ import { main, roleFor } from "../../src/main";
 import { Output, colorWanted, colors } from "../../src/output";
 import { EventRenderer, resendCommand } from "../../src/render";
 import type { Io } from "../../src/context";
-import { alwaysGrant, inlineAnswer, questionResponse } from "../../src/commands/input";
+import { alwaysGrant, inlineAnswer, inlineHint, questionResponse } from "../../src/commands/input";
+import { promptLines } from "../../src/render";
 import type { ApprovalPrompt, QuestionPrompt } from "@homerun/core";
 import { EndpointError, newPipeName } from "@homerun/client";
 import {
@@ -269,6 +270,29 @@ describe("answers (§5.6)", () => {
     expect(alwaysGrant(approval, { pattern: "make *", class: "read" })).toEqual({ tool: "Bash", pattern: "make *", class: "read" });
     expect(code(() => alwaysGrant(approval, { class: "destructive" }))).toBe(64);
     expect(code(() => alwaysGrant({ ...approval, offer_always: false, suggested_grant: undefined }, {}))).toBe(1);
+  });
+
+  test("allowing all web fetches is offered by name, and only ever typed out as --pattern '*'", () => {
+    const fetch: ApprovalPrompt = {
+      type: "approval",
+      tool: "WebFetch",
+      tool_call_id: "t2" as ApprovalPrompt["tool_call_id"],
+      class: "network",
+      input: { kind: "inline", value: { url: "https://evil.test/x" } },
+      reason: "tainted_egress",
+      url: "https://evil.test/x",
+      offer_always: true,
+      suggested_grant: { tool: "WebFetch", pattern: "evil.test", class: "network" },
+      suggested_grant_all: { tool: "WebFetch", pattern: "*", class: "network" },
+    };
+    expect(alwaysGrant(fetch, {})).toEqual({ tool: "WebFetch", pattern: "evil.test", class: "network" });
+    expect(alwaysGrant(fetch, { pattern: "*" })).toEqual({ tool: "WebFetch", pattern: "*", class: "network" });
+    expect(promptLines(fetch).join("\n")).toContain("or allow all web fetches for this task (approve --always --pattern '*'): its agent can then send what it has read to any website");
+    const { suggested_grant_all: _, ...domainOnly } = fetch;
+    expect(promptLines(domainOnly).join("\n")).not.toContain("all web fetches");
+    // "always" in chat is the domain, never every domain.
+    expect(inlineAnswer(fetch, "always")).toEqual({ type: "approval", decision: "allow_always", grant: fetch.suggested_grant });
+    expect(inlineHint(fetch)).toBe("answer here: y (allow) · n (deny) · always");
   });
 
   test("chat reads a line as an answer only when it is one", () => {
