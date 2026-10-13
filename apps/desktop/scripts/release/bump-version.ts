@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * The desktop app's one version (design §11, §18 row 141). tauri.conf.json is the source of truth;
+ * The desktop app's one version (design §11, §18 row 139). tauri.conf.json is the source of truth;
  * the shell's Cargo manifests, Cargo.lock and apps/desktop/package.json carry the same number.
  *
  *   bun apps/desktop/scripts/release/bump-version.ts                 print it (fails if the files disagree)

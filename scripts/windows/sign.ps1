@@ -7,7 +7,7 @@
   - the shell's exe;
   - each sidecar not already validly signed (claude.exe keeps Anthropic's signature);
   - NSIS's plug-ins, the uninstaller and the installer.
-  The workflow also calls it directly for homerund.exe and the CLI before they are bundled.
+  The workflow also calls it directly for homerund.exe, before its hash is compiled into the CLI.
 
   Uses the variables scripts/windows/signing-setup.ps1 exports: HOMERUN_SIGNTOOL,
   HOMERUN_SIGN_DLIB and HOMERUN_SIGN_METADATA. Timestamps with RFC 3161 and retries a failure

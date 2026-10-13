@@ -409,7 +409,7 @@ pub const NOTIFICATION_SETTINGS: &str = "ms-settings:notifications";
 // Toasts
 
 /// Toasts need an AppUserModelID Windows knows: an unpackaged app registers one under HKCU
-/// (the installer, milestone 11, adds a Start menu shortcut with the same ID).
+/// (the installer's Start menu shortcut carries the same ID, §18 row 137).
 fn register_app_id() {
     use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
     let key = wide(&format!("Software\\Classes\\AppUserModelId\\{APP_ID}"));

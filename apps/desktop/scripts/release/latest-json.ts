@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * The release's one latest.json (design §11), from per-platform fragments, checked before it is
- * published: every entry's payload must be in the release's assets, its minisign signature must
- * verify against the public key compiled into the app (tauri.conf.json), and the signed version
- * must be the release's. A mismatched key fails the release rather than shipping updates no
- * installed app would accept.
+ * The release's one latest.json (design §11, §18 row 140), from per-platform fragments, checked
+ * before it is published: every entry's payload must be in the release's assets, its minisign
+ * signature must verify against the public key compiled into the app (tauri.conf.json), and the
+ * signed version must be the release's. A mismatched key fails the release rather than shipping
+ * updates no installed app would accept.
  *
  *   bun latest-json.ts fragment --platform windows-x86_64 --version 0.2.0 --url URL --sig FILE.sig --out frag.json
  *   bun latest-json.ts merge --version 0.2.0 --assets DIR --out latest.json [--notes TEXT] frag.json…
