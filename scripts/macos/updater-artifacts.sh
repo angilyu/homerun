@@ -14,6 +14,9 @@
 #   UPDATER_KEY_PASSWORD_SERVICE   login-keychain item holding its passphrase (default
 #                                  homerun-updater-key, account "passphrase"). Read into the signer's
 #                                  environment only, never printed.
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#                                  the passphrase itself, when already set (CI: a repository secret);
+#                                  the keychain isn't consulted
 #   UPDATER_KEY_NO_PASSWORD=1      an ephemeral test key without a passphrase (update-test.sh)
 #   MIN_UPDATE_FROM, PROTOCOL_MIN  optional "homerun" extension of latest.json (§11 version gate)
 #   NOTES                          optional release notes
@@ -41,6 +44,8 @@ COPYFILE_DISABLE=1 tar --no-mac-metadata -czf "$TAR" -C "$DIR" "$(basename "$APP
 
 if [[ "${UPDATER_KEY_NO_PASSWORD:-0}" == 1 ]]; then
   pass=""
+elif [[ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD+set}" ]]; then
+  pass="$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 else
   pass="$(security find-generic-password -s "${UPDATER_KEY_PASSWORD_SERVICE:-homerun-updater-key}" -a passphrase -w)" \
     || { echo "no passphrase in the login keychain (see apps/desktop/README.md, Releases)" >&2; exit 1; }
