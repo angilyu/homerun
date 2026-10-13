@@ -31,6 +31,8 @@ src/
   config.ts       the relay and identity provider, fixed at build time
   device-name.ts  "Chrome on macOS", the name the desktop's link prompt shows
   jitless.ts      Zod without its `new Function` probe (below)
+  version.ts      the version policy for "web" (§11): checked at start and hourly, kept in
+                  IndexedDB; below the minimum the page shows "Update Homerun" (reload)
   web.css         the front door's styles, on top of the desktop's stylesheet
 scripts/build.ts  the build, the CSP and the other security headers
 test/unit/        storage, the session against the real runtime, the build
