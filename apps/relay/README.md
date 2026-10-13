@@ -28,11 +28,12 @@ Each account's Durable Object has its own SQLite tables ([§10.7](../../docs/des
 
 ### Endpoints
 
-Every request carries the provider's access token (`Authorization: Bearer`). Every request except registration also carries a device proof: a `homerun-device` header signing the method, path, body and time with the device's Ed25519 key.
+Every request except `/v1/health` and `/v1/version-policy` carries the provider's access token (`Authorization: Bearer`). Every request except registration also carries a device proof: a `homerun-device` header signing the method, path, body and time with the device's Ed25519 key.
 
 | Endpoint | Does |
 |---|---|
 | `GET /v1/health` | Liveness; no token |
+| `GET /v1/version-policy` | The signed version policy ([§11](../../docs/design.md#11-distribution)); no token, `Cache-Control: public, max-age=300`, 404 when none is published |
 | `POST /v1/devices` | Registers this device's public keys |
 | `GET /v1/devices` | The account's other devices, with presence and last seen |
 | `GET /v1/connect` | The WebSocket. The token travels in the subprotocol and the device signs a challenge. Live-session frames, sealed messages, pairing and linking run over it |
@@ -60,6 +61,39 @@ Another provider is another `ProviderAdmin` in `src/core/provider-admin.ts`. Aft
 ### Web pages
 
 Only the web client's own pages may call the relay from a browser ([§9.9](../../docs/design.md#99-the-web-client), [§18 row 105](../../docs/design.md#18-decision-log)). `WEB_ORIGINS` lists their origins, comma-separated and exact: `https`, no path, no wildcard (`http` only on loopback, for a dev server). A request whose `Origin` isn't listed is refused with `403 forbidden` before its token is looked at, WebSocket upgrades included, and so is `Origin: null` (sandboxed frames, `file:` pages). Listed origins get a preflight answer and `Access-Control-Allow-Origin` echoing them exactly, never `*` and never credentials: the access token is a header, not a cookie. A request with no `Origin`, or with the relay's own, comes from a native client (the desktop, the iPhone app) and passes without CORS headers.
+
+### The version policy
+
+`GET /v1/version-policy` serves the minimum-version and kill-switch policy ([§11](../../docs/design.md#11-distribution), [§18 row 150](../../docs/design.md#18-decision-log)) to every client, signed in or not: the desktop's runtime, the iPhone app and the web client. The relay serves exactly the bytes in `VERSION_POLICY`, a `SignedVersionPolicy` envelope (`packages/protocol/src/version-policy.ts`), after checking only that it is well formed (a malformed one is a `502`, never served). It holds no signing key. The policy is signed offline with an Ed25519 key whose public half is compiled into the clients, so a compromised relay or CDN can withhold a policy or serve an old one, but can't forge a kill or a minimum. Clients bound replay with the policy's `issued_at` and `expires_at`, and they fail open: no policy, a bad signature or an expired one changes nothing.
+
+Answers are public and cacheable for 5 minutes, so a kill reaches running desktops within one check interval (an hour) plus 5 minutes. With nothing published the answer is a `404`, cached for a minute.
+
+#### Publishing a policy
+
+1. Write the policy JSON (`VersionPolicy` in `packages/core/src/version-policy.ts`). Each rule names one platform (`macos`, `windows`, `ios`, `web`; versions are numbered per platform, so there is no `*`) and a channel (`stable`, `beta`, `development` or `*`). For example, to require 1.4.2 on stable macOS and stop unattended runs on Windows 1.4.0–1.4.1:
+   ```json
+   {
+     "v": 1,
+     "issued_at": "2026-10-01T12:00:00Z",
+     "expires_at": "2026-12-30T12:00:00Z",
+     "rules": [
+       { "platform": "macos", "channel": "stable", "min_version": "1.4.2", "message": "This version has a scheduling bug.", "url": "https://homerun.app/releases/1.4.2" },
+       { "platform": "windows", "channel": "*", "kill": [">=1.4.0 <1.4.2"] }
+     ]
+   }
+   ```
+   `issued_at` must be later than the policy it replaces (clients refuse an older one) and no more than 24 hours ahead; `expires_at` at most 90 days after it. Rules only restrict: a minimum, `blocked_versions` (update required), `kill` (unattended runs stop) and `kill_interactive` (chat stops too).
+2. Sign it on the machine that holds the key, which is never this repository:
+   ```sh
+   bun scripts/release/sign-policy.ts sign --key ~/secure/homerun-policy-2026-01.key --key-id 2026-01 --in policy.json --out signed.json
+   ```
+3. Publish it, which takes effect without a deploy:
+   ```sh
+   cd apps/relay && pnpm exec wrangler secret put VERSION_POLICY < signed.json
+   ```
+4. Check `curl -s https://<your-relay>/v1/version-policy` returns the envelope, and `homerun status --check` on a desktop fetches it at once and shows the verdict.
+
+To lift a restriction, publish a new policy without the rule (a later `issued_at`); clients clear the banner on their next check. `wrangler secret delete VERSION_POLICY` stops serving any policy; clients then keep the last valid policy they cached until it expires, so to lift a kill quickly publish a permissive one rather than deleting. The local relay reads the envelope from the file `VERSION_POLICY_FILE` on every request.
 
 ### Limits
 
@@ -93,7 +127,7 @@ To run a relay on your machine:
 OIDC_ISSUER=https://issuer.example OIDC_CLIENT_ID=client_... bun run dev   # port 8787
 ```
 
-It also reads `OIDC_AUDIENCE`, `RELAY_PORT`, `RELAY_DATA_DIR`, `APP_ATTEST_ALLOW_DEVELOP`, `PROVIDER_ADMIN`, `WORKOS_API_KEY` and `WEB_ORIGINS` (add the origin you serve a `--dev` build of [`apps/web`](../web/README.md) from, such as `http://127.0.0.1:5173`). Push is off unless `APNS_KEY_P8_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are all set.
+It also reads `OIDC_AUDIENCE`, `RELAY_PORT`, `RELAY_DATA_DIR`, `VERSION_POLICY_FILE`, `APP_ATTEST_ALLOW_DEVELOP`, `PROVIDER_ADMIN`, `WORKOS_API_KEY` and `WEB_ORIGINS` (add the origin you serve a `--dev` build of [`apps/web`](../web/README.md) from, such as `http://127.0.0.1:5173`). Push is off unless `APNS_KEY_P8_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are all set.
 
 ## Deploying
 

@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { productionAppAttestPolicy } from "@homerun/protocol";
 import { parseWebOrigins } from "./core/cors";
 import { providerAdminFrom } from "./core/provider-admin";
@@ -29,6 +30,8 @@ const relay = await startLocalRelay({
   apns,
   appAttest: productionAppAttestPolicy(env.APP_ATTEST_ALLOW_DEVELOP === "1"),
   ...(env.WEB_ORIGINS ? { webOrigins: parseWebOrigins(env.WEB_ORIGINS) } : {}),
+  // The signed version policy (§11), re-read on every request so a newly signed file takes effect.
+  ...(env.VERSION_POLICY_FILE ? { versionPolicy: () => (existsSync(env.VERSION_POLICY_FILE!) ? readFileSync(env.VERSION_POLICY_FILE!, "utf8") : null) } : {}),
   providerAdmin: providerAdminFrom({ PROVIDER_ADMIN: env.PROVIDER_ADMIN, WORKOS_API_KEY: env.WORKOS_API_KEY, WORKOS_API_BASE: env.WORKOS_API_BASE }),
   log: (event, fields) => console.log(JSON.stringify({ event, ...fields })),
 });

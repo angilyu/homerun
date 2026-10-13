@@ -8,6 +8,7 @@ import { AuthError, bearerToken, TokenVerifier, type AuthConfig, type VerifiedTo
 import { DEFAULT_LIMITS, type RelayLimits } from "./config";
 import { AccountRelay, errorResponse, type RelaySocket, type SocketState } from "./core/account";
 import { checkOrigin, parseWebOrigins, preflight, withCors } from "./core/cors";
+import { versionPolicyResponse } from "./core/version-policy";
 import type { ProviderAdmin } from "./core/provider-admin";
 
 export { WorkosAdmin, type ProviderAdmin } from "./core/provider-admin";
@@ -29,6 +30,8 @@ export interface LocalRelayOptions extends Omit<AuthConfig, "fetch"> {
   providerAdmin?: ProviderAdmin | null;
   /** The web client's origins, exactly (§9.9). Other pages can't call the relay. */
   webOrigins?: string[];
+  /** The signed version policy served at /v1/version-policy (§11); a function so tests can publish a new one. */
+  versionPolicy?: string | (() => string | null);
   hostname?: string;
   port?: number;
   /** Keep each account's database in files here, so a restart keeps queues and links. */
@@ -180,6 +183,10 @@ export async function startLocalRelay(opts: LocalRelayOptions): Promise<LocalRel
       if (!origin.ok) return errorResponse("forbidden", "this origin may not call the relay");
       if (req.method === "OPTIONS") return origin.origin ? preflight(origin.origin) : errorResponse("not_found", "no such endpoint");
       if (url.pathname === RELAY_PATHS.health) return withCors(Response.json({ ok: true }), origin.origin);
+      if (url.pathname === RELAY_PATHS.versionPolicy) {
+        const vp = typeof opts.versionPolicy === "function" ? opts.versionPolicy() : opts.versionPolicy;
+        return withCors(versionPolicyResponse(req, vp), origin.origin);
+      }
       const auth = await authenticate(req);
       if (auth instanceof Response) return withCors(auth, origin.origin);
       if (url.pathname === RELAY_PATHS.connect) {
