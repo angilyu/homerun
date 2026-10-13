@@ -2,6 +2,7 @@ import { authorityAfterMessage, isTerminal, type MonitorSpec, type Origin, type 
 import { ensureRunStarted } from "../monitors/complete";
 import { monitorThread, monthCost } from "../schedule/fire-scheduler";
 import { appendEvent, findUserMessage } from "../store/events";
+import { VersionBlockedError, type Gate } from "../version/gate";
 import {
   activeRunRow,
   addRunInput,
@@ -61,6 +62,8 @@ export interface ManagerHooks {
   schedulesChanged(): void;
   /** The device's IANA zone, stored with interval schedules (§8.1). */
   deviceZone(): string;
+  /** The minimum-version gate (§11): a kill with `kill_interactive` refuses chat and Run now. */
+  gate?: Gate;
 }
 
 export type Disposition = "started_run" | "steered" | "held";
@@ -199,12 +202,19 @@ export class RunManager {
     return row;
   }
 
+  /** Refuse interactive work when a kill says so (§11); restrict-only, so nothing else changes. */
+  private checkInteractive(): void {
+    const v = this.hooks.gate?.verdict(now(this.ctx));
+    if (v && !v.interactive_allowed) throw new VersionBlockedError(v);
+  }
+
   /**
    * tasks.run_now: a manual monitor run, through the whole check → act pipeline. If the monitor
    * is already running, that run is returned rather than a second one queued.
    */
   runNow(taskId: string, origin: Origin): { run_id: string; thread_id: string } {
     const store = this.ctx.store;
+    this.checkInteractive();
     const out = store.tx(() => {
       const task = getTask(store, taskId);
       if (!task) throw new NotFoundError("task");
@@ -255,6 +265,7 @@ export class RunManager {
       if (!thread) throw new NotFoundError("thread");
       const dup = findUserMessage(store, p.thread_id, p.client_msg_id);
       if (dup) return { seq: dup.seq, run_id: dup.run_id!, disposition: dup.payload.disposition };
+      this.checkInteractive();
 
       let taskId: string | null = null;
       let taskVersion: number | null = null;

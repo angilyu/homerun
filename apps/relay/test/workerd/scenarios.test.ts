@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { ApnsMock, OidcIssuer } from "@homerun/testkit";
-import { appAttestRoot, WEB_ORIGIN } from "../helpers";
+import { appAttestRoot, VERSION_POLICY, WEB_ORIGIN } from "../helpers";
 import { type Ctx, sharedScenarios } from "../scenarios";
 import { startWorkerd } from "./host";
 
@@ -26,6 +26,7 @@ beforeAll(async () => {
     PROVIDER_ADMIN: "workos",
     WORKOS_API_KEY: issuer.adminKey,
     WORKOS_API_BASE: issuer.url,
+    VERSION_POLICY: VERSION_POLICY.published,
   });
 }, 60_000);
 afterAll(async () => {

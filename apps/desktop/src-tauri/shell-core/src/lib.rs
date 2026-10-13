@@ -7,6 +7,8 @@ pub mod browser;
 pub mod cli_access;
 /// Putting `homerun` on PATH is a macOS feature for now (a symlink into `/usr/local/bin`).
 pub mod cli_tool;
+pub mod crash;
+pub mod diagnostics;
 pub mod dirs;
 pub mod keys;
 pub mod link_prompt;

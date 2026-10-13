@@ -30,6 +30,8 @@ export const RELAY_PATHS = {
   pushToken: "/v1/push-token",
   account: "/v1/account",
   health: "/v1/health",
+  /** The signed version policy (§11): public, unauthenticated and cacheable. */
+  versionPolicy: "/v1/version-policy",
 } as const;
 
 const B64 = z.string().regex(/^[A-Za-z0-9_-]*$/);

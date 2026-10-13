@@ -1,6 +1,7 @@
 import { methodSchemaIds, notificationSchemaId, type MethodName, type NotificationName } from "../../src/index";
 import { bad, badRule, ok, type Vector } from "./types";
 import * as F from "./fixtures";
+import { gateStatus } from "./version-policy";
 
 type Case = [name: string, value: unknown];
 type Spec = { params: Case[]; badParams: Case[]; badParamsRule?: Case[]; results: Case[]; badResults?: Case[] };
@@ -303,6 +304,45 @@ const METHOD_VECTORS: Record<MethodName, Spec> = {
       ["no Face ID state", { devices: [{ ...F.pairedDevice(), biometric_approvals: undefined }] }],
     ],
   },
+  "version.status": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["ok", { status: gateStatus() }]],
+    badResults: [["no status", {}]],
+  },
+  "version.check": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["offline", { status: gateStatus({ policy: null, last_error: "offline" }) }]],
+  },
+  "diagnostics.preview": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [["two files", { files: [{ name: "versions.json", bytes: 312, description: "Versions, OS and architecture" }, { name: "logs/homerund.log", bytes: 48_211, description: "Runtime and shell log, redacted" }] }]],
+    badResults: [["absolute name", { files: [{ name: "/etc/passwd", bytes: 1, description: "x" }] }]],
+  },
+  "diagnostics.create": {
+    params: [
+      ["chosen path", { path: "/Users/ada/Desktop/homerun-diagnostics.zip" }],
+      ["downloads", {}],
+    ],
+    badParams: [["not a zip", { path: "/Users/ada/Desktop/notes.txt" }]],
+    results: [["written", { path: "/Users/ada/Downloads/homerun-diagnostics-2026-01-01.zip", bytes: 9_120, files: [{ name: "versions.json", bytes: 312, description: "Versions, OS and architecture" }] }]],
+  },
+  "diagnostics.crash_reports.get": {
+    params: [["empty", {}]],
+    badParams: [["null", null]],
+    results: [
+      ["off", { settings: { available: true, enabled: false } }],
+      ["not built in", { settings: { available: false, enabled: false } }],
+    ],
+    badResults: [["missing enabled", { settings: { available: true } }]],
+  },
+  "diagnostics.crash_reports.set": {
+    params: [["on", { enabled: true }]],
+    badParams: [["string", { enabled: "yes" }]],
+    results: [["on", { settings: { available: true, enabled: true } }]],
+  },
   "devices.renew_approval_key": {
     params: [["renewed", { approval_key: `BH${"q".repeat(85)}`, assertion: "omlzaWduYXR1cmVYRzBFAiEA" }]],
     badParams: [
@@ -457,6 +497,10 @@ const NOTIFICATION_VECTORS: Record<NotificationName, { valid: Case[]; invalid: C
   "browser.open": {
     valid: [["authorize", { url: "https://auth.example.com/oauth2/authorize?client_id=client_01&state=abc" }]],
     invalid: [["missing url", {}]],
+  },
+  "version.changed": {
+    valid: [["killed", { status: gateStatus({ verdict: { state: "killed", reason: "killed", unattended_allowed: false, interactive_allowed: false, min_version: null, message: null, url: null } }) }]],
+    invalid: [["missing status", {}]],
   },
   "health.digest_ready": {
     valid: [["digest", { digest: F.healthDigest() }]],

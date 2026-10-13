@@ -34,6 +34,7 @@ import { LAUNCH_TOKEN, sessionSpec, socketRuntime, type SocketRuntime } from "..
 import { HOMERUND_DIR, Homerund, REPLAY_KEY, scratchDir } from "../../../homerund/test/replay/harness";
 import { ReplayServer } from "../../../homerund/test/replay/replay-server";
 import { appAttest, envFor, newUser, phone, startWorld, type World } from "../../../homerund/test/remote/harness";
+import { fakeRelay, POLICY_KEYS, sign } from "../../../homerund/test/version-policy";
 import { e2eScript } from "./fake-script";
 
 const PORT = Number(process.env.HOMERUN_E2E_PORT ?? 5179);
@@ -211,6 +212,11 @@ class Shell {
    * and link prompts (the stand-in for the shell's native prompt, src-tauri/src/cli_prompts.rs). */
   browsed: string[] = [];
   lastQr: string | null = null;
+  /** The relay's version-policy endpoint as the fake runtime sees it (§11); a test publishes to it. */
+  policyRelay = fakeRelay();
+  /** The bundle `diagnostics_save` last wrote, and whether Show in Finder was asked for. */
+  lastBundle: string | null = null;
+  revealed: string[] = [];
   linkPrompts = new Map<string, Record<string, unknown>>();
   phones: Array<Awaited<ReturnType<typeof phone>>> = [];
 
@@ -304,12 +310,26 @@ class Shell {
     this.keys = new Map(key ? [[API_KEY, key]] : []);
     this.browsed = [];
     this.lastQr = null;
+    this.lastBundle = null;
+    this.revealed = [];
+    this.policyRelay = fakeRelay();
     const world = remote ? await startWorld() : null;
     if (world) newUser(world);
+    // The version gate against the test release key at version 1.0.0, and a crash-report endpoint
+    // so Settings offers the toggle (§11). Nothing is ever sent: there's no crash.
+    const gateEnv = {
+      HOMERUN_VERSION_POLICY_URL: "https://relay.e2e.invalid/v1/version-policy",
+      HOMERUN_DEV_POLICY_KEYS: JSON.stringify(POLICY_KEYS),
+      HOMERUN_DEV_VERSION: "1.0.0",
+      HOMERUN_SENTRY_DSN: "https://e2e@sentry.e2e.invalid/1",
+    };
     const srt = await socketRuntime({
       script: e2eScript,
       verifyKey: async (k) => (GOOD_KEY.test(k) ? { outcome: "valid" } : { outcome: "invalid", detail: "Anthropic didn't accept this key (401)." }),
-      ...(world ? { env: envFor(world), remote: { linkBackoff: { initialMs: 50, maxMs: 500 }, ...(trustTestAttest ? { appAttest: appAttest.policy() } : {}) } } : {}),
+      env: { ...gateEnv, ...(world ? envFor(world) : {}) },
+      versionFetch: this.policyRelay.fetch,
+      crashFetch: (async () => new Response(null, { status: 503 })) as unknown as typeof fetch,
+      ...(world ? { remote: { linkBackoff: { initialMs: 50, maxMs: 500 }, ...(trustTestAttest ? { appAttest: appAttest.policy() } : {}) } } : {}),
     });
     const socketPath = srt.rt.config.socketPath;
     this.active = { kind: "fake", srt, socketPath, world };
@@ -472,6 +492,20 @@ class Shell {
     return { device_id: p.client.deviceId };
   }
 
+  /**
+   * Fake scene only: publish a version policy with these rules, signed with the test release key
+   * and current for 30 days (or `null` for none), then have the runtime fetch it now.
+   */
+  async publishPolicy(rules: unknown[] | null): Promise<unknown> {
+    if (this.active?.kind !== "fake" || !this.shell) throw new Error("the version policy needs the fake scene");
+    const now = Date.now();
+    // Rules without a platform are for this runtime's own (macos on a Mac, linux on CI).
+    const platform = this.active.srt.rt.config.versionPolicy.platform;
+    const own = rules?.map((r) => ({ platform, ...(r as object) }));
+    this.policyRelay.body = own ? await sign({ v: 1, issued_at: now, expires_at: now + 30 * 86_400_000, rules: own as never }) : null;
+    return this.shell.call("version.check", {});
+  }
+
   /** After a replay scene: every cassette entry was used and nothing unexpected was asked. */
   finish(): string[] {
     const a = this.active;
@@ -542,6 +576,20 @@ class Shell {
       case "cli_tool_install":
       case "cli_tool_remove":
         throw err("shell", "The command-line tool comes with the Homerun app; this is a development build.");
+      // src-tauri/src/commands.rs: the save panel picks a path (here, always one in the scene's
+      // folder); otherwise the runtime's default in Downloads, which is the scene's home here.
+      case "diagnostics_save": {
+        if (!this.shell?.isOpen) throw err("not_connected", "Homerun's runtime isn't running right now.");
+        const a = this.active;
+        const params = args.choose === true && a?.kind === "fake" ? { path: join(a.srt.dir, `chosen-${Date.now()}.zip`) } : {};
+        const out = (await this.shell.call("diagnostics.create", params)) as { path: string };
+        this.lastBundle = out.path;
+        return out;
+      }
+      case "diagnostics_reveal":
+        if (!this.lastBundle) throw err("shell", "No bundle saved yet.");
+        this.revealed.push(this.lastBundle);
+        return null;
       case "app_info":
         return { version: "0.0.1-e2e", build: "debug", platform: "e2e", data_dir: this.active?.kind === "fake" ? this.active.srt.dir : "", log_path: "", key_store: "memory" };
       default:
@@ -605,6 +653,15 @@ const server = Bun.serve({
       return Response.json({ errors });
     }
     if (url.pathname === "/__e2e/opened") return Response.json({ opened: shell.opened });
+    if (url.pathname === "/__e2e/version-policy" && req.method === "POST") {
+      try {
+        const body = (await req.json()) as { rules: unknown[] | null };
+        return Response.json(await shell.publishPolicy(body.rules));
+      } catch (e) {
+        return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+      }
+    }
+    if (url.pathname === "/__e2e/diagnostics") return Response.json({ bundle: shell.lastBundle, revealed: shell.revealed });
     if (url.pathname === "/__e2e/remote/browsed") return Response.json({ browsed: shell.browsed.map((u) => new URL(u).origin + new URL(u).pathname) });
     if (url.pathname === "/__e2e/remote/scan" && req.method === "POST") {
       try {

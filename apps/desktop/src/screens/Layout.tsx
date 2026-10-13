@@ -3,6 +3,7 @@ import type { ThreadSummary } from "@homerun/core";
 import { useApp, useNow, useStore, type Route } from "../hooks";
 import { Time } from "../ui/bits";
 import { useState } from "react";
+import { VersionBanner } from "./Diagnostics";
 import { Health } from "./Health";
 import { Inbox } from "./Inbox";
 import { DOWNLOAD_PAGE, Settings } from "./Settings";
@@ -19,6 +20,7 @@ export function Layout({ keyError }: { keyError: string | null }) {
       <Sidebar route={route} />
       <main className="main">
         <RuntimeBanner />
+        <VersionBanner />
         <KeyBanner error={keyError} />
         <UpdateBanner />
         <Screen route={route} />

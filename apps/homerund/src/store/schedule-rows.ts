@@ -129,7 +129,8 @@ export function setScheduleEnabled(store: Store, scheduleId: string, reason: Sch
 // ---------------------------------------------------------------- fires (internal)
 
 export type FireKind = "schedule" | "catchup";
-export type FireState = "queued" | "started" | "done" | "failed" | "merged" | "cancelled";
+/** `skipped`: the minimum-version gate stopped it (§11); older runtimes ignore the state. */
+export type FireState = "queued" | "started" | "done" | "failed" | "merged" | "cancelled" | "skipped";
 
 export interface FireRow {
   schedule_id: string;

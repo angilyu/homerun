@@ -1,21 +1,23 @@
 import { useEffect, useState } from "react";
-import { AppState, Pressable, Settings as Defaults, View } from "react-native";
+import { AppState, Linking, Pressable, Settings as Defaults, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import Constants from "expo-constants";
 import { authenticateAsync } from "expo-local-authentication";
 import { AppClient, seenText } from "@homerun/app-state";
+import { updateBannerText } from "@homerun/remote";
 import { Homerun } from "../../modules/homerun";
 import { HistoryCache } from "../cache";
 import { parseConfig } from "../config";
 import { AppLock, type Authenticate } from "../lock";
 import { IosSession, type Phase } from "../session";
+import { IosVersionGate } from "../version";
 import { expoSqlite } from "../sqlite";
 import { AttestNotice, Connecting, Failed, Locked, NotConfigured, SelfTest, SignIn } from "./Front";
 import { PhoneContext, useNow, usePhone, useStore, type Phone, type PhoneApp } from "./hooks";
 import { Link } from "./Link";
 import { Main } from "./Main";
-import { Card, Screen, T, s } from "./theme";
+import { Button, Card, Notice, Screen, T, s } from "./theme";
 
 const reportSelfTest = (line: string) => Homerun.selfTestReport(line);
 const authenticate: Authenticate = async (reason) => (await authenticateAsync({ promptMessage: reason })).success;
@@ -36,7 +38,7 @@ function boot(): Phone | null {
       desktopId,
     }),
   );
-  return { session, lock: new AppLock(Homerun, authenticate), authenticate };
+  return { session, lock: new AppLock(Homerun, authenticate), version: IosVersionGate.forConfig(Homerun, config), authenticate };
 }
 
 export function App() {
@@ -47,6 +49,7 @@ export function App() {
   useEffect(() => {
     if (!phone) return;
     let gone = false;
+    phone.version.maybeCheck();
     void phone.lock.load().then(() => {
       if (!gone) void phone.session.start();
     });
@@ -54,7 +57,10 @@ export function App() {
       if (st === "background") {
         phone.lock.background();
         void phone.session.background();
-      } else if (st === "active") phone.lock.foreground();
+      } else if (st === "active") {
+        phone.lock.foreground();
+        phone.version.maybeCheck();
+      }
     });
     return () => {
       gone = true;
@@ -88,6 +94,7 @@ function Root() {
   return (
     <>
       <Body phase={phase} />
+      <UpdateNotice />
       <AttestNotice />
     </>
   );
@@ -111,6 +118,20 @@ function Body({ phase }: { phase: Phase<PhoneApp> }) {
     case "error":
       return <Failed message={phase.message} />;
   }
+}
+
+/** "Update Homerun" while the version policy's iOS rules stop this build (§11); it can't be dismissed. */
+function UpdateNotice() {
+  const { version } = usePhone();
+  const v = useStore(version.verdict);
+  const text = updateBannerText(v);
+  if (!text) return null;
+  return (
+    <View accessibilityRole="alert" style={{ padding: 12, gap: 6 }}>
+      <Notice text={`Update Homerun. ${text}`} />
+      {v.url ? <Button kind="link" title="Update Homerun" onPress={() => void Linking.openURL(v.url!)} /> : <T muted style={s.small}>Update it from the App Store or TestFlight.</T>}
+    </View>
+  );
 }
 
 /** Several Macs are paired and none was chosen yet. */

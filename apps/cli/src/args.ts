@@ -37,7 +37,15 @@ export const GLOBAL_OPTIONS: Record<string, Opt> = {
 const LIMIT: Record<string, Opt> = { limit: { type: "string", short: "n" } };
 
 export const COMMANDS: CommandSpec[] = [
-  { name: "status", args: "", summary: "Show whether homerund is running, active runs and pending input", options: {}, positionals: [0, 0], runtime: true, json: true },
+  {
+    name: "status",
+    args: "[--check]",
+    summary: "Show whether homerund is running, active runs, pending input, and whether this version may run tasks (--check: fetch the version policy now)",
+    options: { check: { type: "boolean" } },
+    positionals: [0, 0],
+    runtime: true,
+    json: true,
+  },
   {
     name: "chat",
     args: "[THREAD] [--title TITLE]",
@@ -232,6 +240,15 @@ export const COMMANDS: CommandSpec[] = [
     json: true,
   },
   { name: "logout", args: "", summary: "Revoke this tool's token in the Homerun app, and remove it from your keychain or Credential Manager", options: {}, positionals: [0, 0], runtime: true, json: true },
+  {
+    name: "diagnostics",
+    args: "[--out PATH] [--yes]",
+    summary: "Write a redacted diagnostic bundle (a zip) to Downloads, or PATH (a .zip or a folder). Lists its files and asks first unless --yes. Nothing is uploaded",
+    options: { out: { type: "string", short: "o" }, yes: { type: "boolean", short: "y" } },
+    positionals: [0, 0],
+    runtime: true,
+    json: true,
+  },
   { name: "version", args: "", summary: "Print the CLI version and build", options: {}, positionals: [0, 0], runtime: false, json: true },
   { name: "help", args: "[COMMAND]", summary: "Show help", options: {}, positionals: [0, 2], runtime: false, json: false },
 ];

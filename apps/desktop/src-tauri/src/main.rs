@@ -34,6 +34,13 @@ fn main() {
     if std::env::args_os().nth(1).is_some_and(|a| a == "--remove-cli-path") {
         std::process::exit(if win::cli_remove().is_ok() { 0 } else { 1 });
     }
+    let context = tauri::generate_context!();
+    // First, so a panic anywhere after leaves a crash report (§11 "Diagnostics"); the runtime
+    // sends it only if the user turned crash reports on.
+    homerun_shell_core::crash::install_panic_hook(
+        shell::data_dir().join(homerun_shell_core::crash::CRASH_DIR),
+        shell::build(&context.package_info().version.to_string()),
+    );
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| show_window(app)))
         // Installs only through `updater.rs`; the webview has no updater permission (§11, §13).
@@ -70,6 +77,8 @@ fn main() {
             commands::cli_tool_status,
             commands::cli_tool_install,
             commands::cli_tool_remove,
+            commands::diagnostics_save,
+            commands::diagnostics_reveal,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -160,7 +169,7 @@ fn main() {
             });
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build the app");
 
     app.run(|app, ev| match ev {

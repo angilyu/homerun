@@ -1,4 +1,4 @@
-import { authorize, NOTIFICATIONS, parseThreadEventLenient, type HealthDigest, type MethodName } from "@homerun/core";
+import { authorize, NOTIFICATIONS, parseThreadEventLenient, type HealthDigest, type MethodName, type VersionGateStatus } from "@homerun/core";
 import { defaultEnv, type Env } from "./env";
 import { Inbox } from "./inbox";
 import { Remote } from "./remote";
@@ -43,6 +43,8 @@ export class AppClient {
   readonly remote: Remote;
   /** The latest daily digest pushed by the runtime (§8.3), until read. */
   readonly digest = new Store<HealthDigest | null>(null);
+  /** The runtime's minimum-version gate (§11); null until it answers, or when it predates the gate. */
+  readonly version = new Store<VersionGateStatus | null>(null);
 
   private readonly syncs = new Map<string, { sync: ThreadSync; refs: number; timer: unknown }>();
   private readonly keepMs: number;
@@ -191,6 +193,7 @@ export class AppClient {
     void this.inbox.refresh();
     void this.tasks.refresh();
     if (this.opts.remote) void this.remote.refresh();
+    void this.refreshVersion();
     for (const { sync } of this.syncs.values()) void sync.reconnected().catch(() => {});
   }
 
@@ -212,12 +215,35 @@ export class AppClient {
         if (!before || before.input_pending !== r.data.summary.input_pending || r.data.summary.input_pending) this.pokeInbox();
         return;
       }
+      case "version.changed": {
+        const r = NOTIFICATIONS["version.changed"].params.safeParse(params);
+        if (!r.success) return this.opts.onProtocolError?.("version.changed", r.error.issues);
+        this.version.set(r.data.status);
+        return;
+      }
       case "health.digest_ready": {
         const r = NOTIFICATIONS["health.digest_ready"].params.safeParse(params);
         if (!r.success) return this.opts.onProtocolError?.("health.digest_ready", r.error.issues);
         this.digest.set(r.data.digest);
         return;
       }
+    }
+  }
+
+  /**
+   * Read the version gate again. `check` fetches the policy first (the local UI and the CLI only).
+   * An older runtime without the method leaves the store as it was.
+   */
+  async refreshVersion(check = false): Promise<VersionGateStatus | null> {
+    const method = check ? "version.check" : "version.status";
+    if (!this.may(method)) return this.version.get();
+    try {
+      const r = await this.rpc.call(method, {});
+      this.version.set(r.status);
+      return r.status;
+    } catch (e) {
+      if (check) throw e;
+      return this.version.get();
     }
   }
 

@@ -21,6 +21,7 @@ import {
   WS_SUBPROTOCOL,
 } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
+import { VECTOR_FILES } from "@homerun/protocol/vector-files";
 
 /** Helpers shared by the relay's suites on Bun and on workerd. The relay is a black box here. */
 
@@ -33,6 +34,11 @@ export interface Target {
 /** The App Attest CA the relays under test trust instead of Apple's. */
 export const appAttest = testAppAttestCA();
 export const appAttestRoot = toB64url(appAttest.root);
+
+/** The signed version policy the relays under test publish (§11), and the keys it verifies with: from the protocol vectors. */
+const policyVectors = VECTOR_FILES["version-policy.json"] as { verify: { name: string; signed: unknown; keys: Record<string, string>; policy: unknown }[] };
+const validPolicy = policyVectors.verify.find((c) => c.name === "valid")!;
+export const VERSION_POLICY = { published: JSON.stringify(validPolicy.signed), keys: validPolicy.keys, policy: validPolicy.policy };
 
 /** The web client's origin the relays under test list. */
 export const WEB_ORIGIN = "https://app.homerun.test";

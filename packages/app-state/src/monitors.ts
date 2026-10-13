@@ -117,6 +117,7 @@ export function monitorHealthText(m: MonitorHealth): string {
   if (m.missed_not_running) parts.push(`${n(m.missed_not_running)} missed while Homerun wasn't running`);
   if (m.skipped) parts.push(`${n(m.skipped)} merged`);
   if (m.caught_up) parts.push(`${n(m.caught_up)} caught up late`);
+  if (m.skipped_by_version) parts.push(`${n(m.skipped_by_version)} skipped until Homerun updates`);
   if (!m.enabled) parts.push(m.paused_reason === "failures" ? "paused after failures" : m.paused_reason === "budget_cap" ? "paused at its budget" : "paused");
   return parts.join(", ");
 }

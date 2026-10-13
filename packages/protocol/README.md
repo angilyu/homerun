@@ -54,6 +54,7 @@ src/
   der.ts, cbor.ts strict, minimal DER and CBOR readers for App Attest
   app-attest.ts   App Attest attestations and assertions against Apple's pinned root (§18 row 99)
   approval.ts     Face ID approval proofs, the approval-key renewal hash, APNs collapse ids (§18 row 115)
+  version-policy.ts the offline-signed version policy envelope and the compiled-in policy keys (§11)
   testing/        a test App Attest CA, so harnesses can make attested iPhones
   vectors/        builders, the verifier and fixtures for the vector files
 scripts/
@@ -126,9 +127,10 @@ vectors change, and under Hermes on the iOS simulator nightly (§18 rows 129–1
 | `relay-wire.json` | Device-proof bytes and signatures; client and server frames that must parse or be rejected |
 | `encoding.json` | base64url and `framed()` edge cases |
 | `approval.json` | The Face ID approval message bytes; proofs that verify, or are refused for another request, decision, desktop, phone, expiry or key, as expired, or as too long-lived; the renewal client data hash and assertions over it (increasing, replayed, or made for the attestation domain) |
+| `version-policy.json` | The signed version policy (§11): the signed bytes and a signature by a test release key; envelopes that must not verify (an edited body, a swapped key id, a forged key, a signed non-policy, an extra field) and one by a retired key that still does |
 | `app-attest.json` | The client data hash (with and without an approval key); attestations from a test root, accepted or refused for another identity, a dropped approval key, and a development attestation under each policy; assertions whose counter increases, is replayed, or sign other data. The unit tests cover every other rejection |
 
-Every file has a `$comment` and a `devices` block with the keys (secrets in hex, public keys in
+Every file has a `$comment` and a `devices` block (`signers` in `version-policy.json`) with the keys (secrets in hex, public keys in
 base64url). Fields ending in `_ephemeral` or `_nonce` are the fixed randomness a vector needs;
 hex is used for secrets and raw bytes, base64url for anything that goes on the wire.
 

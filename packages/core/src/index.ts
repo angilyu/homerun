@@ -6,6 +6,7 @@ export * from "./cron";
 export * from "./timezone";
 export * from "./schedule";
 export * from "./health";
+export * from "./version-policy";
 export * from "./task-spec";
 export * from "./grants";
 export * from "./input";

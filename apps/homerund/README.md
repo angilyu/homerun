@@ -25,6 +25,8 @@ They are not redefined here.
 | `src/platform/` | What differs on Windows (milestone 8b): `processes.ts` picks the process-tree code (process groups and `ps`, or job objects in `windows-processes.ts`), and `secure.ts` makes the data and run dirs private (0700, or a protected ACL) and locks the pipe's ACL. The Win32 calls are in [`@homerun/win32`](../../packages/win32) |
 | `src/rpc/` | Unix-socket JSON-RPC server, `hello` and auth, handlers. The client, the data dir and socket paths and the build channel rule live in [`@homerun/client`](../../packages/client) |
 | `src/remote/` | Remote access (§9, §10, milestone 9; [below](#remote-access-9-10-milestone-9)): `account` (OIDC sign-in), `loopback` (the redirect listener), `keys` (the device identity), `link` (the relay WebSocket), `pairing` (QR), `linking` (matching codes), `devices` (pinned keys and presence), `sessions` (Noise live sessions as RPC connections), `sealed` (queued instructions, lock-screen answers, pushes), `service` (the `account.*` and `devices.*` methods), `config` |
+| `src/version/` | The minimum-version gate and kill switch (§11, milestone 11b; [below](#version-gate-crash-reports-and-diagnostics-11-milestone-11b)): `gate` (fetch, verify, keep, evaluate), `target` (this build's platform, channel and policy URL) |
+| `src/diagnostics/` | Opt-in crash reports and the diagnostic bundle (§11): `scrub` (the allowlists), `crash` (the spool and the Sentry envelope), `bundle` (what the zip holds), `zip` |
 | `test/unit/` | Fast tests against the fake engine |
 | `test/replay/` | Record/replay harness (§16.2) and the committed cassettes |
 | `test/crash/` | Crash-at-every-boundary harness (§16.2) with a simulated `claude` |
@@ -42,6 +44,7 @@ claude-config/      CLAUDE_CONFIG_DIR for every claude (a disposable cache, swep
 shell-home/         HOME for tool shells
 tmp/                TMPDIR (claude-resume-* dirs are swept at start)
 workspaces/  logs/
+crash-reports/      scrubbed crash reports waiting to be sent (§11); at most 20, for 30 days
 run/homerund.sock   0700 dir; falls back to $TMPDIR/hr-<uid>/ when the path is too long
 run/dev-token       development builds only (0600)
 ```
@@ -108,6 +111,12 @@ Params, results and callers are defined in `@homerun/core` (`src/protocol/method
     caller's own token. Revoking closes that token's live connections.
   - From the `cli` role, `tasks.create` and `tasks.update` are refused (`AUTHORITY_INSUFFICIENT`)
     when they add what `policyNeedsFullApp` names. The log redacts token values.
+
+- Version gate and diagnostics (§11, milestone 11b; [below](#version-gate-crash-reports-and-diagnostics-11-milestone-11b)):
+  `version.status` to every client, including the phone and the web; `version.check` (fetch now)
+  from the shell, the app and the CLI. `diagnostics.preview`, `diagnostics.create`,
+  `diagnostics.crash_reports.get` and `diagnostics.crash_reports.set` from the shell, the app and
+  the CLI. Notification `version.changed` to every client.
 
 ## Crash resume (§5.4, milestone 4)
 
@@ -367,6 +376,61 @@ desktop's `scripts/stage-sidecars.ts --release` passes them from its environment
 remote access shows as not configured. A development build also reads `HOMERUN_RELAY_URL`,
 `HOMERUN_OIDC_ISSUER` and `HOMERUN_OIDC_CLIENT_ID`, and accepts plain http on `127.0.0.1` for a
 local relay (`pnpm --filter @homerun/relay dev`) and issuer.
+
+## Version gate, crash reports and diagnostics (§11, milestone 11b)
+
+**The version gate** (`src/version/gate.ts`, design.md §18 rows 142–149):
+
+- The runtime fetches the signed policy from `<relay>/v1/version-policy` over plain HTTPS at
+  start and every hour, signed in or not, with a 15-second timeout. It verifies it against
+  `VERSION_POLICY_KEYS` (`@homerun/protocol`).
+- It keeps the newest valid policy in `app_settings` (`version_policy`). It refuses a policy
+  issued before the kept one, or more than a day ahead. It evaluates lazily, so an expiry or an
+  update clears the gate without a fetch.
+- It fails open. A build with no key, no relay URL, offline, an HTTP error, a bad signature or an
+  expired policy leaves the kept policy (while current) or nothing in effect. A `404` keeps it.
+- When the verdict is `update_required` or `killed`:
+  - the fire scheduler records each due fire as a `schedule.skipped` event (reason, count) and
+    doesn't start it;
+  - the run pool leaves queued unattended runs queued;
+  - a run in flight finishes;
+  - with `kill_interactive`, `messages.send` and `threads.create` are refused with
+    `VersionBlockedError` (`UNAVAILABLE`);
+  - `version.changed` tells every client.
+- Development builds evaluate as channel `development`. They also read
+  `HOMERUN_VERSION_POLICY_URL`, `HOMERUN_DEV_POLICY_KEYS` (JSON, key id → base64url) and
+  `HOMERUN_DEV_VERSION` (the version to evaluate), so the gate can be exercised against a local
+  relay. A release build takes its channel from `HOMERUND_CHANNEL` at build time (default
+  `stable`).
+
+**Crash reports** (`src/diagnostics/crash.ts`, `scrub.ts`; rows 150–151):
+
+- Offered only when a DSN is compiled in with `HOMERUND_SENTRY_DSN`
+  (`apps/desktop/scripts/stage-sidecars.ts --release` passes it through). A development build
+  also reads `HOMERUN_SENTRY_DSN`.
+- Off until the user turns it on (`diagnostics.crash_reports.set`). The setting is in
+  `app_settings` (`crash_reports`).
+- Every report is built by the allowlist in `scrub.ts`: exception type, frames (function, module
+  relative to the bundle, line), app, OS, arch, version, channel. The message is dropped.
+- The runtime writes its own uncaught errors to `crash-reports/`. The shell writes its panics and
+  the runtime exits and hangs it sees, in the same format.
+- When reports are on, the runtime sends those written since the user opted in, as Sentry
+  envelopes over `fetch`, at start and hourly. It deletes what it sent.
+
+**The diagnostic bundle** (`src/diagnostics/bundle.ts`; rows 152–153):
+
+- `diagnostics.preview` lists the files; `diagnostics.create {path?}` writes the zip. The path
+  must be absolute, end `.zip` and not exist. The default is `~/Downloads`, else home.
+- It holds:
+  - `manifest.json` (the file list) and `versions.json` (versions, OS, arch);
+  - `logs/` (the last 2 MB of the runtime and shell log and its predecessor, and the supervisor's
+    `supervisor.jsonl`, each redacted line by line);
+  - `database.json` (schema version and row counts only);
+  - `scheduler.json` (timing and state, ids hashed);
+  - `relay.json` (link and account state, no keys, tokens or email);
+  - `version-policy.json` (the gate's status and the kept policy);
+  - `crash-reports/`.
+- Ids are hashed with a salt made for each bundle.
 
 ## Running
 

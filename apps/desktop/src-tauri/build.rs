@@ -27,6 +27,8 @@ const COMMANDS: &[&str] = &[
     "cli_tool_status",
     "cli_tool_install",
     "cli_tool_remove",
+    "diagnostics_save",
+    "diagnostics_reveal",
 ];
 
 fn main() {

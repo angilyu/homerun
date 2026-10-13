@@ -100,6 +100,19 @@ export interface ShellApi {
   /** No admin rights: a symlink in ~/.local/bin to the CLI inside this app (a user Path entry on Windows). */
   installCliTool(): Promise<CliToolStatus>;
   removeCliTool(): Promise<CliToolStatus>;
+  /**
+   * Write a diagnostic bundle (§11): to Downloads, or where the save panel says when `choose`.
+   * The shell names the path, never the webview. Null when the panel was cancelled.
+   */
+  saveDiagnostics(choose: boolean): Promise<SavedBundle | null>;
+  /** The bundle just saved, in Finder or Explorer. */
+  revealDiagnostics(): Promise<void>;
+}
+
+export interface SavedBundle {
+  path: string;
+  bytes: number;
+  files: { name: string; bytes: number; description: string }[];
 }
 
 /** The desktop-only shell calls, shared by the Tauri and bridge platforms. */
@@ -127,6 +140,8 @@ export function shellCommands(call: <T>(cmd: string, args?: Record<string, unkno
     cliTool: () => call<CliToolStatus>("cli_tool_status"),
     installCliTool: () => call<CliToolStatus>("cli_tool_install"),
     removeCliTool: () => call<CliToolStatus>("cli_tool_remove"),
+    saveDiagnostics: (choose) => call<SavedBundle | null>("diagnostics_save", { choose }),
+    revealDiagnostics: () => call<void>("diagnostics_reveal"),
   };
 }
 

@@ -1250,6 +1250,11 @@ release may meet a database a newer release has already migrated. The policy:
 - **Migrations run in the runtime at startup, inside one transaction,** before
   the scheduler starts. A failed migration rolls back, and the runtime reports
   the failure without starting.
+- **A rollback is a forward release.** The operator rebuilds the last good code
+  with a higher version number and publishes a version policy whose
+  `min_version` is that build (or kills the bad range until it ships), so it
+  lands within this window. The first 11b release is the floor (§11, §18 row
+  148).
 
 ---
 
@@ -2215,15 +2220,92 @@ Code", and visuals imitating it, are not (§3.4).
     login keychain for local releases. The release workflow signs with the
     same key, held as a repository secret (§18 row 141).
 - Stable and beta channels, staged rollout.
-- **Minimum-version gate and remote kill switch**, served by our backend. For
-  software that takes unattended actions on users' machines, the ability to stop
-  a bad version is mandatory. Rollbacks stay within the schema rollback window
-  (§6.3).
+- **Minimum-version gate and remote kill switch (milestone 11b).** For software
+  that takes unattended actions on users' machines, the ability to stop a bad
+  version is mandatory (§18 rows 142–149).
+  - **The policy** is a small JSON document (`VersionPolicy` in
+    `packages/core`). It has an `issued_at`, an `expires_at` at most 90 days
+    later, and rules. Each rule names one platform (`macos`, `windows`, `ios`,
+    `web`) and a channel (`stable`, `beta`, `development` or `*`), and may set:
+    - `min_version`;
+    - `blocked_versions` (ranges);
+    - `kill` (ranges), which stops unattended work even when no update exists;
+    - `kill_interactive`, which stops chat too;
+    - a message and an https URL.
+  - **It is signed offline with Ed25519.** The public half is compiled into the
+    runtime and the clients (`VERSION_POLICY_KEYS`), so a relay or CDN
+    compromise can withhold a policy or replay an old one, but can't forge a
+    kill or a minimum.
+    - The release owner signs with `scripts/release/sign-policy.ts`. The key
+      file stays outside any repository.
+    - The relay serves the envelope at the public, cacheable
+      `GET /v1/version-policy`, from a Worker secret, so publishing needs no
+      deploy ([relay README](../apps/relay/README.md#the-version-policy)).
+  - **The runtime checks it at start and every hour**, over plain HTTPS to the
+    relay, signed in or not.
+    - It keeps the newest valid policy and evaluates it lazily, so expiry or an
+      update clears the gate without a fetch.
+    - Replay is bounded: a policy older than the kept one is refused, and so is
+      one issued more than a day ahead.
+    - **It fails open.** Offline, a bad signature, an unknown key, an expired
+      policy, or none published all leave the runtime working (with the kept
+      policy while it is current). Users keep working offline.
+  - **It can only restrict.** When this version is below the minimum, blocked or
+    killed:
+    - scheduled and monitor fires don't start. Each is recorded as a
+      `schedule.skipped` event with the reason, shown in history and the
+      digest. They are skipped, not queued.
+    - Runs already pending stay pending; a run in flight finishes.
+    - Chat stays allowed, unless the policy says `kill_interactive`.
+    - The desktop shows a banner that can't be dismissed, with *Update* wired
+      to the updater; `homerun status` reports it.
+    - It never enables anything, runs code or deletes data.
+    - It clears when a new policy lifts it, the policy expires, or the app
+      updates.
+  - **The iPhone app and the web client read the same policy for their own
+    platform** and show *Update Homerun*. The Mac's runtime enforces its own
+    gate.
+  - **Rollbacks stay within the schema rollback window (§6.3).** To roll back,
+    rebuild the last good release with a higher version number (only newer
+    versions install), ship it through the updater, and publish a policy that
+    sets `min_version` to it, or kills the bad range until it exists. A rebuilt
+    older release must be able to read the database the bad one left (§6.3's
+    two-schema window). The first 11b release is the floor: earlier runtimes
+    don't know the `schedule.skipped` event (§18 row 148).
 
-**Diagnostics**
-- Opt-in crash reporting (e.g. Sentry) with strict scrubbing. **Never send
-  prompts, tool inputs, or tool outputs.**
-- A user-initiated, redacted diagnostic bundle for support cases.
+**Diagnostics (milestone 11b)**
+- **Opt-in crash reporting.**
+  - **Off by default.** Onboarding and Settings offer *Send crash reports* only
+    in a build with a Sentry DSN compiled in (`HOMERUND_SENTRY_DSN`); without
+    one the setting is hidden. The release workflow doesn't pass one yet, so
+    releases hide it until a Sentry project exists.
+  - **Never sent:** prompts, tool inputs or outputs, task names, URLs, paths
+    under the user's home, keys or tokens.
+  - **An allowlist builds each report** (§18 row 151). It keeps only:
+    - the exception type;
+    - stack frames (function, module, line), with paths made relative to the
+      bundle;
+    - app, OS, arch, version and channel.
+  - **What is caught:** the runtime's uncaught errors, the shell's panics, and
+    the runtime exits and hangs its supervisor observes.
+    - The shell and the runtime write scrubbed reports to `crash-reports/` in
+      the data dir.
+    - The runtime uploads them as Sentry envelopes with a plain `fetch`, no SDK
+      (§18 row 150), and only those written after the user opted in.
+- **A diagnostic bundle**, from Settings (*Create diagnostic bundle*) or
+  `homerun diagnostics`.
+  - It writes a zip to a place the user chooses (by default Downloads). Nothing
+    is uploaded. The user sees the file list before saving.
+  - It holds:
+    - versions, OS and arch;
+    - the runtime's, shell's and supervisor's logs, redacted line by line;
+    - the supervisor's status history;
+    - the schema version and row counts per table;
+    - the scheduler's state (next fires, ids hashed with a per-bundle salt);
+    - the relay link's state (no keys or email);
+    - the effective version policy;
+    - spooled crash reports.
+  - None of the user's content is included (§18 rows 152–153).
 
 ---
 
@@ -2439,7 +2521,7 @@ UI last: the runtime is the risky part.
 | 8b | [Windows](../apps/desktop/README.md#windows-milestone-8b) | Named-pipe transport with an ACL (§5.2), job objects for the process tree, Credential Manager for the key, suspend/resume notifications (§8.4), tray residency; the runtime and the shell pass their suites on `windows-latest` | **Done**; the tray, dialogs, notifications, login and sleep need a person on a Windows desktop ([manual checks](../apps/desktop/README.md#windows-manual-checks)); signing, the installer and the updater came in milestone 11a (§18 rows 136–138) |
 | 9 | [Accounts + relay + push](../apps/relay/README.md) | OIDC sign-in on desktop; outbound WSS; Noise live sessions and sealed messages; APNs delivery; protocol test vectors pass on all clients | **Done** against local stand-ins: a local OIDC issuer, the relay under Bun and workerd, and a mock APNs (§18 rows 74–98). 9a built the protocol and its vectors, the relay and the reference client; 9b the runtime's sign-in, device keys, relay link, QR pairing, linking by code, live sessions, sealed messages and pushes, and the desktop's *Remote access* settings. "All clients" is the runtime and the reference client until milestone 10 (§18 row 80). Creating the WorkOS, Cloudflare and Apple accounts and `wrangler deploy` are [manual steps](../apps/relay/README.md#deploying); a real browser sign-in and the native link prompt need a person ([manual checks](../apps/desktop/README.md#manual-checks)); delivery to a real phone is milestone 10 |
 | 10 | [iOS](../apps/ios/README.md) + [web](../apps/web/README.md) | Sign-in and device linking; history sync, live chat, steering, questions, approvals, rich push; web client with reduced authority | **Done** against local stand-ins. 10a: App Attest (§18 rows 99–102), deleting the provider's user (row 103), and the web client (rows 104–113). 10b: Face ID approvals and withdrawals (rows 115–117), and the iOS app with its Notification Service Extension (rows 118–130). The app's session runs against the real runtime and relay on Linux, HomerunKit passes the vectors in `swift test`, and a nightly job builds for the simulator and runs the vectors under Hermes. A real iPhone, TestFlight, APNs production, WorkOS and Pages need a person: the [desktop's](../apps/desktop/README.md#manual-checks) and the [iOS app's](../apps/ios/README.md#manual-checks) manual checks |
-| 11 | Distribution | Signed and notarized builds, installers, crash reporting, version gate | **Partial: 11a**, the [release pipeline](../apps/desktop/README.md#releasing-milestone-11a) (§18 rows 132–141). A `v*` tag builds a macOS arm64 DMG and a Windows x64 per-user NSIS installer. Each platform is signed when its secrets are set, and otherwise built as an unsigned preview that is never offered as an update. The workflow verifies the builds, install-tests the Windows installer, and publishes a GitHub release with `latest.json` and `SHA256SUMS`. No secrets are set yet. The first signed release, real notarization, Artifact Signing, the updater key swap and a release-to-release update need a person ([first signed release](../apps/desktop/README.md#first-signed-release)). 11b: version gate, kill switch, crash reporting and diagnostic bundle |
+| 11 | Distribution | Signed and notarized builds, installers, crash reporting, version gate | **Done** (11a, 11b). **11a**, the [release pipeline](../apps/desktop/README.md#releasing-milestone-11a) (§18 rows 132–141): a `v*` tag builds a macOS arm64 DMG and a Windows x64 per-user NSIS installer. Each platform is signed when its secrets are set, and otherwise built as an unsigned preview that is never offered as an update. The workflow verifies the builds, install-tests the Windows installer, and publishes a GitHub release with `latest.json` and `SHA256SUMS`. **11b**: the signed minimum-version gate and kill switch in the runtime, desktop, CLI, iPhone app and web client, served by the relay (rows 142–149); opt-in crash reports and the diagnostic bundle (rows 150–155). **Manual steps**, each a person's: set the release secrets and make the first signed release, with real notarization, Artifact Signing, the updater key swap and a release-to-release update ([first signed release](../apps/desktop/README.md#first-signed-release)); make the offline policy key and put its public half in `VERSION_POLICY_KEYS`, which until then leaves the gate off; create the Sentry project and build with its DSN, which until then hides the crash-report setting; and check the native save panels ([manual checks 47–50](../apps/desktop/README.md#manual-checks)). |
 
 ### 16.1 Milestone 0: prove the risky parts first
 
@@ -2765,3 +2847,17 @@ One line per major decision: what was chosen, and why.
 | 139 | **The desktop has one version, in `tauri.conf.json`; `bump-version.ts` copies it, and the release fails if the tag differs** (§11) | Tauri reads the app version from `tauri.conf.json`. The Cargo manifests, `Cargo.lock` and `package.json` follow it, so About, the updater and `homerund`'s baked version can't disagree. The edits are textual, keeping formatting. Other workspace packages version independently: they ship only inside the app |
 | 140 | **`latest.json` is merged from per-platform fragments and verified before it's published** (§11, §14) | Each platform's job writes a fragment, and the publish job merges them. It verifies every signature (minisign: Ed25519 over a BLAKE2b prehash, and the trusted comment) against the public key in `tauri.conf.json`, for this version and over a file in this release. It refuses the placeholder key. A secret that doesn't match the compiled-in key would otherwise publish updates that every installed app rejects |
 | 141 | **The updater key is a repository secret; the public key stays a placeholder until it's swapped in by hand** (§11, §14) | The release must sign without a person, so the minisign key and its passphrase are two secrets. That is neither offline nor hardware-backed, as §14 asks; moving to a hardware-backed service is open. The placeholder means every build refuses updates until a reviewed commit puts the real public key in `tauri.conf.json`. The first build with it is installed by hand, since earlier builds accept no update |
+| 142 | **The version policy is signed offline with Ed25519, not trusted on TLS alone** (§11, §13) | With TLS only, whoever controls the relay, its Cloudflare account or a CDN in front of it could stop every user's unattended work, or announce a fake "update" URL. A signature from a key that never touches a server limits a compromise of those to withholding a policy or replaying an old one, and the clients bound replay (row 145). The cost is small: one Ed25519 verify with the `@noble` code every client already has, and a key to keep offline. The relay checks only that the envelope is well formed, and holds no key. The envelope carries the policy as the exact signed string with a key id, framed under its own label like the other signatures (§9.4), so a policy can't be confused with any other signed message and keys can rotate. Until the release owner makes the key, `VERSION_POLICY_KEYS` is empty and every client fails open |
+| 143 | **The policy is a public `GET` on the relay, fetched over plain HTTPS** (§9.4, §11) | Signed-out desktops need it too, and the relay link exists only when signed in. One public answer, `Cache-Control: public, max-age=300`, serves every client, including the web client (CORS for its pages) and the phone. It is the same for everyone, so fetching it reveals only that a Homerun client is running. It is published as a Worker secret, so a kill needs no deploy. The runtime checks at start and hourly; `homerun status --check` checks at once |
+| 144 | **The gate fails open and keeps the last valid policy** (§11) | Users must keep working offline, and a broken relay must not stop every Mac. So no answer, an HTTP error, a bad signature, an unknown key or an expired policy all leave the kept policy in effect while it is current, and nothing otherwise. A `404` also keeps it, so a relay that loses its configuration doesn't lift a kill early; lifting one means publishing a newer permissive policy |
+| 145 | **Replay is bounded by `issued_at` and a 90-day expiry** (§11, §13) | A client refuses a policy issued before the one it keeps, so a replayed old policy can't lift a newer kill, and one issued more than a day ahead, so a clock-skewed signer can't pin a policy that later ones can't replace. Every policy expires within 90 days, so a withheld update or a lost key fails open in bounded time. `sign-policy.ts` refuses policies a client would refuse |
+| 146 | **The gate only restricts: fires are skipped and recorded, pending runs wait, running ones finish** (§8, §11) | It pauses the scheduler and monitors at the point of starting work, which is the only safe point: a run stopped midway may leave a half-done action, which is what crash resume (§5.4) exists to avoid. Each skipped fire is a `schedule.skipped` event with the reason, grouped when contiguous, in history and the digest. It is a new type rather than a `schedule.missed` reason, so older clients show an unknown event instead of rejecting the thread. Skipped fires aren't queued for later: a stopped version shouldn't run a backlog when it is lifted. Chat stays allowed unless `kill_interactive`. Nothing in the gate enables, runs or deletes anything |
+| 147 | **Development builds are their own channel** (§11) | A policy rule names a channel, and `development` builds evaluate as `development`, so a stable kill never stops a developer's build, and a test rule can target only development builds. The runtime's channel comes from `HOMERUND_CHANNEL` at build time (`stable` when unset in a release build). The release workflow doesn't set it, so every release is `stable` until a beta channel exists |
+| 148 | **Rolling back is a rebuild of the last good release with a higher version, within §6.3's window; the floor is the first 11b release** (§6.3, §11) | Updaters install only newer versions (§11), so a rollback is the last good code shipped as a new version, plus a policy whose `min_version` is that version, or a kill of the bad range until it ships. The rebuilt code must open the database the bad release left, which §6.3's two-schema window guarantees. Runtimes from before 11b don't know `schedule.skipped` events, so no rollback may go below the first 11b release |
+| 149 | **The iPhone app and the web client check their own platform and only say "Update Homerun"** (§9.8, §9.9, §11) | They take no unattended actions, so there is nothing for them to stop; the Mac enforces its own gate, and the web client also shows the Mac's banner through the desktop views. They use the same checker (`packages/remote`), keep the policy (the iPhone's kv records, the browser's IndexedDB), and fail open. The phone checks at launch and on the foreground at most hourly; the web page at load and hourly. A web build can't update itself, so *Update Homerun* reloads the page |
+| 150 | **Crash reports are Sentry envelopes posted by hand from the runtime; no SDK in the runtime or the shell** (§11) | No new dependency. `@sentry/bun` 11.4 brings `@sentry/node`, `@sentry/opentelemetry` and `@opentelemetry/api`, with instrumentation we must then keep from capturing breadcrumbs and request data. The `sentry` crate with only `backtrace`, `panic`, `contexts`, `native-tls` and `reqwest` resolves 128 crates on its own. A Sentry envelope is three JSON lines, so a hand-written sender is about 50 lines and sends only what the scrubber made. The shell's panic hook and supervisor write reports to the runtime's `crash-reports/` spool and upload nothing, so the shell gains no network code and the native-TLS rule (§11 updater) holds trivially. The runtime sends only reports written after the user opted in, retries hourly, deletes what it sent, and keeps at most 20 unsent for 30 days for the diagnostic bundle. Dependencies added in 11b: none (npm or Rust); the shell enables `objc2-app-kit`'s `NSPanel`/`NSSavePanel`, `objc2-foundation`'s `NSURL` and `windows`' `Win32_UI_Shell_Common` features for the save panel |
+| 151 | **The scrubber is an allowlist** (§11, §13) | A denylist misses what nobody thought of. A report is rebuilt from scratch with only the exception type, the stack frames (function, module, line; a module path made relative to the bundle, and any frame outside it `<external>`), and app, OS, arch, version and channel. Each field must match a narrow pattern or the report is refused. Exception messages are dropped, not cleaned, since they are where prompts, tool input and output, paths and keys turn up. The runtime parses every report through the same allowlist again before sending, including the shell's. Adversarial tests seed prompts, tool inputs, keys, tokens, URLs, task names and home paths in every field |
+| 152 | **The diagnostic bundle is built by the runtime and saved through a native panel the shell opens** (§11, §13) | The runtime has the database, logs and policy. The webview never names a path: Settings asks the shell, which opens the native save panel (`NSSavePanel`, `IFileSaveDialog`) and passes the chosen path to `diagnostics.create`, which refuses a non-absolute path, a name not ending `.zip`, or an existing file. The default is Downloads, else home. The user sees the file list (`diagnostics.preview`) first. Native panels come from feature flags on crates we have, not `tauri-plugin-dialog` |
+| 153 | **The bundle redacts by structure, and hashes ids with a per-bundle salt** (§11, §13) | JSON log lines keep numbers and booleans; of their strings, ids are hashed, a few known text fields (the message, the level, an error's name and message) pass through the redactor, which removes tokens, keys, emails and URLs and turns paths under the home directory into `~/[path]`, and every other string becomes `[redacted]`. Stacks are dropped. Raw stderr keeps only stack lines and the runtime's banner; any other non-JSON line is reduced to its length. Database content is never read: only the schema version and row counts. Schedule, task and device ids are hashed with a salt made for that bundle, so lines correlate within it but not across bundles. Tests seed secrets, prompts and paths and assert they appear nowhere in the zip |
+| 154 | **The supervisor keeps its own status history, and a hung runtime is a crash** (§5.1, §11) | The shell appends every runtime status change, and each exit with its code or signal, to `supervisor.jsonl` in the logs dir, capped at 256 KB and kept apart from the main log so a chatty runtime can't rotate the history away. A runtime that stops answering its health check and is killed is reported as `RuntimeHung`, so hangs are counted, not only exits |
+| 155 | **The version banner can't be dismissed; `homerun diagnostics` needs `--yes` without a terminal** (§11) | A user who dismisses the banner would only see scheduled runs silently skipped, so it stays while the gate applies, with *Update* (or *Download update* when the updater can't). The CLI prints the file list to stderr and the saved path to stdout, and refuses to write without a terminal unless `--yes`, so a script can't create a bundle the user never saw listed |

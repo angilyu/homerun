@@ -54,6 +54,8 @@ export const MonitorHealth = named(
     skipped: z.int().nonnegative(),
     /** Late runs made by the catch-up policy (§8.1). */
     caught_up: z.int().nonnegative(),
+    /** Fires the minimum-version gate stopped (§11): this version must update first. Absent from older runtimes. */
+    skipped_by_version: z.int().nonnegative().optional(),
     cost_usd: z.number().nonnegative(),
     last_run_at: TimestampMs.nullable(),
     next_fire_at: TimestampMs.nullable(),

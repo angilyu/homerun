@@ -1,6 +1,6 @@
 import { CLOCK_SKEW_MS, type SealedInner } from "@homerun/core";
 import { framed, fromB64url, fromHex, toB64url, toHex, utf8 } from "../bytes";
-import { x25519Key } from "../crypto";
+import { ed25519Key, x25519Key } from "../crypto";
 import { buildApnsPayload } from "../apns";
 import { LinkInitiator, LinkResponder, sasCommit, sasCode } from "../linking";
 import { LiveInitiator, livePrologue, liveRespond } from "../live";
@@ -16,6 +16,7 @@ import { approvalMessage, approvalRenewalClientDataHash, checkApprovalProof, col
 import { testAppAttestCA, testAssertion } from "../testing/app-attest";
 import { ACCOUNT, identityOf, T0, vectorDeviceKeys, type VectorDeviceName } from "./fixtures";
 import { seededRandom } from "./seeded";
+import { signVersionPolicy, versionPolicyBytes } from "../version-policy";
 
 /**
  * Builds the contents of every vector file from fixed seeds. `scripts/gen-vectors.ts` writes them;
@@ -622,6 +623,51 @@ export function buildApproval() {
   };
 }
 
+// ---------------------------------------------------------------- version policy
+
+const DAY = 24 * HOUR;
+
+export function versionPolicyKey(label: "release" | "retired" | "attacker") {
+  const k = ed25519Key(seededRandom(`version-policy/${label}`)(32));
+  return { key_id: label === "release" ? "2026-01" : label === "retired" ? "2025-07" : "2026-01", secret: toHex(k.secretKey), public: toB64url(k.publicKey), key: k };
+}
+
+export async function buildVersionPolicy() {
+  const release = versionPolicyKey("release");
+  const retired = versionPolicyKey("retired");
+  const attacker = versionPolicyKey("attacker");
+  const policy = {
+    v: 1 as const,
+    issued_at: T0,
+    expires_at: T0 + 30 * DAY,
+    rules: [
+      { platform: "macos", channel: "stable", min_version: "0.3.0" },
+      { platform: "windows", channel: "*", kill: [">=0.3.1 <0.3.2"], message: "A bug in 0.3.1 can repeat scheduled runs. Update to 0.3.2.", url: "https://homerun.example/status" },
+    ],
+  };
+  const signed = await signVersionPolicy(policy, release.key_id, release.key);
+  const byRetired = await signVersionPolicy({ ...policy, issued_at: T0 - DAY }, retired.key_id, retired.key);
+  const forged = await signVersionPolicy({ ...policy, rules: [{ platform: "macos", channel: "*", kill: ["*"], kill_interactive: true }] }, attacker.key_id, attacker.key);
+  const notAPolicy = { body: '{"v":1}', key_id: release.key_id, signature: toB64url(await release.key.sign(versionPolicyBytes(release.key_id, '{"v":1}'))) };
+  const trusted = { [release.key_id]: release.public, [retired.key_id]: retired.public };
+  return {
+    $comment: COMMENT("Version policy (§11): Ed25519 over `bytes` = framed(label, key_id, body); `verify` cases give whether the envelope verifies against `keys` and, if so, the policy."),
+    label: "homerun/version-policy/v1",
+    signers: { release: { key_id: release.key_id, secret: release.secret, public: release.public }, retired: { key_id: retired.key_id, secret: retired.secret, public: retired.public } },
+    sign: [{ name: "release key", signer: "release", policy, bytes: toHex(versionPolicyBytes(release.key_id, signed.body)), signed }],
+    verify: [
+      { name: "valid", signed, keys: trusted, policy },
+      { name: "retired key still trusted", signed: byRetired, keys: trusted, policy: { ...policy, issued_at: T0 - DAY } },
+      { name: "no trusted keys", signed, keys: {}, policy: null },
+      { name: "body edited", signed: { ...signed, body: signed.body.replace("0.3.0", "0.0.1") }, keys: trusted, policy: null },
+      { name: "key id swapped", signed: { ...signed, key_id: retired.key_id }, keys: trusted, policy: null },
+      { name: "forged with an untrusted key under a trusted id", signed: forged, keys: trusted, policy: null },
+      { name: "signed but not a policy", signed: notAPolicy, keys: trusted, policy: null },
+      { name: "extra envelope field", signed: { ...signed, kill: true }, keys: trusted, policy: null },
+    ],
+  };
+}
+
 export async function buildAll(): Promise<Record<string, unknown>> {
   return {
     "approval.json": buildApproval(),
@@ -634,5 +680,6 @@ export async function buildAll(): Promise<Record<string, unknown>> {
     "relay-wire.json": await buildWire(),
     "encoding.json": buildEncoding(),
     "app-attest.json": buildAppAttest(),
+    "version-policy.json": await buildVersionPolicy(),
   };
 }

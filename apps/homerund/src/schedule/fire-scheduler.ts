@@ -1,4 +1,4 @@
-import { MonitorSpec, type ScheduleSpec } from "@homerun/core";
+import { MonitorSpec, type ScheduleSpec, type VersionGateReason, type VersionVerdict } from "@homerun/core";
 import { log } from "../log";
 import { appendEvent } from "../store/events";
 import { activeRunRow, getTask, tryInsertRun } from "../store/rows";
@@ -42,6 +42,8 @@ export interface FireHooks {
   onTick?(now: number): void;
   /** Another instant to wake at (the next digest). */
   nextWake?(): number | null;
+  /** The minimum-version gate (§11): when it stops unattended work, ready fires are skipped. */
+  gate?(now: number): VersionVerdict;
 }
 
 interface Slot {
@@ -287,6 +289,11 @@ export class FireScheduler {
       const task = getTask(this.store, s.task_id);
       const threadId = monitorThread(this.store, s.task_id);
       if (!task || !threadId || task.kind !== "monitor") return false;
+      const verdict = this.hooks.gate?.(now);
+      if (verdict && !verdict.unattended_allowed && s.enabled) {
+        this.skip(scheduleId, threadId, verdict.reason ?? "killed", now);
+        return false;
+      }
       if (activeRunRow(this.store, threadId)) return false;
       const fire = queuedFires(this.store, scheduleId).find((f) => f.not_before === null || f.not_before <= now);
       if (!fire) return false;
@@ -329,6 +336,26 @@ export class FireScheduler {
       this.store.db.query("UPDATE schedules SET last_fired_at = ? WHERE schedule_id = ?").run(now, s.schedule_id);
       return true;
     });
+  }
+
+  /**
+   * The gate stops unattended work (§11): every ready fire of the schedule is recorded as skipped,
+   * with the reason, rather than left to run late once the gate clears. One `schedule.skipped`
+   * per pass. Fires not yet due stay queued; they are skipped when they come due, or run if the
+   * policy has changed by then.
+   */
+  private skip(scheduleId: string, threadId: string, reason: VersionGateReason, now: number): void {
+    const ready = queuedFires(this.store, scheduleId).filter((f) => f.not_before === null || f.not_before <= now);
+    if (!ready.length) return;
+    for (const f of ready) updateFire(this.store, f, { state: "skipped" });
+    appendEvent(this.store, threadId, null, "schedule.skipped", {
+      schedule_id: scheduleId,
+      scheduled_for: ready[0]!.scheduled_for,
+      reason,
+      count: ready.length,
+      ...(ready.length > 1 ? { last_scheduled_for: ready[ready.length - 1]!.scheduled_for } : {}),
+    }, now);
+    log.info("scheduled fires skipped by the version policy", { schedule_id: scheduleId, reason, count: ready.length });
   }
 }
 

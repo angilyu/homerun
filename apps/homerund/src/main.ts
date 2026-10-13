@@ -10,12 +10,13 @@
  * Exit codes: 0 clean stop, 1 startup failure, 2 stdin closed before the token, 3 another
  * runtime is already serving this data dir, 64 usage or a development-only switch in a release build.
  */
-import { BUILD_CHANNEL, DevOnlyError, RUNTIME_VERSION, loadConfig, type Config } from "./config";
+import { BUILD_CHANNEL, DevOnlyError, RUNTIME_CHANNEL, RUNTIME_VERSION, loadConfig, type Config } from "./config";
 import { log } from "./log";
 import { LAUNCH_TOKEN_RE } from "./rpc/auth";
 import { AlreadyRunningError } from "./rpc/server";
 import { AlreadyRunningLockError, startRuntime, type Runtime } from "./runtime";
 import { DatabaseTooNewError } from "./store/migrate";
+import { installCrashHandlers, runtimeBuild } from "./diagnostics/crash";
 
 async function readToken(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
   let pending = "";
@@ -47,6 +48,8 @@ async function serve(argv: string[]): Promise<void> {
     log.error("startup failed", { err: e instanceof Error ? e : String(e) });
     process.exit(1);
   }
+  // Before anything else can throw: an uncaught error is spooled as a scrubbed crash report (§11).
+  installCrashHandlers(config.dataDir, runtimeBuild(RUNTIME_VERSION, RUNTIME_CHANNEL));
   const reader = noToken ? null : Bun.stdin.stream().getReader();
   const token = reader ? await readToken(reader) : null;
   if (token !== null && !LAUNCH_TOKEN_RE.test(token)) {

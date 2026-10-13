@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { named } from "../registry";
 import { JsonValue } from "../common";
+import { VersionGateReason } from "../version-policy";
 
 /**
  * Framing (§5.2): JSON-RPC 2.0 messages, one per line (NDJSON), UTF-8, over the local socket,
@@ -66,6 +67,8 @@ export const RPC_ERROR = {
   UNAVAILABLE: -32009,
   /** A budget cap blocks the action (§7.4). */
   BUDGET_EXCEEDED: -32010,
+  /** The version policy (§11) stops this: the app must update first. `data` is `VersionBlockedData`. */
+  VERSION_BLOCKED: -32011,
 } as const;
 export type RpcErrorCode = (typeof RPC_ERROR)[keyof typeof RPC_ERROR];
 
@@ -95,6 +98,12 @@ export type CliAuthFailureData = z.infer<typeof CliAuthFailureData>;
 /** UNAVAILABLE for `cli.request_access`: too many requests are already waiting for the user. */
 export const CliAccessUnavailableData = named("CliAccessUnavailableData", z.object({ reason: z.literal("too_many_requests") }));
 export type CliAccessUnavailableData = z.infer<typeof CliAccessUnavailableData>;
+/** VERSION_BLOCKED: the version policy (§11) killed this version for chat too. */
+export const VersionBlockedData = named(
+  "VersionBlockedData",
+  z.object({ reason: VersionGateReason, url: z.string().max(2048).nullable() }),
+);
+export type VersionBlockedData = z.infer<typeof VersionBlockedData>;
 
 export const RpcSuccess = named(
   "RpcSuccess",

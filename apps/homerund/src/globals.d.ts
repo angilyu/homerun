@@ -10,3 +10,7 @@ declare const HOMERUND_BUILD: string | undefined;
 declare const HOMERUND_RELAY_URL: string | undefined;
 declare const HOMERUND_OIDC_ISSUER: string | undefined;
 declare const HOMERUND_OIDC_CLIENT_ID: string | undefined;
+/** The release channel a release build reports to the version policy (§11); "stable" when absent. */
+declare const HOMERUND_CHANNEL: string | undefined;
+/** Crash reporting (§11): the Sentry DSN. Absent: the build has no crash reporting and hides the setting. */
+declare const HOMERUND_SENTRY_DSN: string | undefined;

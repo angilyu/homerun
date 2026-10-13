@@ -29,7 +29,8 @@ pnpm homerun chat
 
 | Command | |
 |---------|--|
-| `status` | Whether homerund is reachable; its version, the role, active runs, pending input |
+| `status [--check]` | Whether homerund is reachable; its version, the role, active runs, pending input, and whether the version policy pauses unattended work or chat (§11). `--check` fetches the policy first |
+| `diagnostics [--out FILE.zip\|FOLDER] [--yes]` | Write the redacted diagnostic bundle (§11): lists the files, asks, then the runtime writes the zip (by default to Downloads). Nothing is uploaded. Without a terminal, `--yes` is required |
 | `chat [THREAD] [--title T]` | Interactive chat, in a new thread or continuing THREAD |
 | `send THREAD\|--new [--title T] [TEXT\|-] [--detach] [--stop-on-interrupt]` | Send a message and stream the run. If the thread already has an active run, the message steers it |
 | `watch THREAD [--history N]` | The last N events (default 10), then follow live until Ctrl-C |

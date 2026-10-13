@@ -2,10 +2,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CONCURRENCY, type BuildChannel } from "@homerun/core";
+import { VERSION_POLICY_KEYS, type VersionPolicyKeys } from "@homerun/protocol";
 import { chooseRunDir, dataDir as resolveDataDir, resolveBuildChannel, runningCompiled } from "@homerun/client";
 import { resolveClaudeShell, type ClaudeShell } from "./agent/claude/shell";
 import { secureDir } from "./platform/secure";
-import { remoteConfig, type RemoteConfig } from "./remote/config";
+import { BUILT_IN, remoteConfig, type RemoteConfig } from "./remote/config";
+import { policyPlatform, policyUrl } from "./version/target";
 
 export { DATA_DIR_NAME, SUN_PATH_MAX, chooseRunDir, resolveBuildChannel } from "@homerun/client";
 
@@ -21,6 +23,16 @@ export const isCompiled = runningCompiled(import.meta.url);
  * the define never gets the development switches, dev tokens or base-URL overrides.
  */
 export const BUILD_CHANNEL: BuildChannel = resolveBuildChannel(typeof HOMERUND_BUILD === "string" ? HOMERUND_BUILD : undefined, isCompiled);
+
+/**
+ * The channel the version policy matches (§11). Development builds are their own channel, so a
+ * rule for stable never stops one; a release build is "stable" unless built with HOMERUND_CHANNEL.
+ */
+export const RUNTIME_CHANNEL: string =
+  BUILD_CHANNEL === "development" ? "development" : typeof HOMERUND_CHANNEL === "string" && /^[a-z][a-z0-9_-]{0,31}$/.test(HOMERUND_CHANNEL) ? HOMERUND_CHANNEL : "stable";
+
+/** Crash reporting's Sentry DSN, compiled in (§11); null: the build has none and the setting is hidden. */
+export const BUILT_IN_SENTRY_DSN: string | null = typeof HOMERUND_SENTRY_DSN === "string" && HOMERUND_SENTRY_DSN !== "" ? HOMERUND_SENTRY_DSN : null;
 
 /** A development-only switch was used in a release build. */
 export class DevOnlyError extends Error {
@@ -89,6 +101,17 @@ export interface Config {
   inputGraceMs: number;
   /** The relay and identity provider (§9, §10.4); null when this build has none. */
   remote: RemoteConfig | null;
+  /** The minimum-version gate (§11). */
+  versionPolicy: {
+    /** Where the signed policy is fetched from; null without a relay. */
+    url: string | null;
+    keys: VersionPolicyKeys;
+    version: string;
+    platform: string;
+    channel: string;
+  };
+  /** Crash reporting (§11): the Sentry DSN; null when this build has none. */
+  sentryDsn: string | null;
 }
 
 /** §5.6: the grace period before a waiting call is deferred. */
@@ -169,6 +192,14 @@ export function loadConfig(input: ConfigInput = {}): Config {
     throw new Error(`HOMERUN_DEV_AMBIGUITY_MODE must be inject or truncate, not ${ambiguityMode}`);
   }
 
+  // The version gate's development switches (§11): a policy URL and trusted test keys, and the
+  // version it evaluates, so the gate can be exercised against a local relay.
+  const policyUrlOverride = devOnly("HOMERUN_VERSION_POLICY_URL", env.HOMERUN_VERSION_POLICY_URL) as string | undefined;
+  const policyKeys = devOnly("HOMERUN_DEV_POLICY_KEYS", env.HOMERUN_DEV_POLICY_KEYS) as string | undefined;
+  const gateVersion = devOnly("HOMERUN_DEV_VERSION", env.HOMERUN_DEV_VERSION) as string | undefined;
+  const sentryDsn = devOnly("HOMERUN_SENTRY_DSN", env.HOMERUN_SENTRY_DSN) as string | undefined;
+  const remote = remoteConfig(env, dev, devOnly);
+
   const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
   return {
     build,
@@ -198,6 +229,14 @@ export function loadConfig(input: ConfigInput = {}): Config {
     chatMaxBudgetUsd: num(dev ? env.HOMERUN_CHAT_MAX_BUDGET_USD : undefined, 2),
     shutdownGraceMs: num(dev ? env.HOMERUN_SHUTDOWN_GRACE_MS : undefined, 10_000),
     inputGraceMs: num(dev ? env.HOMERUN_INPUT_GRACE_MS : undefined, INPUT_GRACE_MS),
-    remote: remoteConfig(env, dev, devOnly),
+    remote,
+    versionPolicy: {
+      url: policyUrlOverride || policyUrl(remote?.relayUrl ?? BUILT_IN.relayUrl?.replace(/\/+$/, "")),
+      keys: policyKeys ? { ...VERSION_POLICY_KEYS, ...(JSON.parse(policyKeys) as VersionPolicyKeys) } : VERSION_POLICY_KEYS,
+      version: gateVersion || RUNTIME_VERSION,
+      platform: policyPlatform(),
+      channel: RUNTIME_CHANNEL,
+    },
+    sentryDsn: sentryDsn || BUILT_IN_SENTRY_DSN,
   };
 }

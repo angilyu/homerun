@@ -30,6 +30,12 @@ pub struct Config {
     /// `logs/homerund.log`.
     pub log: PathBuf,
     pub log_max: u64,
+    /// `logs/supervisor.jsonl`: every status change, for the diagnostic bundle (§11). Kept apart
+    /// from the main log so a chatty runtime doesn't rotate the history away.
+    pub status_log: Option<PathBuf>,
+    /// `crash-reports/` and the shell's build: where an unexpected runtime exit is reported (§11
+    /// "Diagnostics"). The runtime sends them, only if the user turned crash reports on.
+    pub crash_reports: Option<(PathBuf, crate::crash::Build)>,
     pub client_version: String,
     pub timing: Timing,
     pub hello_timeout: Duration,
@@ -45,6 +51,8 @@ impl Config {
             env_remove: vec![],
             log,
             log_max: 10 * 1024 * 1024,
+            status_log: None,
+            crash_reports: None,
             client_version: client_version.into(),
             timing: Timing::default(),
             hello_timeout: Duration::from_secs(10),
@@ -77,6 +85,7 @@ struct Shared {
     stopped: (Mutex<bool>, Condvar),
     tail: Mutex<VecDeque<String>>,
     log: Mutex<LogFile>,
+    status_log: Option<Mutex<LogFile>>,
 }
 
 impl Shared {
@@ -100,6 +109,7 @@ pub struct Runtime {
 }
 
 const TAIL: usize = 50;
+const STATUS_LOG_MAX: u64 = 256 * 1024;
 
 fn wall_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -116,6 +126,7 @@ impl Runtime {
             stopped: (Mutex::new(false), Condvar::new()),
             tail: Mutex::new(VecDeque::new()),
             log: Mutex::new(LogFile::new(config.log.clone(), config.log_max)),
+            status_log: config.status_log.clone().map(|p| Mutex::new(LogFile::new(p, STATUS_LOG_MAX))),
         });
         let rt = Runtime { tx: tx.clone(), shared: shared.clone() };
         std::thread::Builder::new()
@@ -278,10 +289,21 @@ impl Driver {
                 }
                 Effect::Status(s) => {
                     self.shared.shell_log("status", json!({"status": s}));
+                    if let Some(l) = &self.shared.status_log {
+                        l.lock().unwrap().line(&json!({"t": wall_ms(), "status": s}).to_string());
+                    }
                     *self.shared.status.lock().unwrap() = s.clone();
                     self.host.status(&s);
                 }
                 Effect::Stopped => self.shared.shell_log("stopped", json!({})),
+                Effect::Crashed { code, signal, hung } => {
+                    if let Some((dir, build)) = &self.config.crash_reports {
+                        let r = crate::crash::runtime_exited(build, code, signal, hung);
+                        if let Err(e) = crate::crash::spool(dir, &r) {
+                            self.shared.shell_log("crash report not written", json!({"error": e.to_string()}));
+                        }
+                    }
+                }
             }
         }
     }

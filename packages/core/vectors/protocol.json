@@ -2976,6 +2976,252 @@
       }
     },
     {
+      "schema": "VersionStatusParams",
+      "name": "version.status: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "VersionStatusParams",
+      "name": "version.status: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "VersionStatusResult",
+      "name": "version.status: ok",
+      "valid": true,
+      "value": {
+        "status": {
+          "verdict": {
+            "state": "ok",
+            "reason": null,
+            "unattended_allowed": true,
+            "interactive_allowed": true,
+            "min_version": null,
+            "message": null,
+            "url": null
+          },
+          "policy": {
+            "issued_at": 1767225600000,
+            "expires_at": 1769817600000,
+            "fetched_at": 1767225660000,
+            "source": "relay"
+          },
+          "checked_at": 1767225660000,
+          "last_error": null,
+          "version": "0.3.1",
+          "platform": "macos",
+          "channel": "stable"
+        }
+      }
+    },
+    {
+      "schema": "VersionStatusResult",
+      "name": "version.status: no status",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {}
+    },
+    {
+      "schema": "VersionCheckParams",
+      "name": "version.check: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "VersionCheckParams",
+      "name": "version.check: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "VersionCheckResult",
+      "name": "version.check: offline",
+      "valid": true,
+      "value": {
+        "status": {
+          "verdict": {
+            "state": "ok",
+            "reason": null,
+            "unattended_allowed": true,
+            "interactive_allowed": true,
+            "min_version": null,
+            "message": null,
+            "url": null
+          },
+          "policy": null,
+          "checked_at": 1767225660000,
+          "last_error": "offline",
+          "version": "0.3.1",
+          "platform": "macos",
+          "channel": "stable"
+        }
+      }
+    },
+    {
+      "schema": "DiagnosticsPreviewParams",
+      "name": "diagnostics.preview: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "DiagnosticsPreviewParams",
+      "name": "diagnostics.preview: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "DiagnosticsPreviewResult",
+      "name": "diagnostics.preview: two files",
+      "valid": true,
+      "value": {
+        "files": [
+          {
+            "name": "versions.json",
+            "bytes": 312,
+            "description": "Versions, OS and architecture"
+          },
+          {
+            "name": "logs/homerund.log",
+            "bytes": 48211,
+            "description": "Runtime and shell log, redacted"
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DiagnosticsPreviewResult",
+      "name": "diagnostics.preview: absolute name",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "files": [
+          {
+            "name": "/etc/passwd",
+            "bytes": 1,
+            "description": "x"
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DiagnosticsCreateParams",
+      "name": "diagnostics.create: chosen path",
+      "valid": true,
+      "value": {
+        "path": "/Users/ada/Desktop/homerun-diagnostics.zip"
+      }
+    },
+    {
+      "schema": "DiagnosticsCreateParams",
+      "name": "diagnostics.create: downloads",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "DiagnosticsCreateParams",
+      "name": "diagnostics.create: not a zip",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "path": "/Users/ada/Desktop/notes.txt"
+      }
+    },
+    {
+      "schema": "DiagnosticsCreateResult",
+      "name": "diagnostics.create: written",
+      "valid": true,
+      "value": {
+        "path": "/Users/ada/Downloads/homerun-diagnostics-2026-01-01.zip",
+        "bytes": 9120,
+        "files": [
+          {
+            "name": "versions.json",
+            "bytes": 312,
+            "description": "Versions, OS and architecture"
+          }
+        ]
+      }
+    },
+    {
+      "schema": "DiagnosticsCrashReportsGetParams",
+      "name": "diagnostics.crash_reports.get: empty",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "schema": "DiagnosticsCrashReportsGetParams",
+      "name": "diagnostics.crash_reports.get: null",
+      "valid": false,
+      "layer": "json_schema",
+      "value": null
+    },
+    {
+      "schema": "DiagnosticsCrashReportsGetResult",
+      "name": "diagnostics.crash_reports.get: off",
+      "valid": true,
+      "value": {
+        "settings": {
+          "available": true,
+          "enabled": false
+        }
+      }
+    },
+    {
+      "schema": "DiagnosticsCrashReportsGetResult",
+      "name": "diagnostics.crash_reports.get: not built in",
+      "valid": true,
+      "value": {
+        "settings": {
+          "available": false,
+          "enabled": false
+        }
+      }
+    },
+    {
+      "schema": "DiagnosticsCrashReportsGetResult",
+      "name": "diagnostics.crash_reports.get: missing enabled",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "settings": {
+          "available": true
+        }
+      }
+    },
+    {
+      "schema": "DiagnosticsCrashReportsSetParams",
+      "name": "diagnostics.crash_reports.set: on",
+      "valid": true,
+      "value": {
+        "enabled": true
+      }
+    },
+    {
+      "schema": "DiagnosticsCrashReportsSetParams",
+      "name": "diagnostics.crash_reports.set: string",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {
+        "enabled": "yes"
+      }
+    },
+    {
+      "schema": "DiagnosticsCrashReportsSetResult",
+      "name": "diagnostics.crash_reports.set: on",
+      "valid": true,
+      "value": {
+        "settings": {
+          "available": true,
+          "enabled": true
+        }
+      }
+    },
+    {
       "schema": "DevicesRenewApprovalKeyParams",
       "name": "devices.renew_approval_key: renewed",
       "valid": true,
@@ -3897,6 +4143,42 @@
     {
       "schema": "BrowserOpenNotification",
       "name": "browser.open: missing url",
+      "valid": false,
+      "layer": "json_schema",
+      "value": {}
+    },
+    {
+      "schema": "VersionChangedNotification",
+      "name": "version.changed: killed",
+      "valid": true,
+      "value": {
+        "status": {
+          "verdict": {
+            "state": "killed",
+            "reason": "killed",
+            "unattended_allowed": false,
+            "interactive_allowed": false,
+            "min_version": null,
+            "message": null,
+            "url": null
+          },
+          "policy": {
+            "issued_at": 1767225600000,
+            "expires_at": 1769817600000,
+            "fetched_at": 1767225660000,
+            "source": "relay"
+          },
+          "checked_at": 1767225660000,
+          "last_error": null,
+          "version": "0.3.1",
+          "platform": "macos",
+          "channel": "stable"
+        }
+      }
+    },
+    {
+      "schema": "VersionChangedNotification",
+      "name": "version.changed: missing status",
       "valid": false,
       "layer": "json_schema",
       "value": {}

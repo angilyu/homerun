@@ -275,6 +275,39 @@ describe("runtime status", () => {
     expect(list.store.get().error).toContain("didn't understand");
   });
 
+  test("the version gate loads on connect and follows version.changed (§11)", async () => {
+    const { t } = runtime();
+    const status = (state: string) => ({
+      verdict: { state, reason: state === "ok" ? null : "below_minimum", unattended_allowed: state === "ok", interactive_allowed: true, min_version: state === "ok" ? null : "2.0.0", message: null, url: null },
+      policy: null,
+      checked_at: null,
+      last_error: null,
+      version: "1.0.0",
+      platform: "macos",
+      channel: "stable",
+    });
+    t.handlers["version.status"] = () => ({ status: status("ok") });
+    const c = new AppClient(t, { env });
+    c.start();
+    t.ready();
+    await flush();
+    expect(c.version.get()?.verdict.state).toBe("ok");
+    t.notify("version.changed", { status: status("update_required") });
+    expect(c.version.get()?.verdict).toMatchObject({ state: "update_required", min_version: "2.0.0" });
+    t.notify("version.changed", { status: { nope: 1 } });
+    expect(c.version.get()?.verdict.state).toBe("update_required");
+  });
+
+  test("a runtime without the gate leaves it unknown", async () => {
+    const { t } = runtime();
+    const c = new AppClient(t, { env });
+    c.start();
+    t.ready();
+    await flush();
+    expect(t.called("version.status")).toHaveLength(1);
+    expect(c.version.get()).toBeNull();
+  });
+
   test("the digest notification is kept until read", () => {
     const { t } = runtime();
     const c = new AppClient(t, { env });

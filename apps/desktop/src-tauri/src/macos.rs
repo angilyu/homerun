@@ -24,8 +24,9 @@ mod imp {
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
     use objc2::{ffi, msg_send, sel, MainThreadMarker};
-    use objc2_app_kit::{NSAlert, NSAlertStyle, NSApplication, NSWorkspace, NSWorkspaceWillPowerOffNotification};
-    use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer};
+    use objc2_app_kit::{NSAlert, NSAlertStyle, NSApplication, NSSavePanel, NSWorkspace, NSWorkspaceWillPowerOffNotification};
+    use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer, NSURL};
+    use std::path::{Path, PathBuf};
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
@@ -119,6 +120,22 @@ mod imp {
         a.runModal() == 1000
     }
 
+    /// The diagnostic bundle's save panel (§11), starting in `dir`. The panel itself asks before
+    /// replacing a file. Main thread only; `None` when cancelled.
+    pub fn save_panel(dir: &Path, name: &str) -> Option<PathBuf> {
+        let mtm = MainThreadMarker::new()?;
+        activate(mtm);
+        let p = NSSavePanel::savePanel(mtm);
+        p.setNameFieldStringValue(&NSString::from_str(name));
+        p.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str(&dir.to_string_lossy()))));
+        p.setCanCreateDirectories(true);
+        // NSModalResponseOK
+        if p.runModal() != 1 {
+            return None;
+        }
+        p.URL()?.path().map(|s| PathBuf::from(s.to_string()))
+    }
+
     /// The CLI access prompt (§5.2), also used to link a device by code (§10.5): app-modal, so it shows with no window open. **Don't Allow**
     /// is the first button and gets Return; **Allow** has no key equivalent and needs a click. A
     /// timer in the common run-loop modes, which run inside `runModal`, closes it with no answer
@@ -155,7 +172,7 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    pub use crate::win::{ask_cli_access, confirm, install_quit_hook, launched_at_login, observe_power_off, powering_off};
+    pub use crate::win::{ask_cli_access, confirm, install_quit_hook, launched_at_login, observe_power_off, powering_off, save_panel};
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -177,6 +194,9 @@ mod imp {
     /// No prompt: the request expires unanswered.
     pub fn ask_cli_access(_p: &Prompt, _gone: Gone) -> Answer {
         Answer::Dismissed
+    }
+    pub fn save_panel(_dir: &std::path::Path, _name: &str) -> Option<std::path::PathBuf> {
+        None
     }
 }
 

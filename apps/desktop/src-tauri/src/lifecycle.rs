@@ -177,7 +177,7 @@ pub fn fallback_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
     Menu::with_items(app, &[&homerun, &edit, &window])
 }
 
-fn on_main<T: Send + 'static>(app: &AppHandle, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+pub(crate) fn on_main<T: Send + 'static>(app: &AppHandle, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     let (tx, rx) = mpsc::channel();
     app.run_on_main_thread(move || {
         let _ = tx.send(f());

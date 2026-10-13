@@ -1,4 +1,4 @@
-import type { Content, ScheduleSpec, ToolClass } from "@homerun/core";
+import type { Content, ScheduleSpec, ThreadEventOf, ToolClass } from "@homerun/core";
 
 /**
  * Text for people: times, money, schedules, tool calls. `Intl` only, so every client formats the
@@ -78,6 +78,18 @@ export function duration(ms: number): string {
   if (ms < MIN) return `${(ms / 1000).toFixed(1)} s`;
   if (ms < HOUR) return `${Math.floor(ms / MIN)} min ${Math.round((ms % MIN) / 1000)} s`;
   return `${Math.floor(ms / HOUR)} h ${Math.round((ms % HOUR) / MIN)} min`;
+}
+
+/** A `schedule.skipped` line in a thread (§11): fires the minimum-version gate stopped. */
+export function skippedText(p: ThreadEventOf<"schedule.skipped">["payload"]): string {
+  const n = p.count === 1 ? "A scheduled run was" : `${p.count} scheduled runs were`;
+  const why =
+    p.reason === "killed"
+      ? "scheduled runs are paused on this version of Homerun"
+      : p.reason === "blocked_version"
+        ? "this version of Homerun has a known problem"
+        : "this version of Homerun is no longer supported";
+  return `${n} skipped because ${why}. Update Homerun to resume them.`;
 }
 
 /** "Every 15 minutes", "Every hour", "Cron 0 9 * * 1-5 (Europe/Paris)". */

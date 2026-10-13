@@ -107,6 +107,46 @@ pub fn reveal_logs(shell: State<'_, Arc<Shell>>) -> Res<()> {
     reveal(&p)
 }
 
+/// Settings → *Create diagnostic bundle* (§11): `choose` opens the native save panel (in
+/// Downloads); otherwise the runtime names it in Downloads. Only the shell may ask the runtime to
+/// write a file. `null` when the user cancelled the panel.
+#[tauri::command]
+pub async fn diagnostics_save(app: AppHandle, shell: State<'_, Arc<Shell>>, choose: bool) -> Res<Option<Value>> {
+    let s = shell.inner().clone();
+    let chosen = if choose {
+        let home = homerun_shell_core::dirs::home(cfg!(windows), |k| std::env::var_os(k)).unwrap_or_default();
+        let downloads = home.join("Downloads");
+        let dir = if downloads.is_dir() { downloads } else { home };
+        let picked =
+            blocking(move || Ok(lifecycle::on_main(&app, move || crate::macos::save_panel(&dir, homerun_shell_core::diagnostics::SUGGESTED_NAME)).flatten()))
+                .await?;
+        match picked {
+            None => return Ok(None),
+            some => some,
+        }
+    } else {
+        None
+    };
+    blocking(move || {
+        let conn = s.rt.shell();
+        // The panel asked before replacing a file of the chosen name.
+        let r = homerun_shell_core::diagnostics::save(conn.as_deref().map(|c| c as &dyn ShellCalls), chosen.as_deref(), chosen.is_some())?;
+        if let Some(p) = r["path"].as_str() {
+            *s.last_bundle.lock().unwrap() = Some(p.into());
+        }
+        Ok(Some(r))
+    })
+    .await
+}
+
+/// The bundle just saved, in Finder (Explorer on Windows). Only that path: the webview never
+/// names one.
+#[tauri::command]
+pub fn diagnostics_reveal(shell: State<'_, Arc<Shell>>) -> Res<()> {
+    let p = shell.last_bundle.lock().unwrap().clone().ok_or_else(|| ShellError::shell("No bundle saved yet."))?;
+    reveal(&p)
+}
+
 fn couldnt(e: impl std::fmt::Display) -> ShellError {
     ShellError::shell(format!("Couldn't open it: {e}"))
 }

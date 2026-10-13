@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { AccountDeleted, collapseId, newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope, WS_BEARER_PREFIX, WS_SUBPROTOCOL } from "@homerun/protocol";
+import { AccountDeleted, collapseId, verifySignedVersionPolicy, newMsgId, newPairingCode, offerTag, RELAY_PATHS, sealRaw, type SealedEnvelope, WS_BEARER_PREFIX, WS_SUBPROTOCOL } from "@homerun/protocol";
 import { testAppAttestCA } from "@homerun/protocol/testing";
 import { fakeDeviceToken, type ApnsMock, type OidcIssuer } from "@homerun/testkit";
-import { b64, type Conn, instruction, pushBody, sessionId, statement, type Target, TestDevice } from "./helpers";
+import { b64, type Conn, instruction, pushBody, sessionId, statement, type Target, TestDevice, VERSION_POLICY } from "./helpers";
 
 /**
  * The relay's behaviour, black box, on whichever host `ctx` provides (Bun or workerd). Every
@@ -70,6 +70,30 @@ export function sharedScenarios(get: () => Ctx) {
       const c = get();
       const d = new TestDevice("desktop");
       await expect(d.connect(c.t, await c.issuer.mint({ foreignKey: true }))).rejects.toThrow();
+    });
+  });
+
+  describe("version policy (§11)", () => {
+    test("is public, cacheable, and exactly what was published", async () => {
+      const { t } = get();
+      const r = await fetch(t.url + RELAY_PATHS.versionPolicy);
+      expect(r.status).toBe(200);
+      expect(r.headers.get("cache-control")).toBe("public, max-age=300");
+      expect(r.headers.get("content-type")).toContain("application/json");
+      const text = await r.text();
+      expect(text).toBe(VERSION_POLICY.published);
+      expect(verifySignedVersionPolicy(JSON.parse(text), VERSION_POLICY.keys)).toEqual(VERSION_POLICY.policy as never);
+      // The relay holds no signing key: an envelope it serves verifies only against the compiled-in keys.
+      expect(verifySignedVersionPolicy(JSON.parse(text), {})).toBeNull();
+    });
+
+    test("needs no token, takes no writes, and the web client may read it", async () => {
+      const c = get();
+      expect((await fetch(c.t.url + RELAY_PATHS.versionPolicy, { method: "POST", body: "{}" })).status).toBe(404);
+      const r = await fetch(c.t.url + RELAY_PATHS.versionPolicy, { headers: { origin: c.webOrigin! } });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("access-control-allow-origin")).toBe(c.webOrigin!);
+      expect((await fetch(c.t.url + RELAY_PATHS.versionPolicy, { headers: { origin: "https://evil.example" } })).status).toBe(403);
     });
   });
 

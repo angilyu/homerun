@@ -87,6 +87,13 @@ The cached history stays readable. A message to a thread while the Mac is away i
 relay and says *Will send when your Mac is back — expires in 12 h* (§18 row 107). Questions and
 approvals say they can be answered when the Mac is back. New chats wait for the Mac (§18 row 128).
 
+## The version policy
+
+The app reads the relay's signed version policy for `ios` (§11, `src/version.ts` with the shared
+check in `packages/remote`) when it opens and at most hourly, verifies it, and keeps the last good
+one. Below the minimum, or stopped, it shows *Update Homerun* under the screen, with the policy's
+link. It fails open: offline or an invalid or expired policy changes nothing.
+
 ## Configuration
 
 What the app connects to is fixed when it is built, from the environment of `expo prebuild` and

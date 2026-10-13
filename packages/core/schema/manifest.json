@@ -22,6 +22,7 @@
       "run.cancelled",
       "run.end",
       "schedule.missed",
+      "schedule.skipped",
       "schedule.paused"
     ],
     "live_only": [
@@ -44,7 +45,8 @@
     "AUTHORITY_INSUFFICIENT": -32007,
     "HANDSHAKE_REQUIRED": -32008,
     "UNAVAILABLE": -32009,
-    "BUDGET_EXCEEDED": -32010
+    "BUDGET_EXCEEDED": -32010,
+    "VERSION_BLOCKED": -32011
   },
   "methods": {
     "hello": {
@@ -605,6 +607,81 @@
       "result": "CliSignOutResult",
       "description": "Revoke the token this connection authenticated with (`homerun logout`). The connection is closed after the reply."
     },
+    "version.status": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "VersionStatusParams",
+      "result": "VersionStatusResult",
+      "description": "The minimum-version gate: whether the signed version policy stops unattended runs (or chat) on this runtime, and why. `version.changed` reports changes."
+    },
+    "version.check": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev"
+      ],
+      "params": "VersionCheckParams",
+      "result": "VersionCheckResult",
+      "description": "Fetch the version policy now rather than at the next periodic check. Fails open: an unreachable relay leaves the cached policy in effect."
+    },
+    "diagnostics.preview": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev"
+      ],
+      "params": "DiagnosticsPreviewParams",
+      "result": "DiagnosticsPreviewResult",
+      "description": "The files a diagnostic bundle would contain, with their sizes, to show before saving. Nothing is written."
+    },
+    "diagnostics.create": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "cli",
+        "cli_dev"
+      ],
+      "params": "DiagnosticsCreateParams",
+      "result": "DiagnosticsCreateResult",
+      "description": "Write a redacted diagnostic bundle (versions, redacted logs, row counts, scheduler and relay state, the version policy) to a new zip. Nothing is uploaded. The webview asks the shell, which shows the save dialog."
+    },
+    "diagnostics.crash_reports.get": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "DiagnosticsCrashReportsGetParams",
+      "result": "DiagnosticsCrashReportsGetResult",
+      "description": "Whether crash reporting is built in, and whether the user turned it on."
+    },
+    "diagnostics.crash_reports.set": {
+      "direction": "to_runtime",
+      "preauth": false,
+      "callers": [
+        "shell",
+        "webview"
+      ],
+      "params": "DiagnosticsCrashReportsSetParams",
+      "result": "DiagnosticsCrashReportsSetResult",
+      "description": "Turn sending crash reports on or off. Off by default. Fails with VALIDATION_FAILED when this build has no crash-report endpoint."
+    },
     "account.status": {
       "direction": "to_runtime",
       "preauth": false,
@@ -870,6 +947,19 @@
       ],
       "params": "HealthDigestReadyNotification",
       "description": "The daily digest (§8.3) was generated. Also stored; `health.digest` recomputes any period."
+    },
+    "version.changed": {
+      "direction": "runtime_to_client",
+      "recipients": [
+        "shell",
+        "webview",
+        "cli",
+        "cli_dev",
+        "ios",
+        "web"
+      ],
+      "params": "VersionChangedNotification",
+      "description": "The minimum-version gate changed: a new policy, an expired one, or an update cleared it. Show or hide the banner."
     },
     "account.changed": {
       "direction": "runtime_to_client",

@@ -9,6 +9,8 @@ import { linkStatementBytes, signLinkStatement, verifyLinkStatement } from "../s
 import { ClientFrame, challengeBytes, requestBytes, ServerFrame, signChallenge, signRequest, verifySignature } from "../wire";
 import { attestationClientDataHash, IOS_APP_ID, verifyAssertion, verifyAttestation } from "../app-attest";
 import { approvalMessage, approvalRenewalClientDataHash, checkApprovalProof } from "../approval";
+import { ed25519Key } from "../crypto";
+import { signVersionPolicy, verifySignedVersionPolicy, versionPolicyBytes } from "../version-policy";
 import { identityOf, type VectorDeviceKeys } from "./fixtures";
 import { type CacophonyVector, verifyCacophony } from "./cacophony";
 
@@ -340,6 +342,24 @@ export async function verifyCacophonyVectors(v: Json): Promise<CaseResult[]> {
   return out;
 }
 
+export async function verifyVersionPolicyVectors(v: Json): Promise<CaseResult[]> {
+  const F = "version-policy.json";
+  const out: CaseResult[] = [];
+  for (const c of v.sign as Json[]) {
+    out.push(
+      await run(F, `sign: ${c.name}`, async () => {
+        const s = v.signers[c.signer];
+        if (toHex(versionPolicyBytes(c.signed.key_id, c.signed.body)) !== c.bytes) return "bytes differ";
+        return eq(await signVersionPolicy(c.policy, s.key_id, ed25519Key(fromHex(s.secret))), c.signed) ? undefined : "signature differs";
+      }),
+    );
+  }
+  for (const c of v.verify as Json[]) {
+    out.push(await run(F, `verify: ${c.name}`, () => (eq(verifySignedVersionPolicy(c.signed, c.keys), c.policy) ? undefined : "result differs")));
+  }
+  return out;
+}
+
 export const VERIFIERS: Record<string, (v: Json) => Promise<CaseResult[]>> = {
   "noise-cacophony.json": verifyCacophonyVectors,
   "sealed.json": verifySealedVectors,
@@ -352,6 +372,7 @@ export const VERIFIERS: Record<string, (v: Json) => Promise<CaseResult[]>> = {
   "encoding.json": verifyEncodingVectors,
   "app-attest.json": verifyAppAttestVectors,
   "approval.json": verifyApprovalVectors,
+  "version-policy.json": verifyVersionPolicyVectors,
 };
 
 /** Runs every verifier over the given files (name → parsed JSON). Missing files fail. */

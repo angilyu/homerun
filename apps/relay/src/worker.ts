@@ -7,6 +7,7 @@ import { AccountRelay, errorResponse, type RelaySocket, type SocketState } from 
 import { checkOrigin, parseWebOrigins, preflight, withCors } from "./core/cors";
 import { providerAdminFrom, type ProviderAdminConfig } from "./core/provider-admin";
 import { dropAll, type Sql, type SqlValue } from "./core/sql";
+import { versionPolicyResponse } from "./core/version-policy";
 
 /**
  * The relay on Cloudflare (§9.4): the Worker checks the access token at the edge and hands the
@@ -36,6 +37,12 @@ export interface Env extends ProviderAdminConfig {
    * decides pushes and lock-screen answers here; desktops verify attestations themselves (§13).
    */
   APP_ATTEST_TEST_ROOT?: string;
+  /**
+   * The signed version policy (§11), as `scripts/release/sign-policy.ts` writes it, served at
+   * /v1/version-policy. Published with `wrangler secret put VERSION_POLICY`, which takes effect
+   * without a deploy (README.md). Unset: 404, and clients fail open.
+   */
+  VERSION_POLICY?: string;
   // PROVIDER_ADMIN ("workos" or "none"), the secret WORKOS_API_KEY and, for tests, WORKOS_API_BASE:
   // who deletes the user at the identity provider when the account is deleted (§10.9).
 }
@@ -86,6 +93,7 @@ export default {
     if (!origin.ok) return errorResponse("forbidden", "this origin may not call the relay");
     if (req.method === "OPTIONS") return origin.origin ? preflight(origin.origin) : errorResponse("not_found", "no such endpoint");
     if (url.pathname === RELAY_PATHS.health) return withCors(Response.json({ ok: true }), origin.origin);
+    if (url.pathname === RELAY_PATHS.versionPolicy) return withCors(versionPolicyResponse(req, env.VERSION_POLICY), origin.origin);
     if (!env.OIDC_ISSUER) return errorResponse("internal", "the relay is not configured");
     const token = bearerToken(req);
     if (!token) return withCors(errorResponse("unauthenticated", "no access token"), origin.origin);

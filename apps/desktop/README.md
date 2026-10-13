@@ -93,6 +93,9 @@ signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
     - `cli_access.rs`: the access prompt's text (client, version and hostname are sanitised and
       shortened) and the queue that shows one prompt at a time;
     - `cli_tool.rs`: the `~/.local/bin/homerun` link, its status, install and remove.
+  - Milestone 11b's (§11): `crash.rs` (shell panics and runtime exits and hangs as scrubbed
+    crash reports in the runtime's spool) and `diagnostics.rs` (saving the bundle where the
+    user chose). `runtime.rs` also keeps `logs/supervisor.jsonl`, the status history.
   - Milestone 8b's (Windows): `transport.rs` (a Unix socket or a named pipe), `proc.rs` (a
     process group or a job object), `win/`, `dirs.rs`, and the Windows halves of `login.rs`,
     `notify.rs` and `token.rs`.
@@ -644,6 +647,33 @@ first release with each platform's secrets set, and again after changing a secre
    the release is a pre-release titled *(unsigned preview)* with no `latest.json`, and an
    installed signed build reports no update.
 
+## Version gate, crash reports and diagnostics (milestone 11b)
+
+The runtime does the work ([`apps/homerund`](../homerund/README.md#version-gate-crash-reports-and-diagnostics-11-milestone-11b));
+the desktop shows it (`src/screens/Diagnostics.tsx`).
+
+- **The banner.** When the version policy says this version must update or is stopped, every
+  screen shows a banner that stays until the policy changes or the app updates. It says
+  scheduled tasks and monitors are paused (and chat too, with `kill_interactive`), gives the
+  policy's message and link, and has **Update**, which checks with the updater; once the update
+  is downloaded it becomes **Restart to update**. Where the updater can't install (a manual
+  update, or none configured) it is **Download update**, which opens the policy's link. The digest and a thread's history show each skipped fire.
+- **Crash reports.** Onboarding and Settings → *Diagnostics* offer *Send crash reports*,
+  unchecked, only when the build has a DSN (`HOMERUND_SENTRY_DSN` at build time, passed by
+  `scripts/stage-sidecars.ts --release`). Without one the setting is hidden.
+- **Crashes the shell sees.** A shell panic, and a runtime exit or hang the supervisor sees,
+  are written to `crash-reports/` in the runtime's format, with the same allowlist. The runtime
+  sends them only if the user turned reports on. The panic hook writes the file and nothing
+  else.
+- **The diagnostic bundle.** Settings → *Diagnostics* → **Create diagnostic bundle** lists the
+  files and their sizes first. **Save…** opens the native save panel (`NSSavePanel`, or
+  `IFileSaveDialog` on Windows) at Downloads; the runtime writes the zip to the chosen path.
+  Nothing is uploaded.
+
+No crate or npm package was added. The shell enables `objc2-foundation`'s `NSURL` and
+`objc2-app-kit`'s `NSPanel` and `NSSavePanel` features, and `windows`'s `Win32_UI_Shell_Common`
+(`Cargo.lock` is unchanged; §18 row 150).
+
 ## Dependencies added in milestone 8
 
 Measured on aarch64-apple-darwin, normal edges:
@@ -903,3 +933,26 @@ to Pages: [`apps/web`](../web/README.md#deploying))
     Settings: the page says it was unlinked.
 
 **The iPhone app (milestone 10b)** continues at 37, in [`apps/ios`'s manual checks](../ios/README.md#manual-checks).
+
+**Version gate, crash reports and diagnostics (milestone 11b)** (a release build; the policy
+key and the Sentry project are a person's, design.md §11)
+47. **The real policy key.** On an offline machine, `bun scripts/release/sign-policy.ts keygen
+    --key <outside the repo>`; put the `pubkey` output in `VERSION_POLICY_KEYS`
+    (`packages/protocol`) and release. Sign a policy whose `min_version` is above the installed
+    version and publish it ([`apps/relay`](../relay/README.md#publishing-a-policy)).
+    Within an hour, or at once with `homerun status --check`, the banner appears, a monitor's
+    next fire is recorded as skipped with the reason, and chat still works. **Update** installs
+    the next version through the real updater, and the banner goes.
+48. **Kill and clear.** Publish `kill` for the installed version: the banner says it was stopped.
+    Publish a policy without it: the banner goes within an hour, with no restart. Turn Wi-Fi
+    off and restart Homerun: it keeps working with the last policy, and nothing is blocked once
+    that policy expires.
+49. **A real Sentry project.** In the project, turn off *Store client IP addresses* and keep
+    server-side data scrubbing on; build with `HOMERUND_SENTRY_DSN`. Leave *Send crash
+    reports* off and crash the runtime (`kill -SEGV` its pid): nothing reaches Sentry. Turn it
+    on and repeat: one event arrives, with type, frames, app, OS, arch, version and channel,
+    and no message, path under the home directory, prompt or task name.
+50. **The save panel.** **Create diagnostic bundle** → **Save…**: the panel opens at Downloads,
+    Cancel saves nothing, and saving writes the zip there. Open it: every file in the list is
+    there, and the logs show no key, prompt or path under the home directory. Repeat on
+    Windows.
