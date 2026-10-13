@@ -4,7 +4,9 @@ import {
   RPC_ERROR,
   RunState,
   TaskKind,
+  verdictMessage,
   type Run,
+  type VersionGateStatus,
 } from "@homerun/core";
 import { RpcCallError } from "@homerun/client";
 import { intOption } from "../args";
@@ -21,6 +23,7 @@ export async function status(x: Ctx, socketPath: string): Promise<number> {
   const ping = await c.call("ping", {});
   const { runs } = await c.call("runs.list", { states: [...ACTIVE_RUN_STATES], limit: 500 });
   const { requests } = await c.call("input.list_pending", {});
+  const gate = await versionGate(x);
   if (o.json) {
     o.value({
       socket: socketPath,
@@ -32,6 +35,7 @@ export async function status(x: Ctx, socketPath: string): Promise<number> {
       cli: { version: CLI_VERSION, build: BUILD_CHANNEL },
       active_runs: runs,
       pending_input: requests,
+      version_gate: gate,
     });
     return EXIT.OK;
   }
@@ -50,7 +54,35 @@ export async function status(x: Ctx, socketPath: string): Promise<number> {
     o.line(`  ${runs.length} active run${runs.length === 1 ? "" : "s"}: ${parts.map(([n, s]) => `${n} ${s}`).join(", ")}`);
   }
   if (requests.length) o.line(`  ${requests.length} input request${requests.length === 1 ? "" : "s"} pending ${k.dim("(homerun input list)")}`);
+  for (const l of gateLines(gate, k)) o.line(l);
   return EXIT.OK;
+}
+
+/** The minimum-version gate (§11); null from a runtime that predates it. `--check` fetches the policy first. */
+async function versionGate(x: Ctx): Promise<VersionGateStatus | null> {
+  try {
+    return (await x.c.call(x.values.check ? "version.check" : "version.status", {})).status;
+  } catch (e) {
+    if (e instanceof RpcCallError && e.code === RPC_ERROR.METHOD_NOT_FOUND) return null;
+    throw e;
+  }
+}
+
+export function gateLines(gate: VersionGateStatus | null, k: Ctx["o"]["c"]): string[] {
+  if (!gate) return [];
+  const v = gate.verdict;
+  const checked = gate.checked_at ? `checked ${ago(gate.checked_at)}` : "not checked yet";
+  if (v.state === "ok") {
+    const why = gate.last_error ? `; last check failed: ${gate.last_error}` : "";
+    return [k.dim(`  version ${gate.version} (${gate.channel}) may run tasks · policy ${checked}${why}`)];
+  }
+  const mark = v.state === "killed" ? k.red("■") : k.yellow("▲");
+  const lines = [`${mark} ${verdictMessage(v)}`];
+  if (!v.unattended_allowed) lines.push("  Scheduled tasks and monitors don't run until Homerun updates; each skipped run is in its thread's history.");
+  if (!v.interactive_allowed) lines.push("  Chat and Run now are paused too.");
+  if (v.url) lines.push(k.dim(`  ${v.url}`));
+  lines.push(k.dim(`  version ${gate.version} (${gate.channel}) · policy ${checked}`));
+  return lines;
 }
 
 // ---------------------------------------------------------------- threads

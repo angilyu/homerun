@@ -17,6 +17,7 @@ import { CliAccess } from "./access";
 import { helpText, parse, type Parsed, type Values } from "./args";
 import { BUILD_CHANNEL, CLI_VERSION, PEER_REQUIREMENT } from "./build";
 import * as access from "./commands/access";
+import * as diagnostics from "./commands/diagnostics";
 import * as input from "./commands/input";
 import * as records from "./commands/records";
 import * as scheduling from "./commands/scheduling";
@@ -66,6 +67,7 @@ const HANDLERS: Record<string, Handler> = {
   "grants add": input.grantsAdd,
   "grants revoke": input.grantsRevoke,
   blob: records.blob,
+  diagnostics: diagnostics.diagnostics,
 };
 
 const RELEASE_FLOW_SWITCHES = ["dev-token-store", "dev-skip-peer-check", "dev-peer-requirement", "dev-keychain"];
