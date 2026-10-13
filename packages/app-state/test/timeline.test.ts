@@ -112,6 +112,12 @@ describe("runs", () => {
     expect(v.active).toMatchObject({ run_id: RUN, state: "pending" });
   });
 
+  test("a fire the version gate skipped is a schedule line (§11)", () => {
+    const skipped = ev(3, "schedule.skipped", { schedule_id: "4f5a6b7c-8d9e-4f0a-9b1c-2d3e4f5a6b01", scheduled_for: 1, reason: "killed", count: 2, last_scheduled_for: 2 }, null);
+    const v = threadView(load([started(1), ended(2), skipped]));
+    expect(v.items.at(-1)).toMatchObject({ kind: "schedule", event: { type: "schedule.skipped", payload: { reason: "killed", count: 2 } } });
+  });
+
   test("the persisted part is derived once per events array", () => {
     const s = load([started(1), final(2, "m", "x")]);
     expect(threadView(s).items[0]).toBe(threadView(s).items[0]);

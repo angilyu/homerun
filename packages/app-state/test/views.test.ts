@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseMarkdown, plainText, safeHref } from "../src/markdown";
-import { ago, bytes, chatTitle, cronText, inTime, scheduleText, toolName, toolSummary, truncate, usd } from "../src/format";
+import { ago, bytes, chatTitle, cronText, inTime, scheduleText, skippedText, toolName, toolSummary, truncate, usd } from "../src/format";
 import { coverageRange, coverageSentence, monitorHealthText, summarizeCoverage } from "../src/monitors";
 import { checkSpec, getAt, issuesAt, newMonitorSpec, newSessionSpec, setAt } from "../src/tasks";
 import { activeGrants, grantText } from "../src/grants";
@@ -89,6 +89,16 @@ describe("monitor coverage (§8.4)", () => {
   test("health line", () => {
     const m = { task_id: "t", name: "n", enabled: false, paused_reason: "failures", succeeded: 11, failed: 1, changes: 1, missed_asleep: 2, missed_not_running: 0, skipped: 0, caught_up: 0, needs_attention: true };
     expect(monitorHealthText(m as never)).toBe("12 checks, 1 change, 1 failed, 2 missed while asleep, paused after failures");
+    expect(monitorHealthText({ ...m, skipped_by_version: 3 } as never)).toContain("3 skipped until Homerun updates");
+  });
+});
+
+describe("the minimum-version gate in history (§11)", () => {
+  test("a skipped fire says why and what to do", () => {
+    const one = skippedText({ schedule_id: "s" as never, scheduled_for: 1, reason: "below_minimum", count: 1 });
+    expect(one).toBe("A scheduled run was skipped because this version of Homerun is no longer supported. Update Homerun to resume them.");
+    expect(skippedText({ schedule_id: "s" as never, scheduled_for: 1, reason: "killed", count: 4, last_scheduled_for: 9 })).toStartWith("4 scheduled runs were skipped because scheduled runs are paused");
+    expect(skippedText({ schedule_id: "s" as never, scheduled_for: 1, reason: "blocked_version", count: 1 })).toContain("known problem");
   });
 });
 

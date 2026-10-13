@@ -5,6 +5,7 @@ import {
   duration,
   errorMessage,
   sentFromText,
+  skippedText,
   threadView,
   toolName,
   toolSummary,
@@ -389,6 +390,12 @@ function RunLine({ item }: { item: RunItem }) {
 function ScheduleLine({ item }: { item: ScheduleItem }) {
   const e = item.event;
   if (e.type === "schedule.paused") return <p className="event warn-text">{e.payload.detail}</p>;
+  if (e.type === "schedule.skipped")
+    return (
+      <p className="event warn-text">
+        {skippedText(e.payload)} <Time ts={e.payload.scheduled_for} />
+      </p>
+    );
   const p = e.payload;
   const why = p.reason === "asleep" ? "the Mac was asleep" : p.reason === "not_running" ? "Homerun wasn't running" : "the catch-up policy skipped them";
   const n = p.count === 1 ? "A scheduled check was" : `${p.count} scheduled checks were`;

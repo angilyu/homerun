@@ -120,7 +120,7 @@ export interface ScheduleItem {
   key: string;
   seq: number;
   ts: number;
-  event: ThreadEventOf<"schedule.missed"> | ThreadEventOf<"schedule.paused">;
+  event: ThreadEventOf<"schedule.missed"> | ThreadEventOf<"schedule.skipped"> | ThreadEventOf<"schedule.paused">;
 }
 
 export interface UnknownItem {
@@ -374,6 +374,7 @@ function derive(events: readonly StoredEvent[]): Derived {
         items.push(runItem(e));
         break;
       case "schedule.missed":
+      case "schedule.skipped":
       case "schedule.paused":
         items.push({ kind: "schedule", key: `seq:${e.seq}`, seq: e.seq, ts: e.ts, event: e });
         break;
