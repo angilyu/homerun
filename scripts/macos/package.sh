@@ -3,8 +3,10 @@
 #
 #   VERSION=0.0.2 scripts/macos/package.sh
 #
-# Env: VERSION (default 0.0.1), IDENTITY / SPIKE_KEYCHAIN / THIRD_PARTY (see sign.sh),
-#      NOTARY_PROFILE (optional; runs notarize.sh — needs the user's Apple account),
+# Env: VERSION (default: tauri.conf.json's; see apps/desktop/scripts/release/bump-version.ts),
+#      IDENTITY / SPIKE_KEYCHAIN / THIRD_PARTY / TEAM_ID / PROVISIONING_PROFILE (see sign.sh),
+#      NOTARY_PROFILE, or NOTARY_KEY + NOTARY_KEY_ID + NOTARY_ISSUER (optional; notarizes the app
+#      and the DMG with notarize.sh — needs the user's Apple account),
 #      OUT (output dir, default dist/macos/$VERSION; e.g. dist/macos/devid-$VERSION),
 #      NO_DMG=1 (skip the DMG).
 #   Remote access (§9, §10), all three or none; without them it shows as not configured:
@@ -28,10 +30,10 @@
 # from the signed (and notarized) app, not by the bundler.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-VERSION="${VERSION:-0.0.1}"
-OUT="${OUT:-$ROOT/dist/macos/$VERSION}"
 TAURI=(pnpm --dir "$ROOT/apps/desktop" exec tauri)
 BUN="$ROOT/node_modules/.bin/bun"
+VERSION="${VERSION:-$("$BUN" "$ROOT/apps/desktop/scripts/release/bump-version.ts")}"
+OUT="${OUT:-$ROOT/dist/macos/$VERSION}"
 
 PUBKEY=""
 if [[ -n "${UPDATER_KEY:-}" ]]; then
@@ -76,7 +78,9 @@ ditto "$ROOT/apps/desktop/src-tauri/target/release/bundle/macos/Homerun.app" "$O
 codesign --verify -R "=$REQ" "$OUT/Homerun.app/Contents/MacOS/homerund" \
   || { echo "the bundled homerund doesn't satisfy the CLI's requirement: $REQ" >&2; exit 1; }
 
-if [[ -n "${NOTARY_PROFILE:-}" ]]; then "$ROOT/scripts/macos/notarize.sh" "$OUT/Homerun.app"; fi
+NOTARIZE=0
+if [[ -n "${NOTARY_PROFILE:-}${NOTARY_KEY:-}" ]]; then NOTARIZE=1; fi
+if [[ "$NOTARIZE" == 1 ]]; then "$ROOT/scripts/macos/notarize.sh" "$OUT/Homerun.app"; fi
 
 if [[ -n "${UPDATER_KEY:-}" ]]; then
   "$ROOT/scripts/macos/updater-artifacts.sh" "$OUT/Homerun.app" "$VERSION" \
@@ -90,6 +94,6 @@ hdiutil create -quiet -volname "Homerun" -srcfolder "$STAGE" -ov -format UDZO "$
 rm -rf "$STAGE"
 if [[ "${IDENTITY:--}" == Developer\ ID* ]]; then
   codesign --force --sign "$IDENTITY" --timestamp "$OUT/Homerun.dmg"
-  [[ -n "${NOTARY_PROFILE:-}" ]] && { xcrun notarytool submit "$OUT/Homerun.dmg" --keychain-profile "$NOTARY_PROFILE" --wait; xcrun stapler staple "$OUT/Homerun.dmg"; }
+  if [[ "$NOTARIZE" == 1 ]]; then "$ROOT/scripts/macos/notarize.sh" "$OUT/Homerun.dmg"; fi
 fi
 ls -la "$OUT"

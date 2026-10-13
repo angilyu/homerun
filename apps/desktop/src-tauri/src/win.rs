@@ -14,6 +14,7 @@
 use crate::macos::Gone;
 use crate::power::{now_ms, PowerEvent};
 use homerun_shell_core::cli_access::{Answer, Prompt};
+use homerun_shell_core::cli_tool::{self, ToolStatus};
 use homerun_shell_core::login::{self, LoginItem};
 use homerun_shell_core::notify::{toast_tag, Permission, Post, Target};
 use homerun_shell_core::quit::Dialog;
@@ -26,7 +27,8 @@ use windows::core::{s, w, BOOL, HRESULT, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HANDLE, HWND, LPARAM, LRESULT, S_OK, WPARAM};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Registry::{
-    RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ,
+    RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_EXPAND_SZ, REG_ROUTINE_FLAGS, REG_SZ, RRF_NOEXPAND, RRF_RT_REG_BINARY,
+    RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ,
 };
 use windows::Win32::UI::Controls::{
     TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TASKDIALOG_FLAGS, TASKDIALOG_NOTIFICATIONS, TDCBF_CANCEL_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION, TDF_CALLBACK_TIMER,
@@ -298,7 +300,11 @@ fn reg_get(key: PCWSTR, name: &str, flags: REG_ROUTINE_FLAGS) -> Option<Vec<u8>>
 }
 
 fn reg_string(key: PCWSTR, name: &str) -> Option<String> {
-    let b = reg_get(key, name, RRF_RT_REG_SZ)?;
+    reg_string_as(key, name, RRF_RT_REG_SZ)
+}
+
+fn reg_string_as(key: PCWSTR, name: &str, flags: REG_ROUTINE_FLAGS) -> Option<String> {
+    let b = reg_get(key, name, flags)?;
     let units: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).take_while(|&u| u != 0).collect();
     Some(String::from_utf16_lossy(&units))
 }
@@ -340,6 +346,68 @@ pub fn login_set(on: bool) -> Result<LoginItem, String> {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The command-line tool (§5.2, §18 row 137): `<install dir>\bin` on the user's own Path
+
+const ENV_KEY: PCWSTR = w!("Environment");
+
+/// The user's `Path` as written, `%VARS%` unexpanded; "" when there is none.
+fn user_path() -> String {
+    reg_string_as(ENV_KEY, "Path", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND).unwrap_or_default()
+}
+
+fn set_user_path(v: &str) -> Result<(), String> {
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE};
+    let name = wide("Path");
+    let data = wide(v);
+    let r = unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, ENV_KEY, PCWSTR(name.as_ptr()), REG_EXPAND_SZ.0, Some(data.as_ptr().cast()), (data.len() * 2) as u32) };
+    if r != ERROR_SUCCESS {
+        return Err(format!("Windows refused to change your Path ({}).", r.0));
+    }
+    // New terminals started from Explorer pick it up; ones already open don't.
+    let env = wide("Environment");
+    unsafe {
+        SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, WPARAM(0), LPARAM(env.as_ptr() as isize), SMTO_ABORTIFHUNG, 2000, None);
+    }
+    Ok(())
+}
+
+fn cli_bin() -> Result<(std::path::PathBuf, bool), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let bin = exe.parent().ok_or("The app has no folder.")?.join(cli_tool::WIN_BIN_DIR);
+    let present = bin.join(cli_tool::WIN_CLI).is_file();
+    Ok((bin, present))
+}
+
+pub fn cli_status() -> Result<ToolStatus, String> {
+    let (bin, present) = cli_bin()?;
+    Ok(cli_tool::win_status(&bin, present, &user_path()))
+}
+
+pub fn cli_install() -> Result<ToolStatus, String> {
+    let (bin, present) = cli_bin()?;
+    let path = user_path();
+    match cli_tool::win_status(&bin, present, &path) {
+        ToolStatus::Unavailable { reason } => Err(reason),
+        s @ ToolStatus::Installed { .. } => Ok(s),
+        _ => {
+            set_user_path(&cli_tool::path_list::add(&path, &bin.to_string_lossy()))?;
+            cli_status()
+        }
+    }
+}
+
+/// Also what the uninstaller runs, as `homerun.exe --remove-cli-path`.
+pub fn cli_remove() -> Result<ToolStatus, String> {
+    let (bin, _) = cli_bin()?;
+    let path = user_path();
+    let next = cli_tool::path_list::remove(&path, &bin.to_string_lossy());
+    if next != path {
+        set_user_path(&next)?;
+    }
+    cli_status()
+}
+
+// ---------------------------------------------------------------------------------------------
 // Opening things
 
 /// A web or mail link, or an `ms-settings:` page, in its default handler. No shell parses it.
@@ -368,7 +436,7 @@ pub const NOTIFICATION_SETTINGS: &str = "ms-settings:notifications";
 // Toasts
 
 /// Toasts need an AppUserModelID Windows knows: an unpackaged app registers one under HKCU
-/// (the installer, milestone 11, adds a Start menu shortcut with the same ID).
+/// (the installer's Start menu shortcut carries the same ID, §18 row 137).
 fn register_app_id() {
     use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
     let key = wide(&format!("Software\\Classes\\AppUserModelId\\{APP_ID}"));
@@ -595,6 +663,21 @@ mod tests {
         let _ = unsafe { windows::Win32::System::Registry::RegDeleteKeyW(HKEY_CURRENT_USER, key) };
         assert_eq!(back.as_deref(), Some(login::run_command(Path::new("C:\\Program Files\\Homerun\\homerun.exe")).as_str()));
         assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn an_expandable_path_value_reads_back_unexpanded() {
+        use windows::Win32::System::Registry::{RegDeleteKeyW, RegDeleteTreeW};
+        let key = wide(&format!("Software\\Homerun-test-path-{}", std::process::id()));
+        let key = PCWSTR(key.as_ptr());
+        let name = wide("Path");
+        let data = wide(r"%USERPROFILE%\bin;C:\x");
+        let r = unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, key, PCWSTR(name.as_ptr()), REG_EXPAND_SZ.0, Some(data.as_ptr().cast()), (data.len() * 2) as u32) };
+        assert_eq!(r, ERROR_SUCCESS);
+        let back = reg_string_as(key, "Path", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND);
+        let _ = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, key) };
+        let _ = unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, key) };
+        assert_eq!(back.as_deref(), Some(r"%USERPROFILE%\bin;C:\x"));
     }
 
     #[test]

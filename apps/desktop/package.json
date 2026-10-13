@@ -17,6 +17,7 @@
     "build": "bun scripts/build.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.e2e-server.json",
     "test": "bun test test/components",
+    "test:release": "bun test test/release",
     "test:e2e": "bun scripts/build.ts --e2e && playwright test -c test/e2e/playwright.config.ts",
     "test:live": "bun scripts/build.ts --e2e && playwright test -c test/e2e/playwright.live.config.ts"
   },

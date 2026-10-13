@@ -288,7 +288,10 @@ function CliSection() {
 
 const PATH_HINT = 'export PATH="$HOME/.local/bin:$PATH"';
 
-/** A symlink in ~/.local/bin to the CLI inside this app; no admin rights (§5.2). */
+/**
+ * A symlink in ~/.local/bin to the CLI inside this app; no admin rights (§5.2). On Windows the
+ * "link" is the installed CLI's folder, put on the user's own Path (§18 row 137).
+ */
 function CliTool() {
   const app = useApp();
   const shell = useShell();
@@ -302,12 +305,13 @@ function CliTool() {
     </button>
   );
   if (!s) return null;
+  const windows = "link" in s && !s.link.startsWith("/");
   return (
     <div aria-label="Command-line tool" role="group">
       {s.state === "unavailable" && <p className="muted">{s.reason}</p>}
       {s.state === "not_installed" && (
         <p>
-          Use <code>homerun</code> in Terminal to ask about your tasks and monitors. {installButton("Install command-line tool")}
+          Use <code>homerun</code> in {windows ? "a terminal" : "Terminal"} to ask about your tasks and monitors. {installButton("Install command-line tool")}
         </p>
       )}
       {s.state === "installed" && (
@@ -319,7 +323,13 @@ function CliTool() {
             </button>
           </p>
           <p className="muted small">
-            If Terminal says <code>command not found</code>, add this line to <code>~/.zshrc</code>: <code>{PATH_HINT}</code>
+            {windows ? (
+              <>New terminal windows find it; ones already open don't.</>
+            ) : (
+              <>
+                If Terminal says <code>command not found</code>, add this line to <code>~/.zshrc</code>: <code>{PATH_HINT}</code>
+              </>
+            )}
           </p>
         </>
       )}

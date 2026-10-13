@@ -69,6 +69,17 @@ describe("Settings → Command-line access (§5.2)", () => {
     expect(shell.calls).toEqual(expect.arrayContaining(["installCliTool", "removeCliTool"]));
   });
 
+  test("on Windows the tool is a Path entry, and the zsh hint isn't shown", async () => {
+    const shell = new FakeShell();
+    const bin = "C:\\Users\\me\\AppData\\Local\\Programs\\Homerun\\bin";
+    shell.tool = { state: "installed", link: bin };
+    await renderApp({ shell, t: cliTransport(), route: { name: "settings" } });
+    const s = await section();
+    await within(s).findByText(bin);
+    within(s).getByText("New terminal windows find it; ones already open don't.");
+    expect(within(s).queryByText(/zshrc/)).toBeNull();
+  });
+
   test("a link to another copy or a deleted one can be pointed here", async () => {
     const shell = new FakeShell();
     shell.tool = { state: "other_copy", link: "/Users/me/.local/bin/homerun", target: "/Users/me/Downloads/Homerun.app/Contents/MacOS/homerun-cli" };

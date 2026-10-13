@@ -52,7 +52,7 @@ rebuild is a new code identity and the keychain would ask again each time. Usefu
 | `HOMERUN_KEYSTORE=keychain` | Debug builds: use the real keychain |
 | `HOMERUN_RUNTIME` | Debug builds: run this `homerund` instead of the bundled one |
 
-Update-test builds (`UPDATER_ENDPOINT`, see "Releasing an update") also honour a few `HOMERUN_TEST_*`
+Update-test builds (`UPDATER_ENDPOINT`, see "Releasing") also honour a few `HOMERUN_TEST_*`
 switches, which `scripts/macos/update-test.sh` sets. A release build ignores them: the
 test flag is compiled into the bundle's config, not read from the environment.
 
@@ -60,7 +60,7 @@ test flag is compiled into the bundle's config, not read from the environment.
 (`scripts/macos/fetch-toolchain.sh`), compiles the release CLI (below), builds the app, and signs
 it inside out. By default it
 signs ad hoc (`IDENTITY=-`, see `scripts/macos/sign.sh`), then makes a DMG in
-`dist/macos/<version>/`. It has been tried on Apple silicon only. Notarized distribution is milestone 11 (§11).
+`dist/macos/<version>/`. It has been tried on Apple silicon only. Notarized releases are built in CI ([Releasing](#releasing-milestone-11a)).
 
 ## Layout
 
@@ -289,8 +289,9 @@ A release build has the relay and identity provider compiled into `homerund`; se
 
 The same app on Windows (§16 row 8b): the shell, the runtime and the UI are shared, and
 what differs is behind `cfg(windows)` in the shell and `process.platform` in the runtime and
-the CLI. It builds and passes its tests on `windows-latest`; it isn't signed or packaged yet
-(milestone 11, §18 row 70).
+the CLI. It builds and passes its tests on `windows-latest`. Releases add a signed per-user NSIS
+installer and the updater (milestone 11a, [Releasing](#releasing-milestone-11a), §18 rows
+136–138).
 
 ```sh
 pnpm install
@@ -315,7 +316,9 @@ tool needs Git for Windows at its default location; without it every `Bash` call
 | Notifications | `UNUserNotificationCenter` | WinRT toasts under the AppUserModelID `com.angilyu.homerun`, registered in `HKCU` |
 | Dialogs | `NSAlert` | Task dialogs; the CLI access prompt defaults to *Don't Allow* and denies if it can't be shown (§18 row 66) |
 | Data dir | `~/Library/Application Support/Homerun` | `%LOCALAPPDATA%\Homerun` (§18 row 68) |
-| Updates, CLI tool | Signed updater; `~/.local/bin/homerun` | Not yet (milestone 11): both show as unavailable (§18 rows 67, 70) |
+| Install | DMG, drag to Applications | Per-user NSIS installer into `%LOCALAPPDATA%\Programs\Homerun`, no admin; a Start menu shortcut carrying the AppUserModelID (§18 row 137) |
+| Updates | Signed updater, `.app.tar.gz` | Signed updater; the payload is the installer, run with `/UPDATE` (§18 row 138) |
+| CLI tool | `~/.local/bin/homerun`, a link | The installer puts it at `bin\homerun.exe`; *Install command-line tool* adds `bin` to the user's `Path`, and uninstalling removes it (§18 row 137) |
 
 The Win32 code is `src/win.rs` in the Tauri crate (the counterpart of `macos.rs`, `power.rs`,
 `login_item.rs`, `notifications.rs` and `keychain.rs`'s AppKit and Security code), and
@@ -333,13 +336,14 @@ dependencies.
 suites) and `windows-shell` (`cargo test -p homerun-shell-core`) on `windows-latest`, about 2
 minutes each. Nightly, `desktop-windows` runs the Tauri crate's tests (a Credential Manager round
 trip, the registry reads, the sleep and wake registration) and a release build without a
-bundle.
+bundle. Releases build, sign and install-test the installer on `windows-latest` ([Releasing](#releasing-milestone-11a)).
 
 ### Windows manual checks
 
-These need a person at a Windows desktop session; CI has none. Use a release build
-(`tauri build --no-bundle`, then `src-tauri\target\release\homerun.exe`), since debug builds
-keep the key in memory and don't offer Open at login.
+These need a person at a Windows desktop session; CI has none. Use a release build, installed
+from a release's setup `.exe` or built with `tauri build --no-bundle` (then
+`src-tauri\target\release\homerun.exe`), since debug builds keep the key in memory and don't
+offer Open at login.
 
 1. Onboarding saves a key. Credential Manager → Windows Credentials lists
    `com.angilyu.homerun/anthropic_api_key`, and after a restart the key is read without asking.
@@ -368,36 +372,198 @@ keep the key in memory and don't offer Open at login.
 10. Remote access: steps 28–32 of the macOS checks, with Credential Manager instead of Keychain
     Access (`com.angilyu.homerun/refresh_token`) and a task dialog instead of the alert.
 
-## Releasing an update
+## Releasing (milestone 11a)
 
-The manifest and payload are hosted on GitHub Releases:
-`https://github.com/angilyu/homerun/releases/latest/download/latest.json`.
+Releases are built in CI by [`.github/workflows/release.yml`](../../.github/workflows/release.yml)
+(§11, §18 rows 132–141). It builds:
 
-**The signing key.** It is made once, outside the repo, with a passphrase:
+- **macOS, Apple silicon:** `Homerun_<v>_aarch64.dmg`, with the updater payload
+  `Homerun_<v>_aarch64.app.tar.gz` and its `.sig`. It runs `scripts/macos/package.sh`, `verify.sh`
+  and `updater-artifacts.sh`. There's no Intel or universal build (§18 row 133).
+- **Windows x64:** `Homerun_<v>_x64-setup.exe`, the per-user NSIS installer. The installer is also
+  the updater payload, signed as `.sig`.
+- `latest.json` for both platforms, and `SHA256SUMS` over every asset.
+
+It publishes them as a GitHub release. The updater reads
+`https://github.com/angilyu/homerun/releases/latest/download/latest.json`, and GitHub's *latest*
+skips drafts and pre-releases.
+
+**Cutting a release.** The version lives in `src-tauri/tauri.conf.json`. `bump-version.ts`
+copies it to the Cargo manifests, `Cargo.lock` and `package.json` (§18 row 139):
+
+```sh
+bun apps/desktop/scripts/release/bump-version.ts 0.9.0     # set it everywhere
+git commit -am "Release 0.9.0" && git tag v0.9.0
+git push origin main v0.9.0                                # the tag starts release.yml
+```
+
+- The workflow fails unless the tag matches every file (`bump-version.ts --check v0.9.0`).
+- A tag with a suffix (`v0.9.0-rc.1`) is published as a pre-release.
+- **To try the pipeline,** run the workflow from the Actions tab (*Run workflow*) on any branch,
+  with the version that's in the files. It builds everything and publishes a **draft** release,
+  which only collaborators can see and which creates no tag. Delete the draft when done: a second
+  run for the same version fails while it exists.
+
+**Signing is driven by secrets.** Each platform checks its own secrets:
+
+| Secrets present | Result |
+|---|---|
+| All of a platform's code-signing secrets | It is signed; macOS is also notarized and stapled |
+| None | An unsigned build: ad hoc on macOS, unsigned on Windows, named `…-unsigned…` |
+| Some | The job fails and names the missing ones |
+
+A platform is offered as an update, with an entry in `latest.json`, only when three things hold:
+it is signed, `TAURI_SIGNING_PRIVATE_KEY` is set, and `tauri.conf.json` has a real updater public
+key. A release with no entries has no `latest.json`. It is published as a pre-release titled
+*vX.Y.Z (unsigned preview)*, and its notes say how to open an unsigned build. So an installed app
+is never offered an unsigned build (§18 row 134). Today no secrets are set, so a tag builds an
+unsigned preview.
+
+The workflow never echoes a secret:
+
+- the keychain password is masked;
+- keys are written under `$RUNNER_TEMP` with mode 0600 and removed in an `always()` step;
+- the Windows credentials are read only by the signing client.
+
+It uses no caches, so nothing from another branch reaches a signed build (§18 row 132).
+
+### Secrets
+
+Add these under the repository's Settings → Secrets and variables → Actions → *Secrets*.
+(Use an environment with required reviewers instead if more people get write access.)
+
+| Secret | What |
+|---|---|
+| `APPLE_CERTIFICATE_P12_BASE64` | The Developer ID Application certificate and its private key, as a base64 `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | That `.p12`'s export password |
+| `APPLE_TEAM_ID` | The 10-character Team ID (`NMJBY8WL8T`) |
+| `APPLE_PROVISIONING_PROFILE_BASE64` | The Developer ID provisioning profile for `com.angilyu.homerun`, base64 |
+| `APP_STORE_CONNECT_API_KEY_P8_BASE64` | An App Store Connect API key (`AuthKey_….p8`), base64 |
+| `APP_STORE_CONNECT_KEY_ID` | That key's ID |
+| `APP_STORE_CONNECT_ISSUER_ID` | The issuer ID shown above the keys |
+| `AZURE_TENANT_ID` | The Entra tenant of the signing app registration |
+| `AZURE_CLIENT_ID` | The app registration's client ID |
+| `AZURE_CLIENT_SECRET` | A client secret of that registration |
+| `AZURE_TRUSTED_SIGNING_ENDPOINT` | The Artifact Signing account's region endpoint, e.g. `https://eus.codesigning.azure.net/` |
+| `AZURE_TRUSTED_SIGNING_ACCOUNT` | The Artifact Signing account name |
+| `AZURE_TRUSTED_SIGNING_PROFILE` | Its certificate profile name |
+| `TAURI_SIGNING_PRIVATE_KEY` | The updater's minisign secret key: the whole content of `updater.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Its passphrase |
+
+The first seven are macOS's, and the six `AZURE_*` are Windows'. The last two sign updates on both
+platforms. These optional repository *variables* are baked into `homerund` as `package.sh`
+does: `HOMERUND_RELAY_URL`, `HOMERUND_OIDC_ISSUER` and `HOMERUND_OIDC_CLIENT_ID` (remote access,
+§10.4). Without them, the release says that remote access isn't set up.
+
+**Apple: the Developer ID certificate.**
+
+1. In Keychain Access, under *My Certificates*, find *Developer ID Application: Wenjing Yu
+   (NMJBY8WL8T)*. If there isn't one, create it in Xcode → Settings → Accounts → Manage
+   Certificates → **+** → *Developer ID Application*. That needs the Account Holder role.
+2. Expand it, so the private key is included. Right-click → *Export 2 items…* → `.p12`, with a
+   strong password.
+3. Store it:
+   ```sh
+   base64 -i DeveloperID.p12 | gh secret set APPLE_CERTIFICATE_P12_BASE64
+   gh secret set APPLE_CERTIFICATE_PASSWORD     # paste the password
+   gh secret set APPLE_TEAM_ID --body NMJBY8WL8T
+   ```
+4. Then delete the `.p12` file.
+
+`scripts/macos/ci-keychain.sh` imports it into a throwaway keychain with a random password. It runs
+`set-key-partition-list` on that keychain (§11) and deletes it at the end of the job. The job fails
+unless the `.p12` holds exactly one *Developer ID Application* identity.
+
+**Apple: the provisioning profile.** This is the one `sign.sh` embeds for the
+`keychain-access-groups` entitlement (§11):
+
+1. Go to developer.apple.com → Certificates, Identifiers & Profiles → Profiles → **+** →
+   *Developer ID*, for App ID `com.angilyu.homerun` and the certificate above. Or reuse the one
+   for local builds.
+2. Store it:
+   ```sh
+   base64 -i Homerun.provisionprofile | gh secret set APPLE_PROVISIONING_PROFILE_BASE64
+   ```
+
+**Apple: the App Store Connect API key, for notarization.**
+
+1. Go to App Store Connect → Users and Access → Integrations → App Store Connect API → *Team
+   Keys* → **+**, with the *Developer* access.
+2. Download `AuthKey_<KEYID>.p8`. You can download it only once.
+3. Store it:
+   ```sh
+   base64 -i AuthKey_<KEYID>.p8 | gh secret set APP_STORE_CONNECT_API_KEY_P8_BASE64
+   gh secret set APP_STORE_CONNECT_KEY_ID --body <KEYID>
+   gh secret set APP_STORE_CONNECT_ISSUER_ID --body <issuer UUID shown above the list>
+   ```
+
+`notarize.sh` calls `notarytool submit --key … --key-id … --issuer …` for the app and then the DMG,
+and staples both. No Apple ID password or keychain profile is used in CI. Locally,
+`NOTARY_PROFILE` still works.
+
+**Windows: Azure Artifact Signing** (formerly Trusted Signing; §18 row 136).
+
+1. In an Azure subscription, register the `Microsoft.CodeSigning` resource provider.
+2. Create an *Artifact Signing account* in a supported region. Its endpoint is that region's, for
+   example `https://eus.codesigning.azure.net/`.
+3. In the account, complete *Identity validation*: Public, as an individual or an organization.
+   This can take days.
+4. Then create a *Certificate profile* of type *Public Trust*.
+5. In Entra ID → App registrations, create one (e.g. `homerun-release-signing`) and add a client
+   secret.
+6. On the certificate profile → Access control (IAM), give that registration the role *Artifact
+   Signing Certificate Profile Signer* (formerly *Trusted Signing Certificate Profile Signer*).
+7. Store the six `AZURE_*` secrets.
+
+`scripts/windows/signing-setup.ps1` downloads the signing client from NuGet, pinned by version and
+sha256, and finds the SDK's `signtool`. `scripts/windows/sign.ps1` is Tauri's
+`bundle.windows.signCommand`. It signs and timestamps one file, then verifies it. Tauri calls it
+for:
+
+- the shell;
+- each sidecar that isn't already signed (`claude.exe` keeps Anthropic's signature if it has one);
+- NSIS's plug-ins, the uninstaller and the installer.
+
+`homerund.exe` is signed first, before its hash is compiled into the CLI (§18 row 136). Any other
+Authenticode signer can stand in, such as an EV certificate on a cloud HSM: replace `sign.ps1`'s
+`signtool` arguments and the `AZURE_*` checks in `scripts/release/signing-status.sh`.
+
+**The updater key.** It is made once, outside the repo, with a passphrase:
 
 ```sh
 mkdir -p ~/.homerun-release && chmod 700 ~/.homerun-release
 pnpm --dir apps/desktop exec tauri signer generate -w ~/.homerun-release/updater.key
-security add-generic-password -s homerun-updater-key -a passphrase -w   # prompts for it
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.homerun-release/updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD           # paste the passphrase
+security add-generic-password -s homerun-updater-key -a passphrase -w   # for local signing; prompts
 ```
 
 - Keep a copy of the key and passphrase in your password manager.
-- Put the public half (`updater.key.pub`) in `src-tauri/tauri.conf.json` →
-  `plugins.updater.pubkey`, replacing the placeholder.
 - The private key never goes in the repo, CI logs or chat. `scripts/check-no-secrets.sh` flags
-  minisign secret keys and `*.key` files. CI signing is milestone 11.
+  minisign secret keys and `*.key` files.
 
-**A release.**
+**Swapping in the public key** (§18 row 141). `plugins.updater.pubkey` in
+`src-tauri/tauri.conf.json` is the placeholder `HOMERUN_UPDATER_PUBKEY_NOT_SET` until you replace
+it with the one line in `updater.key.pub`. Then commit it in its own reviewed change.
+
+- Until then, every build refuses updates, and the workflow puts nothing in `latest.json`.
+- After it, `latest-json.ts merge` verifies each entry against that key, for that version, over a
+  file in the release. The release fails if the key in the secrets doesn't match (§18 row 140).
+- The first build with the real key can't be reached by an update, because older builds refuse
+  every update. Install it by hand once.
+- Rotating the key later needs a release signed with the old key that carries the new one. Its
+  `latest.json` sets `homerun.min_update_from` to send older installs to the download page.
+
+**Local releases** still work, for a Mac only:
 
 ```sh
-UPDATER_KEY=~/.homerun-release/updater.key VERSION=0.9.0 \
-  IDENTITY="Developer ID Application: …" TEAM_ID=… PROVISIONING_PROFILE=… \
-  NOTARY_PROFILE=homerun-notary scripts/macos/package.sh
-gh release create v0.9.0 dist/macos/0.9.0/{Homerun.dmg,Homerun.app.tar.gz,Homerun.app.tar.gz.sig,latest.json}
+UPDATER_KEY=~/.homerun-release/updater.key IDENTITY="Developer ID Application: …" TEAM_ID=… \
+  PROVISIONING_PROFILE=… NOTARY_PROFILE=homerun-notary scripts/macos/package.sh
 ```
 
-- `package.sh` signs the payload with `scripts/macos/updater-artifacts.sh`, which reads the
-  passphrase from the keychain and refuses a key inside the repo.
+- `package.sh` signs the payload with `scripts/macos/updater-artifacts.sh`. That script reads the
+  passphrase from `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` or the keychain, and refuses a key inside
+  the repo.
 - `MIN_UPDATE_FROM`, `PROTOCOL_MIN` and `NOTES` fill in `latest.json`.
 
 **The update test.** `scripts/macos/update-test.sh [adhoc|devid]` builds 0.90.0 and 0.90.1 with
@@ -415,10 +581,71 @@ API in place of the model, and checks:
    - a busy run holds `PreventUserIdleSystemSleep` through a `caffeinate` child of `homerund`;
    - the assertion goes when the run ends, and when `homerund` is killed.
 
-It takes about 4 minutes, and the ad-hoc variant runs nightly. `devid` keeps its mock key under a separate keychain service,
-`com.angilyu.homerun.update-test`, never the real item. That item holds only the mock key and
-can stay; the `security` CLI can't see data-protection items, so remove it with Keychain Access
-if you want.
+It takes about 4 minutes, and the ad-hoc variant runs nightly. `devid` takes `DEVID_IDENTITY`,
+`TEAM_ID` and `PROVISIONING_PROFILE` from the environment. It keeps its mock key under a separate
+keychain service, `com.angilyu.homerun.update-test`, never the real item. That item holds only
+the mock key and can stay; the `security` CLI can't see data-protection items, so remove it with
+Keychain Access if you want. The test never touches GitHub. An update from one published release
+to the next is checked by hand (*First signed release*, below).
+
+**What CI checks on each release.**
+
+- **macOS:** `verify.sh` on the app. When signed, it also checks:
+  - `spctl` on the app and the DMG;
+  - `stapler validate` on both;
+  - that `claude` still carries Anthropic's Developer ID signature, not ours.
+- **Windows:** `scripts/windows/install-test.ps1` runs the installer silently for the runner's
+  user, then checks:
+  - the program folder, the uninstall entry under `HKCU`, and the Start menu shortcut with its
+    AppUserModelID;
+  - that the CLI trusts the installed `homerund.exe`;
+  - when signed, every exe's Authenticode signature;
+  - that the app starts and the CLI reaches it;
+  - that an `/UPDATE` reinstall keeps the CLI and its `Path` entry;
+  - that a silent uninstall leaves nothing behind.
+- There is no packaging run on pull requests: a release build takes tens of minutes per platform.
+  The dispatch draft is the dry run (§18 row 132).
+
+### First signed release
+
+These need a person, real accounts, or a clean machine, so CI can't do them. Do them once, on the
+first release with each platform's secrets set, and again after changing a secret.
+
+1. **The draft.** Dispatch `release.yml` for the current version. Both jobs say
+   `signed=true updates=true`. The draft's title has no *unsigned*, and it lists the DMG, the
+   `.app.tar.gz` and its `.sig`, the setup `.exe` and its `.sig`, `latest.json` and `SHA256SUMS`.
+   `latest.json` has `darwin-aarch64` and `windows-x86_64`, and `shasum -a 256 -c SHA256SUMS`
+   passes on the downloads.
+2. **macOS, a clean Mac or VM** (§11, *Release pipeline facts*):
+   - Download the DMG with a browser, so it is quarantined, and open it. Gatekeeper shows only
+     *"downloaded from the Internet"*, naming Developer ID *Wenjing Yu*.
+   - Drag Homerun to Applications and open it. Onboarding saves a key with no keychain prompt.
+   - `codesign -dvv /Applications/Homerun.app/Contents/MacOS/claude` names Anthropic.
+3. **Windows, a clean PC or VM:**
+   - Download the setup `.exe` with Edge. SmartScreen may still warn while the certificate builds
+     reputation (§11). *More info* names the publisher from the Artifact Signing profile, not
+     *Unknown publisher*.
+   - The installer asks for no administrator rights and installs into
+     `%LOCALAPPDATA%\Programs\Homerun`.
+   - The Start menu has *Homerun*, and toasts name *Homerun* with its icon (the shortcut carries
+     their AppUserModelID). Then the [Windows manual checks](#windows-manual-checks) on the
+     installed app.
+   - Properties → Digital Signatures on `homerun.exe`, `homerund.exe` and `bin\homerun.exe` shows
+     a valid signature.
+4. **Command-line tool on Windows.** In Settings, *Install command-line tool* puts `bin` on your
+   Path. In a new terminal, `homerun status` asks for access, and the task dialog appears.
+   *Remove* takes `bin` off the Path; installing it again, then uninstalling Homerun, takes it off
+   too.
+5. **Open at login on Windows.** The installer leaves it off. Turn it on in Settings, then
+   uninstall: the `HKCU\…\Run` value `Homerun` is gone.
+6. **An update.** Publish the draft, then tag the next patch version and let it publish. On
+   both platforms, the installed first release finds it within 60 s of launch, and *Restart now*
+   installs it. Homerun reopens as the new version, with the same key and no prompt. A run that
+   was waiting on a question is still waiting. On Windows the update shows NSIS's progress
+   window only, and the CLI on Path still works.
+7. **An unsigned preview is never offered.** Remove one platform's secrets, dispatch, publish:
+   the release is a pre-release titled *(unsigned preview)* with no `latest.json`, and an
+   installed signed build reports no update.
 
 ## Version gate, crash reports and diagnostics (milestone 11b)
 

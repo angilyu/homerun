@@ -49,7 +49,8 @@ export type UpdateState =
 
 /**
  * The `homerun` link in ~/.local/bin (§5.2). "unavailable" in a development build or an app that
- * must be moved to Applications first; "foreign" is something else by that name, left alone.
+ * must be moved to Applications first; "foreign" is something else by that name, left alone. On
+ * Windows `link` is the installed CLI's `bin` folder, and installing puts it on the user's Path.
  */
 export type CliToolStatus =
   | { state: "unavailable"; reason: string }
@@ -96,7 +97,7 @@ export interface ShellApi {
   restartToUpdate(): Promise<void>;
   setAutoUpdate(on: boolean): Promise<void>;
   cliTool(): Promise<CliToolStatus>;
-  /** No admin rights: a symlink in ~/.local/bin to the CLI inside this app. */
+  /** No admin rights: a symlink in ~/.local/bin to the CLI inside this app (a user Path entry on Windows). */
   installCliTool(): Promise<CliToolStatus>;
   removeCliTool(): Promise<CliToolStatus>;
   /**

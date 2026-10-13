@@ -28,6 +28,12 @@ use std::time::Duration;
 use tauri::{Manager, RunEvent, WindowEvent};
 
 fn main() {
+    // The uninstaller runs `homerun.exe --remove-cli-path` (§18 row 137): take `bin` off the
+    // user's Path and exit before anything else starts.
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).is_some_and(|a| a == "--remove-cli-path") {
+        std::process::exit(if win::cli_remove().is_ok() { 0 } else { 1 });
+    }
     let context = tauri::generate_context!();
     // First, so a panic anywhere after leaves a crash report (§11 "Diagnostics"); the runtime
     // sends it only if the user turned crash reports on.

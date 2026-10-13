@@ -16,6 +16,22 @@ pub fn pubkey_configured(pubkey: &str) -> bool {
     !k.is_empty() && k != PLACEHOLDER_PUBKEY
 }
 
+/// Where releases carry signed updates (§11): Apple silicon Macs and 64-bit Windows. Takes
+/// `std::env::consts::{OS, ARCH}`.
+pub fn platform_supported(os: &str, arch: &str) -> bool {
+    matches!((os, arch), ("macos", "aarch64") | ("windows", "x86_64"))
+}
+
+/// The downloaded payload as staged under the data directory: the app archive on macOS, the NSIS
+/// installer on Windows (§11). `version` has passed [`safe_version`].
+pub fn staged_name(os: &str, version: &str) -> String {
+    if os == "windows" {
+        format!("Homerun-{version}-setup.exe")
+    } else {
+        format!("Homerun-{version}.app.tar.gz")
+    }
+}
+
 pub const FIRST_CHECK_MS: u64 = 60_000;
 pub const CHECK_EVERY_MS: u64 = 6 * 60 * 60 * 1000;
 
@@ -145,7 +161,7 @@ pub fn gate(current: &str, current_protocol: u64, offered: &str, raw: &Value) ->
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum UpdateState {
     Idle,
-    /// No update key in this build, a debug build, or not an Apple silicon Mac.
+    /// No update key in this build, a debug build, or a platform without updates.
     Unavailable {
         message: String,
     },
@@ -187,6 +203,16 @@ pub fn install_on_exit(state: &UpdateState, why: Why) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn platforms_with_updates() {
+        assert!(platform_supported("macos", "aarch64") && platform_supported("windows", "x86_64"));
+        for (os, arch) in [("macos", "x86_64"), ("windows", "aarch64"), ("windows", "x86"), ("linux", "x86_64")] {
+            assert!(!platform_supported(os, arch), "{os} {arch}");
+        }
+        assert_eq!(staged_name("macos", "0.9.0"), "Homerun-0.9.0.app.tar.gz");
+        assert_eq!(staged_name("windows", "0.9.0"), "Homerun-0.9.0-setup.exe");
+    }
 
     #[test]
     fn schedule_first_after_a_minute_then_every_six_hours_and_on_wake() {

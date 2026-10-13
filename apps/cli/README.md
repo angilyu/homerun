@@ -131,8 +131,9 @@ A **release** build connects as `cli`:
 - On Windows (milestone 8b) it connects to the named pipe `run\endpoint` names, after
   opening the pipe once to check it: an ACL that admits only this user, the server's
   pid (`GetNamedPipeServerProcessId`) and user, and its image against the requirement,
-  `sha256:<hex of homerund.exe>` or `authenticode:<signer>` (§18 row 61). A release
-  Windows CLI ships with milestone 11's installer.
+  `sha256:<hex of homerund.exe>` or `authenticode:<signer>` (§18 row 61). The
+  Windows installer ships the release CLI as `bin\homerun.exe`, pinned to its
+  `homerund.exe` by SHA-256 (§18 rows 136–137).
 - Its token is a generic password in the login keychain: service
   `com.angilyu.homerun.cli`, labelled "Homerun command-line tool", account `default`
   (or `data:<sha256 of the data dir>` under `HOMERUN_DATA_DIR`). homerund keeps only its

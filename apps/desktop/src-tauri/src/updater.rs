@@ -2,7 +2,8 @@
 //! minisign signature; `shell-core::update` gates the offer and holds the state. An update is
 //! downloaded in the background, staged under the data directory and installed only when
 //! Homerun quits or the user picks *Restart to Update*, after the runtime has stopped: runs
-//! resume on the next launch like after any quit (§5.4).
+//! resume on the next launch like after any quit (§5.4). On macOS the plugin replaces the app
+//! bundle; on Windows it starts the NSIS installer in update mode and exits the process.
 
 use base64::Engine;
 use homerun_shell_core::quit::Why;
@@ -67,8 +68,8 @@ impl Updater {
         } else if !pubkey_configured(&pubkey) {
             // Fail closed (§11): a build without the real key never installs anything.
             UpdateState::Unavailable { message: "This build has no update key, so it can't update itself.".into() }
-        } else if !(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64")) {
-            UpdateState::Unavailable { message: "Updates are for Apple silicon Macs for now.".into() }
+        } else if !update::platform_supported(std::env::consts::OS, std::env::consts::ARCH) {
+            UpdateState::Unavailable { message: "Updates are for Apple silicon Macs and 64-bit Windows for now.".into() }
         } else {
             UpdateState::Idle
         };
@@ -189,7 +190,7 @@ impl Updater {
         }
         let bytes = tauri::async_runtime::block_on(up.download(|_, _| {}, || {})).map_err(short)?;
         std::fs::create_dir_all(&self.dir).map_err(short)?;
-        let path = self.dir.join(format!("Homerun-{}.app.tar.gz", up.version));
+        let path = self.dir.join(update::staged_name(std::env::consts::OS, &up.version));
         let tmp = path.with_extension("partial");
         std::fs::write(&tmp, &bytes).map_err(short)?;
         std::fs::rename(&tmp, &path).map_err(short)?;
@@ -199,11 +200,17 @@ impl Updater {
     /// Install the staged update, if quitting for `why` should (§11). Runs after the runtime has
     /// stopped and before the process exits. Off the main thread: on a permission error the
     /// plugin asks for an administrator password through the main thread.
+    ///
+    /// On Windows a successful install doesn't return: the plugin starts the per-user installer
+    /// (`/P /UPDATE`, no elevation) and exits the process; the installer relaunches Homerun only
+    /// for *Restart now*.
     pub fn install_if_ready(&self, why: Why) -> bool {
         if !update::install_on_exit(&self.state(), why) {
             return false;
         }
         let Some((up, path)) = self.staged.lock().unwrap().take() else { return false };
+        let up = up.restart_after_install(why == Why::Update);
+        (self.hooks.log)("update.installing", json!({"version": up.version}));
         let r = std::fs::read(&path).map_err(short).and_then(|bytes| {
             // The staged file sat on disk: check it again rather than trust it.
             verify(&self.pubkey, &up.signature, &bytes)?;
