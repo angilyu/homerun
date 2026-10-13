@@ -190,6 +190,9 @@ jobs:
         run: pnpm --filter @homerun/app-state test
       - name: Component tests
         run: pnpm --filter @homerun/desktop test
+      # The release's version source of truth and its latest.json checks (§11, release.yml).
+      - name: Release scripts
+        run: pnpm --filter @homerun/desktop test:release
       - name: Web build
         run: pnpm --filter @homerun/desktop build
 

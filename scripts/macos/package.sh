@@ -3,7 +3,7 @@
 #
 #   VERSION=0.0.2 scripts/macos/package.sh
 #
-# Env: VERSION (default 0.0.1), IDENTITY / SPIKE_KEYCHAIN / THIRD_PARTY (see sign.sh),
+# Env: VERSION (default: tauri.conf.json's, via apps/desktop/scripts/release/bump-version.ts), IDENTITY / SPIKE_KEYCHAIN / THIRD_PARTY (see sign.sh),
 #      NOTARY_PROFILE (optional; runs notarize.sh — needs the user's Apple account),
 #      OUT (output dir, default dist/macos/$VERSION; e.g. dist/macos/devid-$VERSION),
 #      NO_DMG=1 (skip the DMG).
@@ -28,10 +28,10 @@
 # from the signed (and notarized) app, not by the bundler.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-VERSION="${VERSION:-0.0.1}"
-OUT="${OUT:-$ROOT/dist/macos/$VERSION}"
 TAURI=(pnpm --dir "$ROOT/apps/desktop" exec tauri)
 BUN="$ROOT/node_modules/.bin/bun"
+VERSION="${VERSION:-$("$BUN" "$ROOT/apps/desktop/scripts/release/bump-version.ts")}"
+OUT="${OUT:-$ROOT/dist/macos/$VERSION}"
 
 PUBKEY=""
 if [[ -n "${UPDATER_KEY:-}" ]]; then
