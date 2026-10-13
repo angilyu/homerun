@@ -3,6 +3,7 @@ import type { AppClient, Store } from "@homerun/app-state";
 import { coalesced } from "../coalesce";
 import type { AppLock } from "../lock";
 import type { IosSession } from "../session";
+import type { IosVersionGate } from "../version";
 
 /** A state-layer store in a view (§9.8): the same binding as the desktop's React DOM views. */
 export function useStore<T>(s: Store<T>): T {
@@ -34,6 +35,8 @@ export interface PhoneApp {
 export interface Phone {
   session: IosSession<PhoneApp>;
   lock: AppLock;
+  /** This app's own minimum-version gate (§11). */
+  version: IosVersionGate;
   /** Face ID (or the passcode) for this one step. */
   authenticate(reason: string): Promise<boolean>;
 }

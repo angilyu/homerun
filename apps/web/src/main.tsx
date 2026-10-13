@@ -7,6 +7,7 @@ import { builtInConfig } from "./config";
 import { browserEnv, WebSession } from "./session";
 import { openIdb } from "./storage";
 import { WebRoot, WebSettings } from "./ui";
+import { WebVersionGate } from "./version";
 import "./web.css";
 
 const root = createRoot(document.getElementById("root")!);
@@ -28,12 +29,14 @@ if (!config) {
         const href = a.getAttribute("href");
         if (href && /^(https?:|mailto:)/i.test(href)) window.open(href, "_blank", "noopener,noreferrer");
       });
+      const version = WebVersionGate.forConfig(kv, config);
+      version.start();
       window.addEventListener("pagehide", () => session.close());
       // Back from the back-forward cache, the session is closed: start again.
       window.addEventListener("pageshow", (e) => e.persisted && location.reload());
       root.render(
         <StrictMode>
-          <WebRoot session={session} />
+          <WebRoot session={session} version={version.verdict} />
         </StrictMode>,
       );
       void session.start();

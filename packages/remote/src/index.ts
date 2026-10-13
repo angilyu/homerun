@@ -6,3 +6,4 @@ export * from "./relay-connection";
 export * from "./rendezvous";
 export * from "./store";
 export * from "./transport";
+export * from "./version";

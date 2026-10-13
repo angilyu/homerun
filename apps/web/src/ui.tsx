@@ -1,5 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
-import { seenText } from "@homerun/app-state";
+import { seenText, type Store } from "@homerun/app-state";
+import type { VersionVerdict } from "@homerun/core";
+import { updateBannerText } from "@homerun/remote";
 import { useAction, useNow, useStore } from "@homerun/desktop/hooks";
 import { AppRoot } from "@homerun/desktop/app";
 import { Badge, ConfirmButton, Empty, ErrorText } from "@homerun/desktop/ui";
@@ -21,9 +23,41 @@ function useSession(): Session {
   return s;
 }
 
-export function WebRoot({ session }: { session: Session }) {
+export function WebRoot({ session, version }: { session: Session; version?: Store<VersionVerdict> }) {
   const phase = useStore(session.phase);
-  return <SessionContext.Provider value={session}>{phase.s === "ready" ? <AppRoot app={phase.app} /> : <FrontDoor phase={phase} />}</SessionContext.Provider>;
+  return (
+    <SessionContext.Provider value={session}>
+      {version && <WebUpdateBanner verdict={version} />}
+      {phase.s === "ready" ? <AppRoot app={phase.app} /> : <FrontDoor phase={phase} />}
+    </SessionContext.Provider>
+  );
+}
+
+/** "Update Homerun" when the version policy's web rules stop this build (§11); reloading fetches the current one. */
+export function WebUpdateBanner({ verdict, reload = () => location.reload() }: { verdict: Store<VersionVerdict>; reload?: () => void }) {
+  const v = useStore(verdict);
+  const text = updateBannerText(v);
+  if (!text) return null;
+  return (
+    <div className={`banner web-version${v.state === "killed" ? " danger" : ""}`} role="alert">
+      <span>
+        <strong>Update Homerun.</strong> {text}
+        {v.url && (
+          <>
+            {" "}
+            <a href={v.url} target="_blank" rel="noopener noreferrer">
+              Learn more
+            </a>
+          </>
+        )}
+      </span>
+      <span className="actions">
+        <button type="button" className="primary" onClick={reload}>
+          Update Homerun
+        </button>
+      </span>
+    </div>
+  );
 }
 
 function Door({ title, children }: { title: string; children: ReactNode }) {
