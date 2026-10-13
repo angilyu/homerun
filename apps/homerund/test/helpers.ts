@@ -118,6 +118,7 @@ export async function socketRuntime(
     verifyKey?: RuntimeOptions["verifyKey"];
     helloTimeoutMs?: number;
     remote?: RuntimeOptions["remote"];
+    versionFetch?: typeof fetch;
   } = {},
 ): Promise<SocketRuntime> {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), "hr-rpc-"));
@@ -137,6 +138,7 @@ export async function socketRuntime(
     ...(opts.verifyKey ? { verifyKey: opts.verifyKey } : {}),
     ...(opts.helloTimeoutMs ? { helloTimeoutMs: opts.helloTimeoutMs } : {}),
     ...(opts.remote ? { remote: opts.remote } : {}),
+    ...(opts.versionFetch ? { versionFetch: opts.versionFetch } : {}),
   });
   const clients: RpcClient[] = [];
   const track = async (p: Promise<RpcClient>) => {

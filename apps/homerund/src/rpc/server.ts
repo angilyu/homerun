@@ -25,6 +25,7 @@ import { log, scrub } from "../log";
 import { lockPipe, publishEndpoint, unpublishEndpoint } from "../platform/secure";
 import { BudgetCapError, InvalidRequestError, NotFoundError, VersionConflictError } from "../runs/manager";
 import { StateConflictError } from "../store/schedule-rows";
+import { VersionBlockedError } from "../version/gate";
 import { RpcFail, type Conn, type Handlers } from "./handlers";
 
 export const HELLO_TIMEOUT_MS = 2_000;
@@ -395,6 +396,7 @@ export class Connection implements Conn {
       return e.current === null ? this.fail(req.id, RPC_ERROR.NOT_FOUND, e.message) : this.fail(req.id, RPC_ERROR.CONFLICT, e.message, { current_version: e.current });
     }
     if (e instanceof BudgetCapError) return this.fail(req.id, RPC_ERROR.BUDGET_EXCEEDED, e.message);
+    if (e instanceof VersionBlockedError) return this.fail(req.id, RPC_ERROR.VERSION_BLOCKED, e.message, { reason: e.verdict.reason ?? "killed", url: e.verdict.url });
     log.error("handler failed", { method, err: e instanceof Error ? e : String(e) });
     return this.fail(req.id, RPC_ERROR.INTERNAL_ERROR, "Internal error.");
   }

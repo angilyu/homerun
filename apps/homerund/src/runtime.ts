@@ -37,6 +37,7 @@ import { ThreadChanges } from "./threads/changes";
 import { Notifier } from "./notify/notifier";
 import { ShellSecrets } from "./shell-secrets";
 import { RemoteService, type RemoteTuning } from "./remote/service";
+import { VersionGate } from "./version/gate";
 
 export interface RuntimeOptions {
   config: Config;
@@ -63,6 +64,8 @@ export interface RuntimeOptions {
   helloTimeoutMs?: number;
   /** Remote access timings and fetch, for tests. */
   remote?: RemoteTuning;
+  /** The version policy's fetch (§11); tests answer themselves. */
+  versionFetch?: typeof fetch;
 }
 
 export interface StartupReport {
@@ -90,6 +93,7 @@ export interface Runtime {
   timeouts: InputTimeouts;
   changes: ThreadChanges;
   notifier: Notifier;
+  gate: VersionGate;
   clock: Clock;
   devToken: string | null;
   report: StartupReport;
@@ -198,6 +202,19 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       server?.broadcast("health.digest_ready", { digest: d });
       notifier.digestReady(d);
     });
+    // §11: the signed version policy may hold unattended runs (and, if it says so, chat). It only
+    // restricts; when it changes, the schedulers look again so a cleared gate resumes promptly.
+    const gate = new VersionGate({
+      store,
+      clock,
+      ...config.versionPolicy,
+      ...(o.versionFetch ? { fetch: o.versionFetch } : {}),
+      onChange: (status) => {
+        server?.broadcast("version.changed", { status });
+        fires.run();
+        scheduler.kick();
+      },
+    });
     const fires = new FireScheduler(
       store,
       clock,
@@ -207,11 +224,12 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
           digest.tick(n);
         },
         nextWake: () => digest.nextAt(clock.now()),
+        gate: (n) => gate.verdict(n),
       },
       deviceZone,
     );
-    scheduler.setHooks({ beforePump: () => fires.promoteAll() });
-    manager.setHooks({ schedulesChanged: () => fires.run(), deviceZone });
+    scheduler.setHooks({ beforePump: () => fires.promoteAll(), gate: () => gate.verdict() });
+    manager.setHooks({ schedulesChanged: () => fires.run(), deviceZone, gate });
 
     const devToken = config.build === "development" ? newDevToken() : null;
     if (devToken) writeDevToken(config.runDir, devToken);
@@ -265,6 +283,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         cliAccess,
         shellSecrets,
         remote,
+        gate,
         shellConnected: (conn) => {
           notifier.replayPending((m, p) => conn.notify(m, p));
           cliAccess.replay((m, p) => conn.notify(m, p));
@@ -290,6 +309,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     notifier.start();
     fires.start();
     timeouts.start();
+    gate.start();
     scheduler.kick();
     const srv = server;
 
@@ -311,12 +331,14 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       timeouts,
       changes,
       notifier,
+      gate,
       clock,
       devToken,
       report: { migration, killedGroups, killedTools, swept, recovered },
       shutdown: () =>
         (stopping ??= (async () => {
           cliAccess.stop();
+          gate.stop();
           remote.stop();
           srv.stop();
           changes.stop();

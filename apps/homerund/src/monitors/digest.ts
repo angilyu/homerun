@@ -34,12 +34,13 @@ export function computeDigest(store: Store, from: number, to: number, timezone: 
       .get(task.task_id, to)!.t;
     const fires = s
       ? store.db
-          .query<{ on_time: number; merged: number; late: number }, [string, number, number]>(
-            `SELECT sum(kind = 'schedule') AS on_time, sum(kind = 'schedule' AND state = 'merged') AS merged, sum(kind = 'catchup') AS late
+          .query<{ on_time: number; merged: number; late: number; by_version: number }, [string, number, number]>(
+            `SELECT sum(kind = 'schedule') AS on_time, sum(kind = 'schedule' AND state = 'merged') AS merged,
+                    sum(kind = 'catchup' AND state != 'skipped') AS late, sum(state = 'skipped') AS by_version
                FROM schedule_fires WHERE schedule_id = ? AND scheduled_for >= ? AND scheduled_for < ?`,
           )
           .get(s.schedule_id, from, to)!
-      : { on_time: 0, merged: 0, late: 0 };
+      : { on_time: 0, merged: 0, late: 0, by_version: 0 };
     const missed = s ? missedIn(store, s.schedule_id, from, to) : { asleep: 0, not_running: 0 };
     const cost = round6(runs.cost ?? 0);
     total += cost;
@@ -59,10 +60,12 @@ export function computeDigest(store: Store, from: number, to: number, timezone: 
       missed_not_running: missed.not_running,
       skipped: fires.merged ?? 0,
       caught_up: fires.late ?? 0,
+      // Fires the minimum-version gate stopped (§11): this version must update before monitors run again.
+      ...(fires.by_version ? { skipped_by_version: fires.by_version } : {}),
       cost_usd: cost,
       last_run_at: last,
       next_fire_at: state?.next_fire_at ?? null,
-      needs_attention: paused === "failures" || paused === "budget_cap" || failed > 0 || missed.asleep + missed.not_running > 0,
+      needs_attention: paused === "failures" || paused === "budget_cap" || failed > 0 || missed.asleep + missed.not_running > 0 || (fires.by_version ?? 0) > 0,
     });
   }
   return HealthDigest.parse({

@@ -35,10 +35,10 @@ export interface Rig {
   close(): Promise<void>;
 }
 
-export async function rig(o: { start: number; zone?: string; script?: FakeScript; dir?: string; env?: Record<string, string> }): Promise<Rig> {
+export async function rig(o: { start: number; zone?: string; script?: FakeScript; dir?: string; env?: Record<string, string>; versionFetch?: typeof fetch }): Promise<Rig> {
   const clock = new FakeClock(o.start);
   const power = new FakeAssertions(() => clock.now());
-  const sr = await socketRuntime({ clock, power, deviceZone: o.zone ?? "UTC", ...(o.script ? { script: o.script } : {}), ...(o.dir ? { dir: o.dir } : {}), ...(o.env ? { env: o.env } : {}) });
+  const sr = await socketRuntime({ clock, power, deviceZone: o.zone ?? "UTC", ...(o.script ? { script: o.script } : {}), ...(o.dir ? { dir: o.dir } : {}), ...(o.env ? { env: o.env } : {}), ...(o.versionFetch ? { versionFetch: o.versionFetch } : {}) });
   const shell = await sr.shell();
   await shell.call("secrets.set", { name: "anthropic_api_key", value: MOCK_KEY });
   // Under workspaces/: the rest of the data dir is on the hard denylist (§5.5).

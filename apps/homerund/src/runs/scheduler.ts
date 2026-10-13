@@ -1,3 +1,4 @@
+import type { VersionVerdict } from "@homerun/core";
 import { publishLive } from "../store/events";
 import { runsInState, type Pool, type RunRow } from "../store/rows";
 import { log } from "../log";
@@ -16,6 +17,17 @@ export interface PoolHooks {
   beforePump?(): void;
   /** Held while any run is `running`, so the computer does not sleep mid-run (§8.1). */
   power?: PowerAssertions;
+  /**
+   * The minimum-version gate (§11). Pending scheduled work (a fire's check or its act step) does
+   * not start while it stops unattended runs, nor chat while a kill stops interactive ones. They
+   * stay pending, so they start when the gate clears or can be stopped; runs already going finish.
+   */
+  gate?(): VersionVerdict;
+}
+
+/** Runs no person asked for: a schedule's fire and its catch-up (§11 "unattended"). */
+export function isUnattended(trigger: string): boolean {
+  return trigger === "schedule" || trigger === "catchup";
 }
 
 /**
@@ -78,9 +90,16 @@ export class Scheduler {
     }
     const position: Record<Pool, number> = { session: 0, monitor: 0 };
     const seen = new Set<string>();
+    let verdict: VersionVerdict | null = null;
+    try {
+      verdict = this.hooks.gate?.() ?? null;
+    } catch (e) {
+      log.warn("version gate failed; failing open", { error: e instanceof Error ? e.message : String(e) });
+    }
 
     for (const row of runsInState(this.ctx.store, ["pending"])) {
       if (this.active.has(row.run_id)) continue;
+      if (verdict && !(isUnattended(row.trigger) ? verdict.unattended_allowed : verdict.interactive_allowed)) continue;
       seen.add(row.run_id);
       if (row.monitor_phase === "rule_check") {
         if (!busyThreads.has(row.thread_id) && rules < MAX_RULE_CHECKS) {

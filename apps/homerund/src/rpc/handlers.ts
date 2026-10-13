@@ -33,6 +33,7 @@ import type { RemotePeer } from "./server";
 import type { ShellSecrets } from "../shell-secrets";
 import { RemoteError, type RemoteService } from "../remote/service";
 import type { AccessRequester, CliAccess } from "./cli-access";
+import type { VersionGate } from "../version/gate";
 
 /** A JSON-RPC error a handler wants to send as is. */
 export class RpcFail extends Error {
@@ -77,6 +78,8 @@ export interface HandlerDeps {
   shellSecrets?: ShellSecrets;
   /** Remote access: the account, the relay link and paired devices (§9, §10). */
   remote?: RemoteService;
+  /** The minimum-version gate (§11). */
+  gate?: Pick<VersionGate, "status" | "check">;
   /** secrets.verify (§7.2): ask the provider about a candidate key. */
   verifyKey: (key: string) => Promise<{ outcome: "valid" | "invalid" | "unreachable"; detail?: string }>;
 }
@@ -118,6 +121,11 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     if (!d.remote) throw new RpcFail(RPC_ERROR.UNAVAILABLE, "Remote access isn't running.");
     return d.remote;
   };
+  const running = <T>(v: T | undefined, what: string): T => {
+    if (v === undefined) throw new RpcFail(RPC_ERROR.UNAVAILABLE, `${what} isn't running.`);
+    return v;
+  };
+  const gateOf = () => running(d.gate, "The version check");
   /** Runs a remote-access call, turning what it refuses into the matching RPC error. */
   const remote = async <T>(fn: (r: RemoteService) => T | Promise<T>): Promise<T> => {
     try {
@@ -162,6 +170,8 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     "cli.tokens.list": () => ({ tokens: listCliTokens(store) }),
 
     // ---- account and devices (§9.6, §10)
+    "version.status": () => ({ status: gateOf().status() }),
+    "version.check": async () => ({ status: await gateOf().check() }),
     "account.status": () => ({ status: remoteOf().status() }),
     "account.sign_in": () => {
       const r = remoteOf();
