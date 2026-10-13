@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { AppClient } from "@homerun/app-state";
 import { AppRoot, createApp } from "../../src/app";
 import type { Route } from "../../src/hooks";
-import type { AppInfo, CliToolStatus, KeyStatus, LoginItemStatus, NotificationPermission, SetKeyOutcome, ShellApi, ShellEvent, ShellPrefs, UpdateState } from "../../src/platform/types";
+import type { AppInfo, CliToolStatus, KeyStatus, LoginItemStatus, NotificationPermission, SavedBundle, SetKeyOutcome, ShellApi, ShellEvent, ShellPrefs, UpdateState } from "../../src/platform/types";
 import { DEVICE, FakeTransport, T0, uuid } from "../../../../packages/app-state/test/helpers";
 
 export * from "../../../../packages/app-state/test/helpers";
@@ -82,6 +82,13 @@ export class FakeShell implements ShellApi {
     this.tool = { state: "not_installed", link: "/Users/me/.local/bin/homerun" };
     return this.tool;
   };
+  /** What the save panel answers: null is Cancel. */
+  bundle: SavedBundle | null = { path: "/Users/me/Downloads/homerun-diagnostics-20260101-090000.zip", bytes: 4096, files: [] };
+  saveDiagnostics = async (choose: boolean) => {
+    this.calls.push(`saveDiagnostics:${choose}`);
+    return this.bundle;
+  };
+  revealDiagnostics = async () => void this.calls.push("revealDiagnostics");
 }
 
 export const TASK = "4f5a6b7c-8d9e-4f0a-8b1c-2d3e4f5a6b01";

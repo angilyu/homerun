@@ -3,6 +3,7 @@ import { errorMessage } from "@homerun/app-state";
 import { useApp, useShell } from "../hooks";
 import type { LoginItemStatus, NotificationPermission } from "../platform/types";
 import { useAutofocus } from "../ui/bits";
+import { CrashReportsCheckbox, useCrashReports } from "./Diagnostics";
 
 const CONSOLE_URL = "https://console.anthropic.com/settings/keys";
 
@@ -129,6 +130,10 @@ export function KeepRunning({ onDone }: { onDone: () => void }) {
   const [login, setLogin] = useState<LoginItemStatus | null>(null);
   const [atLogin, setAtLogin] = useState(true);
   const [notify, setNotify] = useState<NotificationPermission | null>(null);
+  const crash = useCrashReports();
+  const [sendCrashes, setSendCrashes] = useState(false);
+  const crashesOn = crash.settings?.enabled ?? false;
+  useEffect(() => setSendCrashes(crashesOn), [crashesOn]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -145,6 +150,8 @@ export function KeepRunning({ onDone }: { onDone: () => void }) {
     setError(null);
     try {
       if (login && login !== "unavailable" && atLogin !== (login === "enabled")) await shell.setLoginItem(atLogin);
+      // Off unless the user ticks it (§11 Diagnostics).
+      if (crash.settings?.available && sendCrashes !== crash.settings.enabled) await app.client.rpc.call("diagnostics.crash_reports.set", { enabled: sendCrashes });
     } catch (e) {
       setBusy(false);
       return setError(`${errorMessage(e)} You can change this later in Settings.`);
@@ -173,6 +180,7 @@ export function KeepRunning({ onDone }: { onDone: () => void }) {
         )}
         {notify === "allowed" && <p className="muted small">Notifications are on.</p>}
         {notify === "denied" && <p className="muted small">Notifications are off. You can turn them on in System Settings.</p>}
+        {crash.settings?.available && <CrashReportsCheckbox checked={sendCrashes} onChange={setSendCrashes} />}
         {error && (
           <p className="error" role="alert">
             {error}

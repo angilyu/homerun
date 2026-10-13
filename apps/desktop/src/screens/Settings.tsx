@@ -4,6 +4,7 @@ import type { HealthSettings } from "@homerun/core";
 import type { CliToolStatus, LoginItemStatus, NotificationPermission, UpdateState } from "../platform/types";
 import { useAction, useApp, useLoad, useStore, useShell } from "../hooks";
 import { ConfirmButton, Empty, ErrorText, Page, Time } from "../ui/bits";
+import { DiagnosticsSection } from "./Diagnostics";
 import { runtimeText } from "./Layout";
 import { KeyForm } from "./Onboarding";
 import { RemoteSection } from "./Remote";
@@ -29,6 +30,7 @@ export function Settings() {
       <CliSection />
       <UpdatesSection />
       <RuntimeSection />
+      <DiagnosticsSection />
     </Page>
   );
 }
