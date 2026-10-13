@@ -3,6 +3,7 @@ import { common, domain, grants, health, input, schedule, taskSpec } from "./mod
 import { events } from "./events";
 import { protocol } from "./protocol";
 import { relay } from "./relay";
+import { versionPolicyVectors } from "./version-policy";
 
 /** Vector groups; each becomes `vectors/<group>.json`. */
 export const VECTOR_GROUPS: Record<string, Vector[]> = {
@@ -16,6 +17,7 @@ export const VECTOR_GROUPS: Record<string, Vector[]> = {
   events,
   protocol,
   relay,
+  "version-policy": versionPolicyVectors,
 };
 
 export type { Vector };

@@ -146,6 +146,13 @@ describe("allowlists", () => {
     }
   });
 
+  test("updates and diagnostics (§11): anyone may read the gate; only the shell or the command line picks where a bundle is written", () => {
+    expect(only("version.status")).toEqual([...CALLER_ROLES]);
+    expect(only("diagnostics.create")).toEqual(["shell", "cli", "cli_dev"]);
+    for (const m of ["diagnostics.crash_reports.get", "diagnostics.crash_reports.set"] as const) expect(only(m)).toEqual(["shell", "webview"]);
+    for (const m of ["version.check", "diagnostics.preview"] as const) expect(only(m)).toEqual(["shell", "webview", "cli", "cli_dev"]);
+  });
+
   test("CLI tokens are managed only from the local app", () => {
     for (const m of ["cli.tokens.list", "cli.tokens.revoke"] as const) expect(only(m)).toEqual(["shell", "webview"]);
   });

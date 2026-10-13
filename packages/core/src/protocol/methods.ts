@@ -24,6 +24,7 @@ import { ScheduleCoverage, ScheduleState } from "../schedule";
 import { HEALTH_DIGEST_MAX_MS, HealthDigest, HealthSettings } from "../health";
 import { TaskSpec } from "../task-spec";
 import { PersistedThreadEvent, ThreadEvent } from "../events";
+import { VersionGateStatus } from "../version-policy";
 import { CallerRole, ClientInfo, CliToken, HelloParams, HelloResult } from "./handshake";
 
 /**
@@ -93,6 +94,11 @@ const SHELL = ["shell"] as const satisfies readonly CallerRole[];
 /** A verified iPhone, about itself. */
 const IOS = ["ios"] as const satisfies readonly CallerRole[];
 
+/** Local tools that may write a file or read local state, but never raise the agent's reach: the app and the command line. */
+const LOCAL_TOOLS = ["shell", "webview", "cli", "cli_dev"] as const satisfies readonly CallerRole[];
+/** Callers that choose where a file is written: the shell (from its native save dialog) and the command line. Never a webview. */
+const FILE_WRITERS = ["shell", "cli", "cli_dev"] as const satisfies readonly CallerRole[];
+
 // ---------------------------------------------------------------- shared shapes
 
 const Empty = z.object({});
@@ -133,6 +139,26 @@ export type AccountState = z.infer<typeof AccountState>;
 
 export const RelayLinkState = named("RelayLinkState", z.enum(["off", "connecting", "connected", "offline"]));
 export type RelayLinkState = z.infer<typeof RelayLinkState>;
+
+/** One file of a diagnostic bundle (§11): its path inside the zip and its size before compression. */
+export const DiagnosticFile = named(
+  "DiagnosticFile",
+  z.object({
+    name: z.string().regex(/^[a-z0-9][a-z0-9._/-]*$/).max(200),
+    bytes: z.int().nonnegative(),
+    description: z.string().min(1).max(200),
+  }),
+);
+export type DiagnosticFile = z.infer<typeof DiagnosticFile>;
+
+/** Crash reporting (§11): opt-in, and offered only in a build with a crash-report endpoint compiled in. */
+export const CrashReportSettings = named(
+  "CrashReportSettings",
+  z
+    .object({ available: z.boolean(), enabled: z.boolean() })
+    .refine((s) => s.available || !s.enabled, "crash reports can't be on in a build without an endpoint"),
+);
+export type CrashReportSettings = z.infer<typeof CrashReportSettings>;
 
 export const AccountStatus = named(
   "AccountStatus",
@@ -498,6 +524,51 @@ export const METHODS = {
     description: "Revoke the token this connection authenticated with (`homerun logout`). The connection is closed after the reply.",
   }),
 
+  // ---- updates and control (§11)
+  "version.status": def("version.status", {
+    params: Empty,
+    result: z.object({ status: VersionGateStatus }),
+    callers: EVERYONE,
+    description:
+      "The minimum-version gate: whether the signed version policy stops unattended runs (or chat) on this runtime, and why. `version.changed` reports changes.",
+  }),
+  "version.check": def("version.check", {
+    params: Empty,
+    result: z.object({ status: VersionGateStatus }),
+    callers: LOCAL_TOOLS,
+    description: "Fetch the version policy now rather than at the next periodic check. Fails open: an unreachable relay leaves the cached policy in effect.",
+  }),
+
+  // ---- diagnostics (§11)
+  "diagnostics.preview": def("diagnostics.preview", {
+    params: Empty,
+    result: z.object({ files: z.array(DiagnosticFile).max(100) }),
+    callers: LOCAL_TOOLS,
+    description: "The files a diagnostic bundle would contain, with their sizes, to show before saving. Nothing is written.",
+  }),
+  "diagnostics.create": def("diagnostics.create", {
+    params: z.object({
+      /** Absolute path of a new .zip; the runtime never overwrites. Omitted: a new file in Downloads. */
+      path: z.string().min(1).max(4096).endsWith(".zip").optional(),
+    }),
+    result: z.object({ path: z.string().min(1).max(4096), bytes: z.int().nonnegative(), files: z.array(DiagnosticFile).max(100) }),
+    callers: FILE_WRITERS,
+    description:
+      "Write a redacted diagnostic bundle (versions, redacted logs, row counts, scheduler and relay state, the version policy) to a new zip. Nothing is uploaded. The webview asks the shell, which shows the save dialog.",
+  }),
+  "diagnostics.crash_reports.get": def("diagnostics.crash_reports.get", {
+    params: Empty,
+    result: z.object({ settings: CrashReportSettings }),
+    callers: LOCAL_UI,
+    description: "Whether crash reporting is built in, and whether the user turned it on.",
+  }),
+  "diagnostics.crash_reports.set": def("diagnostics.crash_reports.set", {
+    params: z.object({ enabled: z.boolean() }),
+    result: z.object({ settings: CrashReportSettings }),
+    callers: LOCAL_UI,
+    description: "Turn sending crash reports on or off. Off by default. Fails with VALIDATION_FAILED when this build has no crash-report endpoint.",
+  }),
+
   // ---- account and devices (§9.6, §10)
   "account.status": def("account.status", {
     params: Empty,
@@ -759,6 +830,12 @@ export const NOTIFICATIONS = {
     params: z.object({ digest: HealthDigest }),
     recipients: EVERYONE,
     description: "The daily digest (§8.3) was generated. Also stored; `health.digest` recomputes any period.",
+  }),
+  "version.changed": note("version.changed", {
+    direction: "runtime_to_client",
+    params: z.object({ status: VersionGateStatus }),
+    recipients: EVERYONE,
+    description: "The minimum-version gate changed: a new policy, an expired one, or an update cleared it. Show or hide the banner.",
   }),
   "account.changed": note("account.changed", {
     direction: "runtime_to_client",

@@ -104,6 +104,8 @@ export const health: Vector[] = [
   ok("MonitorHealth", "mostly asleep", F.monitorHealth()),
   ok("MonitorHealth", "paused", F.monitorHealth({ enabled: false, paused_reason: "failures", next_fire_at: null })),
   bad("MonitorHealth", "negative cost", F.monitorHealth({ cost_usd: -1 })),
+  ok("MonitorHealth", "stopped by the version gate", F.monitorHealth({ skipped_by_version: 3, needs_attention: true })),
+  bad("MonitorHealth", "negative version skips", F.monitorHealth({ skipped_by_version: -1 })),
   ok("HealthDigest", "one day", F.healthDigest()),
   ok("HealthDigest", "no monitors", F.healthDigest({ monitors: [], downtime: [], cost_usd: 0, needs_attention: false })),
   badRule("HealthDigest", "empty period", F.healthDigest({ to: F.T0 })),

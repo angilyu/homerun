@@ -49,6 +49,8 @@ function render(e: ThreadEventT): string {
       return e.payload.state;
     case "schedule.missed":
       return e.payload.reason;
+    case "schedule.skipped":
+      return e.payload.reason;
     case "schedule.paused":
       return e.payload.reason;
     case "run.status":
@@ -129,6 +131,14 @@ function methodArea(m: MethodName): string {
     case "devices.link.decide":
     case "devices.renew_approval_key":
       return "remote";
+    case "version.status":
+    case "version.check":
+      return "version";
+    case "diagnostics.preview":
+    case "diagnostics.create":
+    case "diagnostics.crash_reports.get":
+    case "diagnostics.crash_reports.set":
+      return "diagnostics";
     default:
       return assertNever(m, "method");
   }
@@ -145,6 +155,8 @@ function notificationArea(n: NotificationName): string {
       return "cli";
     case "health.digest_ready":
       return "health";
+    case "version.changed":
+      return "version";
     case "account.changed":
     case "devices.changed":
     case "devices.pairing_completed":

@@ -39,6 +39,12 @@
       "blobs.get",
       "cli.tokens.list",
       "cli.tokens.revoke",
+      "version.status",
+      "version.check",
+      "diagnostics.preview",
+      "diagnostics.create",
+      "diagnostics.crash_reports.get",
+      "diagnostics.crash_reports.set",
       "account.status",
       "account.sign_in",
       "account.cancel_sign_in",
@@ -93,6 +99,11 @@
       "blobs.get",
       "cli.tokens.list",
       "cli.tokens.revoke",
+      "version.status",
+      "version.check",
+      "diagnostics.preview",
+      "diagnostics.crash_reports.get",
+      "diagnostics.crash_reports.set",
       "account.status",
       "account.sign_in",
       "account.cancel_sign_in",
@@ -139,7 +150,11 @@
       "monitors.state.set",
       "monitors.state.reset",
       "blobs.get",
-      "cli.sign_out"
+      "cli.sign_out",
+      "version.status",
+      "version.check",
+      "diagnostics.preview",
+      "diagnostics.create"
     ],
     "cli_dev": [
       "hello",
@@ -176,7 +191,11 @@
       "monitors.state.get",
       "monitors.state.set",
       "monitors.state.reset",
-      "blobs.get"
+      "blobs.get",
+      "version.status",
+      "version.check",
+      "diagnostics.preview",
+      "diagnostics.create"
     ],
     "ios": [
       "hello",
@@ -214,6 +233,7 @@
       "monitors.state.set",
       "monitors.state.reset",
       "blobs.get",
+      "version.status",
       "devices.renew_approval_key"
     ],
     "web": [
@@ -243,7 +263,8 @@
       "input.list_pending",
       "input.answer",
       "monitors.state.get",
-      "blobs.get"
+      "blobs.get",
+      "version.status"
     ]
   },
   "shell_only": [
@@ -268,6 +289,7 @@
       "threads.changed",
       "cli.access_decision",
       "health.digest_ready",
+      "version.changed",
       "account.changed",
       "devices.changed",
       "devices.pairing_completed"

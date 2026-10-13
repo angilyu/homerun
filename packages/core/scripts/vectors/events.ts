@@ -127,6 +127,9 @@ export const events: Vector[] = [
   ok(E, "schedule.paused after failures", P("schedule.paused", { schedule_id: F.SCHEDULE, reason: "failures", detail: "Paused after 3 failed checks in a row." }, { run_id: null })),
   bad(E, "schedule.paused by user", P("schedule.paused", { schedule_id: F.SCHEDULE, reason: "user", detail: "Paused." }, { run_id: null })),
   bad(E, "schedule.paused empty detail", P("schedule.paused", { schedule_id: F.SCHEDULE, reason: "budget_cap", detail: "" }, { run_id: null })),
+  ok(E, "schedule.skipped by the version gate", P("schedule.skipped", { schedule_id: F.SCHEDULE, scheduled_for: F.T0, reason: "below_minimum", count: 1 }, { run_id: null })),
+  ok(E, "schedule.skipped killed, merged", P("schedule.skipped", { schedule_id: F.SCHEDULE, scheduled_for: F.T0, reason: "killed", count: 4, last_scheduled_for: F.T0 + 5_400_000 }, { run_id: null })),
+  bad(E, "schedule.skipped asleep", P("schedule.skipped", { schedule_id: F.SCHEDULE, scheduled_for: F.T0, reason: "asleep", count: 1 }, { run_id: null })),
   bad(E, "schedule.missed zero count", P("schedule.missed", { schedule_id: F.SCHEDULE, scheduled_for: F.T0, reason: "asleep", count: 0 }, { run_id: null })),
   // run.status (live-only)
   ok(E, "run.status queued", L("run.status", { state: "pending", detail: "queued", queue_position: 2 })),

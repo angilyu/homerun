@@ -21,6 +21,7 @@ import { Authority, RunError, RunOutcome, RunState, RunTrigger, TerminalRunState
 import { AnswerVia, InputPrompt, InputResponse } from "./input";
 import { McpServerName, ToolClass, ToolName } from "./tools";
 import { ModelId } from "./task-spec";
+import { VersionGateReason } from "./version-policy";
 
 /**
  * Thread events (§5.3, §6 `thread_events`). Persisted events carry a per-thread `seq` assigned
@@ -274,6 +275,29 @@ export const ScheduleMissedEvent = named(
   ),
 );
 
+/**
+ * Fires the minimum-version gate stopped (§11 "Updates and control"): this version is below the
+ * minimum, blocked, or killed by the signed version policy, so scheduled and monitor runs don't
+ * start. Not tied to a run. A separate type rather than a `schedule.missed` reason, so older
+ * clients show it as an unknown event instead of rejecting it.
+ */
+export const ScheduleSkippedEvent = named(
+  "ScheduleSkippedEvent",
+  persisted(
+    "schedule.skipped",
+    z.object({
+      schedule_id: ScheduleId,
+      /** The first skipped fire of the group. */
+      scheduled_for: TimestampMs,
+      reason: VersionGateReason,
+      /** Contiguous skipped fires reported together. */
+      count: z.int().min(1),
+      /** The last skipped fire of the group; absent when count is 1. */
+      last_scheduled_for: TimestampMs.optional(),
+    }),
+  ),
+);
+
 /** The runtime paused a schedule (§5.3, §7.4). A pause by hand is not an event. */
 export const SchedulePausedEvent = named(
   "SchedulePausedEvent",
@@ -316,6 +340,7 @@ export const PERSISTED_EVENT_SCHEMAS = [
   RunCancelledEvent,
   RunEndEvent,
   ScheduleMissedEvent,
+  ScheduleSkippedEvent,
   SchedulePausedEvent,
 ] as const;
 
