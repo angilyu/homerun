@@ -35,7 +35,9 @@ const main = join(ROOT, "apps", "homerund", "src", "main.ts");
 // Release: no build define (a compiled binary defaults to the release channel), minified, and the
 // app version and remote-access endpoints when package.sh passes them. Development builds read
 // the endpoints from the environment at run time instead (apps/homerund/src/remote/config.ts).
-const baked = ["HOMERUND_VERSION", "HOMERUND_RELAY_URL", "HOMERUND_OIDC_ISSUER", "HOMERUND_OIDC_CLIENT_ID"].flatMap((name) =>
+// HOMERUND_CHANNEL names the release channel the version policy matches (§11); HOMERUND_SENTRY_DSN
+// turns on the opt-in crash-report setting (§11 "Diagnostics"). Without one, the setting is hidden.
+const baked = ["HOMERUND_VERSION", "HOMERUND_CHANNEL", "HOMERUND_SENTRY_DSN", "HOMERUND_RELAY_URL", "HOMERUND_OIDC_ISSUER", "HOMERUND_OIDC_CLIENT_ID"].flatMap((name) =>
   process.env[name] ? ["--define", `${name}=${JSON.stringify(process.env[name])}`] : [],
 );
 const define = release ? ["--minify", ...baked] : ["--define", `HOMERUND_BUILD="development"`];

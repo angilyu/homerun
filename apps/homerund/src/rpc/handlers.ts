@@ -34,6 +34,8 @@ import type { ShellSecrets } from "../shell-secrets";
 import { RemoteError, type RemoteService } from "../remote/service";
 import type { AccessRequester, CliAccess } from "./cli-access";
 import type { VersionGate } from "../version/gate";
+import type { CrashReporter } from "../diagnostics/crash";
+import { BundleTargetError, create as createBundle, preview as previewBundle, type BundleSources } from "../diagnostics/bundle";
 
 /** A JSON-RPC error a handler wants to send as is. */
 export class RpcFail extends Error {
@@ -80,6 +82,10 @@ export interface HandlerDeps {
   remote?: RemoteService;
   /** The minimum-version gate (§11). */
   gate?: Pick<VersionGate, "status" | "check">;
+  /** What the diagnostic bundle reads (§11). */
+  diagnostics?: BundleSources;
+  /** Opt-in crash reporting (§11). */
+  crash?: CrashReporter;
   /** secrets.verify (§7.2): ask the provider about a candidate key. */
   verifyKey: (key: string) => Promise<{ outcome: "valid" | "invalid" | "unreachable"; detail?: string }>;
 }
@@ -126,6 +132,8 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     return v;
   };
   const gateOf = () => running(d.gate, "The version check");
+  const diagnosticsOf = () => running(d.diagnostics, "Diagnostics");
+  const crashOf = () => running(d.crash, "Crash reporting");
   /** Runs a remote-access call, turning what it refuses into the matching RPC error. */
   const remote = async <T>(fn: (r: RemoteService) => T | Promise<T>): Promise<T> => {
     try {
@@ -172,6 +180,21 @@ export function makeHandlers(d: HandlerDeps): Handlers {
     // ---- account and devices (§9.6, §10)
     "version.status": () => ({ status: gateOf().status() }),
     "version.check": async () => ({ status: await gateOf().check() }),
+    "diagnostics.preview": () => ({ files: previewBundle(diagnosticsOf()) }),
+    "diagnostics.create": (_c, p) => {
+      try {
+        return createBundle(diagnosticsOf(), p.path);
+      } catch (e) {
+        if (e instanceof BundleTargetError) throw new RpcFail(RPC_ERROR.VALIDATION_FAILED, e.message);
+        throw e;
+      }
+    },
+    "diagnostics.crash_reports.get": () => ({ settings: crashOf().settings() }),
+    "diagnostics.crash_reports.set": (_c, p) => {
+      const settings = crashOf().set(p.enabled);
+      if (!settings) throw new RpcFail(RPC_ERROR.VALIDATION_FAILED, "This build of Homerun doesn't include crash reporting.");
+      return { settings };
+    },
     "account.status": () => ({ status: remoteOf().status() }),
     "account.sign_in": () => {
       const r = remoteOf();

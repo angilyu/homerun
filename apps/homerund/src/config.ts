@@ -31,6 +31,9 @@ export const BUILD_CHANNEL: BuildChannel = resolveBuildChannel(typeof HOMERUND_B
 export const RUNTIME_CHANNEL: string =
   BUILD_CHANNEL === "development" ? "development" : typeof HOMERUND_CHANNEL === "string" && /^[a-z][a-z0-9_-]{0,31}$/.test(HOMERUND_CHANNEL) ? HOMERUND_CHANNEL : "stable";
 
+/** Crash reporting's Sentry DSN, compiled in (§11); null: the build has none and the setting is hidden. */
+export const BUILT_IN_SENTRY_DSN: string | null = typeof HOMERUND_SENTRY_DSN === "string" && HOMERUND_SENTRY_DSN !== "" ? HOMERUND_SENTRY_DSN : null;
+
 /** A development-only switch was used in a release build. */
 export class DevOnlyError extends Error {
   constructor(what: string) {
@@ -107,6 +110,8 @@ export interface Config {
     platform: string;
     channel: string;
   };
+  /** Crash reporting (§11): the Sentry DSN; null when this build has none. */
+  sentryDsn: string | null;
 }
 
 /** §5.6: the grace period before a waiting call is deferred. */
@@ -192,6 +197,7 @@ export function loadConfig(input: ConfigInput = {}): Config {
   const policyUrlOverride = devOnly("HOMERUN_VERSION_POLICY_URL", env.HOMERUN_VERSION_POLICY_URL) as string | undefined;
   const policyKeys = devOnly("HOMERUN_DEV_POLICY_KEYS", env.HOMERUN_DEV_POLICY_KEYS) as string | undefined;
   const gateVersion = devOnly("HOMERUN_DEV_VERSION", env.HOMERUN_DEV_VERSION) as string | undefined;
+  const sentryDsn = devOnly("HOMERUN_SENTRY_DSN", env.HOMERUN_SENTRY_DSN) as string | undefined;
   const remote = remoteConfig(env, dev, devOnly);
 
   const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
@@ -231,5 +237,6 @@ export function loadConfig(input: ConfigInput = {}): Config {
       platform: policyPlatform(),
       channel: RUNTIME_CHANNEL,
     },
+    sentryDsn: sentryDsn || BUILT_IN_SENTRY_DSN,
   };
 }

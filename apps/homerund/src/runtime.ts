@@ -8,7 +8,7 @@ import { prepareShellHome } from "./agent/claude/env";
 import { McpLauncher } from "./agent/claude/mcp";
 import type { AgentEngine } from "./agent/engine";
 import { Bus } from "./bus";
-import { RUNTIME_VERSION, type Config } from "./config";
+import { RUNTIME_CHANNEL, RUNTIME_VERSION, type Config } from "./config";
 import { log } from "./log";
 import { Authenticator, newDevToken, writeDevToken } from "./rpc/auth";
 import { CliAccess } from "./rpc/cli-access";
@@ -38,6 +38,8 @@ import { Notifier } from "./notify/notifier";
 import { ShellSecrets } from "./shell-secrets";
 import { RemoteService, type RemoteTuning } from "./remote/service";
 import { VersionGate } from "./version/gate";
+import { CrashReporter } from "./diagnostics/crash";
+import type { BundleSources } from "./diagnostics/bundle";
 
 export interface RuntimeOptions {
   config: Config;
@@ -66,6 +68,8 @@ export interface RuntimeOptions {
   remote?: RemoteTuning;
   /** The version policy's fetch (§11); tests answer themselves. */
   versionFetch?: typeof fetch;
+  /** The crash reporter's fetch (§11); tests answer themselves. */
+  crashFetch?: typeof fetch;
 }
 
 export interface StartupReport {
@@ -94,6 +98,7 @@ export interface Runtime {
   changes: ThreadChanges;
   notifier: Notifier;
   gate: VersionGate;
+  crash: CrashReporter;
   clock: Clock;
   devToken: string | null;
   report: StartupReport;
@@ -230,6 +235,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     );
     scheduler.setHooks({ beforePump: () => fires.promoteAll(), gate: () => gate.verdict() });
     manager.setHooks({ schedulesChanged: () => fires.run(), deviceZone, gate });
+    const crash = new CrashReporter({ store, dataDir: config.dataDir, dsn: config.sentryDsn, clock, version: RUNTIME_VERSION, ...(o.crashFetch ? { fetch: o.crashFetch } : {}) });
 
     const devToken = config.build === "development" ? newDevToken() : null;
     if (devToken) writeDevToken(config.runDir, devToken);
@@ -284,6 +290,18 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         shellSecrets,
         remote,
         gate,
+        crash,
+        diagnostics: {
+          store,
+          dataDir: config.dataDir,
+          logsDir: config.logsDir,
+          userHome: config.userHome,
+          now: t,
+          versions: { runtime: RUNTIME_VERSION, build: config.build, channel: RUNTIME_CHANNEL },
+          versionStatus: () => gate.status(),
+          versionPolicy: () => gate.currentPolicy(),
+          account: () => remote.status(),
+        } satisfies BundleSources,
         shellConnected: (conn) => {
           notifier.replayPending((m, p) => conn.notify(m, p));
           cliAccess.replay((m, p) => conn.notify(m, p));
@@ -310,6 +328,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
     fires.start();
     timeouts.start();
     gate.start();
+    crash.start();
     scheduler.kick();
     const srv = server;
 
@@ -332,6 +351,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
       changes,
       notifier,
       gate,
+      crash,
       clock,
       devToken,
       report: { migration, killedGroups, killedTools, swept, recovered },
@@ -339,6 +359,7 @@ export async function startRuntime(o: RuntimeOptions): Promise<Runtime> {
         (stopping ??= (async () => {
           cliAccess.stop();
           gate.stop();
+          crash.stop();
           remote.stop();
           srv.stop();
           changes.stop();
