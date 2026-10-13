@@ -6,7 +6,9 @@ use crate::notifications::{self, Permission};
 use crate::shell::Shell;
 use crate::{lifecycle, login_item, updater};
 use homerun_shell_core::allowlist::{forward, ShellError};
-use homerun_shell_core::cli_tool::{self, Place, ToolStatus};
+use homerun_shell_core::cli_tool::ToolStatus;
+#[cfg(not(windows))]
+use homerun_shell_core::cli_tool::{self, Place};
 use homerun_shell_core::keys::{self, KeyError, KeyStatus, SetOutcome, ShellCalls};
 use homerun_shell_core::login::LoginItem;
 use homerun_shell_core::quit::Why;
@@ -227,7 +229,8 @@ pub fn update_set_auto(app: AppHandle, shell: State<'_, Arc<Shell>>, on: bool) {
     }
 }
 
-/// Where the app runs from, for *Install command-line tool* (§5.2).
+/// Where the app runs from, for *Install command-line tool* (§5.2). Windows uses a Path entry.
+#[cfg(not(windows))]
 fn cli_place() -> Res<Place> {
     let home = homerun_shell_core::dirs::home(cfg!(windows), |k| std::env::var_os(k)).ok_or_else(|| ShellError::shell("HOME isn't set."))?;
     let exe = std::env::current_exe().map_err(|e| ShellError::shell(e.to_string()))?;
@@ -236,6 +239,9 @@ fn cli_place() -> Res<Place> {
 
 #[tauri::command]
 pub async fn cli_tool_status() -> Res<ToolStatus> {
+    #[cfg(windows)]
+    return blocking(|| crate::win::cli_status().map_err(ShellError::shell)).await;
+    #[cfg(not(windows))]
     blocking(|| Ok(cli_tool::status(&cli_place()?))).await
 }
 
@@ -243,9 +249,12 @@ pub async fn cli_tool_status() -> Res<ToolStatus> {
 pub async fn cli_tool_install(shell: State<'_, Arc<Shell>>) -> Res<ToolStatus> {
     let s = shell.inner().clone();
     blocking(move || {
-        let r = cli_tool::install(&cli_place()?);
+        #[cfg(windows)]
+        let r = crate::win::cli_install();
+        #[cfg(not(windows))]
+        let r = cli_tool::install(&cli_place()?).map_err(|e| e.0);
         s.rt.log_event("cli_tool.install", json!({"ok": r.is_ok()}));
-        r.map_err(|e| ShellError::shell(e.0))
+        r.map_err(ShellError::shell)
     })
     .await
 }
@@ -254,9 +263,12 @@ pub async fn cli_tool_install(shell: State<'_, Arc<Shell>>) -> Res<ToolStatus> {
 pub async fn cli_tool_remove(shell: State<'_, Arc<Shell>>) -> Res<ToolStatus> {
     let s = shell.inner().clone();
     blocking(move || {
-        let r = cli_tool::remove(&cli_place()?);
+        #[cfg(windows)]
+        let r = crate::win::cli_remove();
+        #[cfg(not(windows))]
+        let r = cli_tool::remove(&cli_place()?).map_err(|e| e.0);
         s.rt.log_event("cli_tool.remove", json!({"ok": r.is_ok()}));
-        r.map_err(|e| ShellError::shell(e.0))
+        r.map_err(ShellError::shell)
     })
     .await
 }

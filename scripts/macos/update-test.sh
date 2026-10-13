@@ -23,7 +23,12 @@
 # devid signs with Developer ID and the provisioning profile (sign.sh), so the key sits in the
 # data-protection keychain under a test service (com.angilyu.homerun.update-test), never the
 # user's real item. adhoc keeps the key in memory: an ad-hoc build is a new code identity each
-# time, and the legacy keychain would prompt (spike entry 8).
+# time, and the legacy keychain would prompt (spike entry 8). devid takes DEVID_IDENTITY, TEAM_ID
+# and PROVISIONING_PROFILE from the environment when they're set.
+#
+# This test serves its own latest.json on 127.0.0.1 and never touches GitHub. The update from one
+# published release to the next (release.yml) is a manual check: apps/desktop/README.md, "First
+# signed release".
 # Evidence: dist/update-test/<variant>/summary.txt
 set -euo pipefail
 VARIANT="${1:-adhoc}"
@@ -36,7 +41,8 @@ EVID="$ROOT/dist/update-test/$VARIANT"; rm -rf "$EVID"; mkdir -p "$EVID"
 case "$VARIANT" in
   adhoc) SIGN=(IDENTITY=-) ;;
   devid)
-    SIGN=(IDENTITY="Developer ID Application: Wenjing Yu (NMJBY8WL8T)" TEAM_ID=NMJBY8WL8T THIRD_PARTY=hybrid
+    TEAM_ID="${TEAM_ID:-NMJBY8WL8T}"
+    SIGN=(IDENTITY="${DEVID_IDENTITY:-Developer ID Application: Wenjing Yu ($TEAM_ID)}" TEAM_ID="$TEAM_ID" THIRD_PARTY=hybrid
       PROVISIONING_PROFILE="${PROVISIONING_PROFILE:-$HOME/Documents/Important/Homerun.provisionprofile}") ;;
   *) echo "usage: update-test.sh [adhoc|devid]" >&2; exit 64 ;;
 esac

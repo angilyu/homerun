@@ -1,0 +1,359 @@
+name: Release
+
+# Signed builds, installers and the GitHub release (design §11, §16 row 11, §18 rows 132–141).
+#
+# - A pushed v* tag builds and publishes that version. The tag must match the version in
+#   tauri.conf.json, Cargo.toml and package.json (apps/desktop/scripts/release/bump-version.ts).
+# - workflow_dispatch builds a version from any ref into a draft release, to try the pipeline.
+#
+# Each platform signs with whatever secrets it has. With none set it builds an unsigned preview:
+# ad hoc on macOS, unsigned on Windows, and no latest.json entry. A release with no latest.json
+# entry is a pre-release, so an installed app is never offered an unsigned build. The secrets and
+# how to create each are in apps/desktop/README.md ("Releasing").
+#
+# No caches: a release builds from a clean toolchain, so a poisoned cache from another branch can't
+# reach a signed build.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (X.Y.Z; must match tauri.conf.json). Publishes a draft release."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      draft: ${{ steps.v.outputs.draft }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile --filter homerun
+      - name: The tag matches the version in the files
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$EVENT" == push ]]; then tag="$REF_NAME"; draft=false; else tag="v${INPUT_VERSION#v}"; draft=true; fi
+          version="$(node_modules/.bin/bun apps/desktop/scripts/release/bump-version.ts --check "$tag")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "::notice::Homerun $version ($([[ "$draft" == true ]] && echo draft || echo publish))"
+
+  macos:
+    name: macOS arm64
+    needs: version
+    # Apple silicon only (§18 row 133).
+    runs-on: macos-latest
+    timeout-minutes: 90
+    outputs:
+      signed: ${{ steps.secrets.outputs.signed }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      OUT: ${{ github.workspace }}/dist/release/macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/desktop..." --filter "@homerun/cli..."
+      - name: Which signing secrets are set
+        id: secrets
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+          APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: scripts/release/signing-status.sh macos
+
+      # A throwaway keychain (scripts/macos/ci-keychain.sh); the cleanup step below deletes it.
+      - name: Signing keychain, provisioning profile and notary key
+        id: keychain
+        if: steps.secrets.outputs.signed == 'true'
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+          APP_STORE_CONNECT_API_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8_BASE64 }}
+        run: |
+          identity="$(scripts/macos/ci-keychain.sh setup)"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          umask 077
+          printf '%s' "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/homerun.provisionprofile"
+          printf '%s' "$APP_STORE_CONNECT_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
+
+      # sign.sh signs inside out, claude keeping Anthropic's signature (THIRD_PARTY=hybrid);
+      # notarize.sh notarizes and staples the app, then the DMG (§11).
+      - name: Build, sign, notarize and make the DMG
+        env:
+          SIGNED: ${{ steps.secrets.outputs.signed }}
+          SIGNING_IDENTITY: ${{ steps.keychain.outputs.identity }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          HOMERUND_RELAY_URL: ${{ vars.HOMERUND_RELAY_URL }}
+          HOMERUND_OIDC_ISSUER: ${{ vars.HOMERUND_OIDC_ISSUER }}
+          HOMERUND_OIDC_CLIENT_ID: ${{ vars.HOMERUND_OIDC_CLIENT_ID }}
+          THIRD_PARTY: hybrid
+        run: |
+          if [[ "$SIGNED" == true ]]; then
+            export IDENTITY="$SIGNING_IDENTITY" TEAM_ID="$APPLE_TEAM_ID" \
+              PROVISIONING_PROFILE="$RUNNER_TEMP/homerun.provisionprofile" \
+              NOTARY_KEY="$RUNNER_TEMP/notary-key.p8" NOTARY_KEY_ID="$APP_STORE_CONNECT_KEY_ID" \
+              NOTARY_ISSUER="$APP_STORE_CONNECT_ISSUER_ID"
+          else
+            export IDENTITY=-
+          fi
+          scripts/macos/package.sh
+
+      - name: Verify the app and the DMG
+        env:
+          SIGNED: ${{ steps.secrets.outputs.signed }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          scripts/macos/verify.sh "$OUT/Homerun.app"
+          claude="$(codesign -dvv "$OUT/Homerun.app/Contents/MacOS/claude" 2>&1)"
+          grep -q '^Authority=Developer ID Application' <<<"$claude" \
+            || { echo "::error::claude lost Anthropic's Developer ID signature"; exit 1; }
+          if [[ "$SIGNED" == true ]]; then
+            ! grep -q "^TeamIdentifier=$APPLE_TEAM_ID\$" <<<"$claude" \
+              || { echo "::error::claude was re-signed with our identity"; exit 1; }
+            spctl --assess --type execute -vv "$OUT/Homerun.app"
+            xcrun stapler validate "$OUT/Homerun.app"
+            spctl --assess --type open --context context:primary-signature -vv "$OUT/Homerun.dmg"
+            xcrun stapler validate "$OUT/Homerun.dmg"
+          fi
+
+      - name: Updater payload
+        if: steps.secrets.outputs.updates == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          (umask 077 && printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/updater.key")
+          unset TAURI_SIGNING_PRIVATE_KEY
+          UPDATER_KEY="$RUNNER_TEMP/updater.key" scripts/macos/updater-artifacts.sh "$OUT/Homerun.app" "$VERSION" \
+            "https://github.com/angilyu/homerun/releases/download/v$VERSION/Homerun_${VERSION}_aarch64.app.tar.gz"
+          rm -f "$RUNNER_TEMP/updater.key"
+
+      - name: Assets
+        env:
+          SIGNED: ${{ steps.secrets.outputs.signed }}
+          UPDATES: ${{ steps.secrets.outputs.updates }}
+        run: |
+          A=dist/release/out/assets F=dist/release/out/fragments
+          mkdir -p "$A" "$F"
+          if [[ "$SIGNED" == true ]]; then dmg="Homerun_${VERSION}_aarch64.dmg"; else dmg="Homerun_${VERSION}_aarch64-unsigned.dmg"; fi
+          cp "$OUT/Homerun.dmg" "$A/$dmg"
+          if [[ "$UPDATES" == true ]]; then
+            cp "$OUT/Homerun.app.tar.gz" "$A/Homerun_${VERSION}_aarch64.app.tar.gz"
+            cp "$OUT/Homerun.app.tar.gz.sig" "$A/Homerun_${VERSION}_aarch64.app.tar.gz.sig"
+            cp "$OUT/latest.json" "$F/darwin-aarch64.json"
+          fi
+          ls -la "$A" "$F"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: dist/release/out/
+          if-no-files-found: error
+
+      - name: Clean up the keychain and keys
+        if: always()
+        run: |
+          scripts/macos/ci-keychain.sh cleanup
+          rm -f "$RUNNER_TEMP/updater.key" "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/homerun.provisionprofile"
+
+  windows:
+    name: Windows x64
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 90
+    outputs:
+      signed: ${{ steps.secrets.outputs.signed }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      BIN: apps/desktop/src-tauri/binaries
+      TRIPLE: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - run: pnpm install --frozen-lockfile --filter homerun --filter "@homerun/desktop..." --filter "@homerun/cli..."
+      - name: Which signing secrets are set
+        id: secrets
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: scripts/release/signing-status.sh windows
+
+      # The Artifact Signing client and signtool (scripts/windows/signing-setup.ps1).
+      - name: Signing client
+        if: steps.secrets.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+        run: ./scripts/windows/signing-setup.ps1
+
+      # homerund.exe from source (release channel) and the SDK's claude.exe. homerund is signed now,
+      # before its hash is compiled into the CLI; Tauri skips sidecars that are already signed.
+      - name: Sidecars and the command-line tool
+        env:
+          SIGNED: ${{ steps.secrets.outputs.signed }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          HOMERUND_RELAY_URL: ${{ vars.HOMERUND_RELAY_URL }}
+          HOMERUND_OIDC_ISSUER: ${{ vars.HOMERUND_OIDC_ISSUER }}
+          HOMERUND_OIDC_CLIENT_ID: ${{ vars.HOMERUND_OIDC_CLIENT_ID }}
+        run: |
+          HOMERUND_VERSION="$VERSION" node_modules/.bin/bun apps/desktop/scripts/stage-sidecars.ts --release
+          homerund="$BIN/homerund-$TRIPLE.exe"
+          if [[ "$SIGNED" == true ]]; then
+            pwsh -NoProfile -NonInteractive -File scripts/windows/sign.ps1 "$(cygpath -w "$homerund")"
+          fi
+          # The release CLI trusts exactly this homerund.exe (§5.2, §18 row 136).
+          hash="$(sha256sum "$homerund" | cut -d' ' -f1)"
+          echo "HOMERUND_SHA256=$hash" >> "$GITHUB_ENV"
+          node_modules/.bin/bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --minify \
+            --define "HOMERUN_CLI_VERSION=\"$VERSION\"" --define "HOMERUN_CLI_PEER_REQUIREMENT=\"sha256:$hash\"" \
+            apps/cli/src/main.ts --outfile "$BIN/homerun-cli-$TRIPLE.exe"
+          ls -la "$BIN"
+
+      # The NSIS installer (tauri.conf.json bundle.windows.nsis, src-tauri/windows/hooks.nsh). When
+      # signing, Tauri runs scripts/windows/sign.ps1 on the shell, the unsigned sidecars, NSIS's
+      # plug-ins, the uninstaller and the installer.
+      - name: Installer
+        env:
+          SIGNED: ${{ steps.secrets.outputs.signed }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          config="$RUNNER_TEMP/tauri-release.json"
+          CONFIG="$config" node -e '
+          const { join } = require("path");
+          const e = process.env;
+          const bundle = { externalBin: ["binaries/homerund", "binaries/claude", "binaries/homerun-cli"] };
+          if (e.SIGNED === "true") {
+            const script = join(e.GITHUB_WORKSPACE, "scripts", "windows", "sign.ps1");
+            bundle.windows = { signCommand: { cmd: "pwsh", args: ["-NoProfile", "-NonInteractive", "-File", script, "%1"] } };
+          }
+          require("fs").writeFileSync(e.CONFIG, JSON.stringify({ version: e.VERSION, bundle }));
+          '
+          pnpm --dir apps/desktop exec tauri build --bundles nsis --config "$config"
+          setup="apps/desktop/src-tauri/target/release/bundle/nsis/Homerun_${VERSION}_x64-setup.exe"
+          [[ -f "$setup" ]] || { echo "::error::no installer at $setup"; exit 1; }
+          A=dist/release/out/assets
+          mkdir -p "$A" dist/release/out/fragments
+          if [[ "$SIGNED" == true ]]; then name="Homerun_${VERSION}_x64-setup.exe"; else name="Homerun_${VERSION}_x64-unsigned-setup.exe"; fi
+          cp "$setup" "$A/$name"
+          echo "SETUP=$A/$name" >> "$GITHUB_ENV"
+
+      # Installs silently for this user, checks the layout, the shortcut, the CLI and its trust in
+      # the installed runtime, starts the app, reinstalls in update mode, and uninstalls.
+      - name: Install test
+        shell: pwsh
+        env:
+          SIGNED: ${{ steps.secrets.outputs.signed }}
+        run: ./scripts/windows/install-test.ps1 -Setup $env:SETUP -Version $env:VERSION -HomerundSha256 $env:HOMERUND_SHA256 -Signed:($env:SIGNED -eq 'true')
+
+      # The installer itself is the payload; the plugin runs it with /UPDATE (§11).
+      - name: Updater payload
+        if: steps.secrets.outputs.updates == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          pnpm --dir apps/desktop exec tauri signer sign --app-version "$VERSION" "$(cygpath -w "$SETUP")" > /dev/null
+          [[ -s "$SETUP.sig" ]] || { echo "::error::signing the updater payload failed"; exit 1; }
+          node_modules/.bin/bun apps/desktop/scripts/release/latest-json.ts fragment --platform windows-x86_64 \
+            --version "$VERSION" --sig "$SETUP.sig" --out dist/release/out/fragments/windows-x86_64.json \
+            --url "https://github.com/angilyu/homerun/releases/download/v$VERSION/$(basename "$SETUP")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/release/out/
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: [version, macos, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      DRAFT: ${{ needs.version.outputs.draft }}
+      MAC_SIGNED: ${{ needs.macos.outputs.signed }}
+      WIN_SIGNED: ${{ needs.windows.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile --filter homerun
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist/release
+          merge-multiple: true
+      # Each entry's signature must verify against tauri.conf.json's pubkey, for this version, over
+      # an asset of this release; otherwise the release fails (§18 row 140).
+      - name: latest.json
+        run: |
+          shopt -s nullglob
+          frags=(dist/release/fragments/*.json)
+          if (( ${#frags[@]} )); then
+            node_modules/.bin/bun apps/desktop/scripts/release/latest-json.ts merge --version "$VERSION" \
+              --assets dist/release/assets --out dist/release/assets/latest.json \
+              --notes "https://github.com/angilyu/homerun/releases/tag/v$VERSION" "${frags[@]}"
+          else
+            echo "::warning::no platform is signed for updates: no latest.json, and the release is a pre-release"
+          fi
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/release/publish.sh dist/release/assets
