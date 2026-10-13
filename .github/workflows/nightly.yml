@@ -87,7 +87,7 @@ jobs:
     name: apps/desktop Tauri build (macOS)
     # The full shell (WebKit, AppKit, keychain) and an unsigned .app, which is too slow for every
     # pull request (plan §9), then the signed updater end to end, ad hoc (§11, §16 row 8).
-    # Developer ID signing and notarization are milestone 11 (§11).
+    # Developer ID signing, notarization and the DMG are built by release.yml (§11, milestone 11a).
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -132,9 +132,9 @@ jobs:
     name: apps/desktop Tauri build (Windows)
     # The Tauri crate on Windows (§18 row 40): its tests (Credential Manager round trip, the
     # registry reads behind Open at login, the sleep/wake registration) and a release build with
-    # the Windows sidecars, unbundled. The installer, signing and the updater on Windows are
-    # milestone 11; the tray, dialogs, toasts, login and sleep/wake need a desktop session and are
-    # checked by hand (apps/desktop/README.md).
+    # the Windows sidecars, unbundled. The NSIS installer, Authenticode signing, the install test
+    # and the updater payload are in release.yml (milestone 11a); the tray, dialogs, toasts, login
+    # and sleep/wake need a desktop session and are checked by hand (apps/desktop/README.md).
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
