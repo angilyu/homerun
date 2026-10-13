@@ -2,6 +2,7 @@
 //! stdin, connect both roles, forward, crash and restart, block, and stop cleanly (§5.1, §5.2).
 
 use homerun_shell_core::allowlist::forward;
+use homerun_shell_core::crash::Build;
 use homerun_shell_core::keys::{KeyStore, MemoryKeyStore, API_KEY};
 use homerun_shell_core::policy::Timing;
 use homerun_shell_core::runtime::{Config, Host, Runtime};
@@ -65,6 +66,8 @@ fn start(name: &str, env: &[(&str, &str)], key: Option<&str>) -> Fixture {
     std::fs::create_dir_all(&dir).unwrap();
     let mut cfg = Config::new(PathBuf::from(env!("CARGO_BIN_EXE_fake_homerund")), dir.join("logs/homerund.log"), "0.0.1");
     cfg.timing = fast();
+    cfg.status_log = Some(dir.join("logs/supervisor.jsonl"));
+    cfg.crash_reports = Some((dir.join("crash-reports"), Build { version: "0.0.1".into(), channel: "stable".into() }));
     cfg.hello_timeout = Duration::from_secs(2);
     cfg.ping_timeout = Duration::from_millis(100);
     cfg.env = vec![
@@ -108,6 +111,10 @@ impl Fixture {
             assert!(t0.elapsed() < Duration::from_secs(10), "waiting for {what}; statuses {seen:?}");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+    fn crash_reports(&self) -> Vec<Value> {
+        let Ok(rd) = std::fs::read_dir(self.dir.join("crash-reports")) else { return vec![] };
+        rd.map(|e| serde_json::from_str(&std::fs::read_to_string(e.unwrap().path()).unwrap()).unwrap()).collect()
     }
     fn record(&self) -> String {
         std::fs::read_to_string(self.dir.join("record")).unwrap_or_default()
@@ -193,6 +200,20 @@ fn crashes_restart_with_backoff_and_reconnect() {
     let restarts: Vec<_> = seen.iter().filter_map(|s| if let RuntimeStatus::Restarting { last_error, .. } = s { last_error.clone() } else { None }).collect();
     assert_eq!(restarts.len(), 2, "{seen:?}");
     assert!(restarts[0].contains("exit 1") && restarts[0].contains("startup failed: boom 1"), "{restarts:?}");
+    // A report per unexpected exit, with the exit code and never the runtime's last words (§11).
+    let reports = f.crash_reports();
+    assert_eq!(reports.len(), 2, "{reports:?}");
+    for r in &reports {
+        assert_eq!((r["app"].as_str(), r["kind"].as_str(), r["exception_type"].as_str()), (Some("shell"), Some("runtime_exited"), Some("RuntimeExited")));
+        assert_eq!(r["exit"], json!({"code": 1, "signal": null}));
+        assert!(!r.to_string().contains("boom"));
+    }
+    // The status history, for the diagnostic bundle.
+    let history = std::fs::read_to_string(f.dir.join("logs/supervisor.jsonl")).unwrap();
+    let states: Vec<String> =
+        history.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()["status"]["state"].as_str().unwrap_or("").to_string()).collect();
+    assert_eq!(states.iter().filter(|s| *s == "restarting").count(), 2, "{history}");
+    assert_eq!(states.last().map(String::as_str), Some("ready"), "{history}");
 }
 
 #[test]
@@ -220,6 +241,7 @@ fn exit_codes_that_block() {
         assert!(matches!(s, RuntimeStatus::Blocked { reason: r, .. } if r == reason), "{mode}: {s:?}");
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(f.record().matches("start pid").count(), 1, "{mode}: no restart");
+        assert!(f.crash_reports().is_empty(), "{mode}: not a crash");
         // The user can try again.
         f.rt.restart();
         f.wait("second start", |_| f.record().matches("start pid").count() == 2);

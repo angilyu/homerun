@@ -29,6 +29,8 @@
     "allow-update-set-auto",
     "allow-cli-tool-status",
     "allow-cli-tool-install",
-    "allow-cli-tool-remove"
+    "allow-cli-tool-remove",
+    "allow-diagnostics-save",
+    "allow-diagnostics-reveal"
   ]
 }

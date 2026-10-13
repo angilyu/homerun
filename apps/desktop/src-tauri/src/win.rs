@@ -236,6 +236,33 @@ pub fn confirm(d: &Dialog) -> bool {
     unsafe { MessageBoxW(None, &text, w!("Homerun"), MB_OKCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND) == IDOK }
 }
 
+/// The diagnostic bundle's save dialog (§11), starting in `dir`; it asks before replacing a
+/// file. Main thread (an STA, which tao initialises); `None` when cancelled.
+pub fn save_panel(dir: &Path, name: &str) -> Option<std::path::PathBuf> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    use windows::Win32::UI::Shell::{
+        FileSaveDialog, IFileSaveDialog, IShellItem, SHCreateItemFromParsingName, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST,
+        SIGDN_FILESYSPATH,
+    };
+    unsafe {
+        let d: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let opts = d.GetOptions().ok()?;
+        d.SetOptions(opts | FOS_OVERWRITEPROMPT | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST).ok()?;
+        d.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: w!("Zip archive"), pszSpec: w!("*.zip") }]).ok()?;
+        d.SetDefaultExtension(w!("zip")).ok()?;
+        d.SetFileName(&HSTRING::from(name)).ok()?;
+        if let Ok(folder) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(dir.as_os_str()), None) {
+            let _ = d.SetFolder(&folder);
+        }
+        d.Show(None).ok()?;
+        let p = d.GetResult().ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let path = p.to_string().ok();
+        CoTaskMemFree(Some(p.0 as *const c_void));
+        path.map(std::path::PathBuf::from)
+    }
+}
+
 /// The CLI access prompt (§5.2), also used to link a device by code (§10.5): **Don't Allow** is the default button (Return), **Allow** has
 /// to be chosen, and Esc or the close box is no answer. A timer closes it with no answer once
 /// `gone` says so. Without task dialogs there is no prompt: the request expires unanswered,

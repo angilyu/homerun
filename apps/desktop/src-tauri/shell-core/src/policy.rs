@@ -134,6 +134,13 @@ pub enum Effect {
     Status(RuntimeStatus),
     /// The child is gone after `Stop`: the app may exit.
     Stopped,
+    /// The runtime ended unexpectedly, or the shell ended it because it hung: a crash report
+    /// (§11 "Diagnostics"). Not for a clean stop, a restart the user asked for, or a block.
+    Crashed {
+        code: Option<i32>,
+        signal: Option<i32>,
+        hung: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -369,7 +376,10 @@ impl Policy {
                         }
                         After::Respawn => self.spawn(now, fx),
                         After::Block(r, m) => self.block(r, m, fx),
-                        After::Crash(why) => self.crash(now, Some(why), was_ready_since, fx),
+                        After::Crash(why) => {
+                            fx.push(Effect::Crashed { code: exit.code, signal: exit.signal, hung: true });
+                            self.crash(now, Some(why), was_ready_since, fx)
+                        }
                     },
                     Phase::Starting { .. } => self.exited(now, exit, None, fx),
                     Phase::Ready { since, .. } => {
@@ -427,6 +437,7 @@ impl Policy {
             Some(64) => self.block(BlockedReason::Failed, MSG_USAGE.into(), fx),
             Some(1) if too_new => self.block(BlockedReason::DatabaseTooNew, MSG_DB_TOO_NEW.into(), fx),
             _ => {
+                fx.push(Effect::Crashed { code: exit.code, signal: exit.signal, hung: false });
                 let what = match (exit.code, exit.signal) {
                     (_, Some(s)) => format!("The runtime stopped unexpectedly (signal {s})."),
                     (Some(c), _) => format!("The runtime stopped unexpectedly (exit {c})."),
@@ -722,6 +733,39 @@ mod tests {
         assert!(h.ev(Event::Exited { gen: 1, exit: Exit { code: Some(2), signal: None, last_error: None } }).is_empty());
         assert!(h.ev(Event::Connected { gen: 1, hello: Hello { device_id: "d".into(), runtime_version: "v".into(), protocol: 1 } }).is_empty());
         assert_eq!(h.state(), "starting");
+    }
+
+    #[test]
+    fn only_an_unexpected_or_hung_end_is_a_crash_report() {
+        let crashed = |fx: &[Effect]| {
+            fx.iter().filter_map(|e| if let Effect::Crashed { code, signal, hung } = e { Some((*code, *signal, *hung)) } else { None }).collect::<Vec<_>>()
+        };
+        // Unexpected: an exit code or a signal, ready or not.
+        let mut h = H::new();
+        h.ev(Event::Start);
+        h.up();
+        assert_eq!(crashed(&h.ev(Event::Exited { gen: 1, exit: Exit { code: None, signal: Some(11), last_error: None } })), vec![(None, Some(11), false)]);
+        h.advance(S);
+        assert_eq!(crashed(&h.exit(2)), vec![(Some(2), None, false)]);
+        // Hung: the shell ended it.
+        let mut h = H::new();
+        h.ev(Event::Start);
+        h.advance(65 * S);
+        assert_eq!(crashed(&h.ev(Event::Exited { gen: 1, exit: Exit { code: None, signal: Some(9), last_error: None } })), vec![(None, Some(9), true)]);
+        // Not crashes: a block, a clean stop, a restart the user asked for.
+        for code in [3, 64] {
+            let mut h = H::new();
+            h.ev(Event::Start);
+            assert!(crashed(&h.exit(code)).is_empty());
+        }
+        let mut h = H::new();
+        h.ev(Event::Start);
+        h.up();
+        h.ev(Event::Restart);
+        assert!(crashed(&h.exit(0)).is_empty());
+        h.up();
+        h.ev(Event::Stop);
+        assert!(crashed(&h.exit(0)).is_empty());
     }
 
     #[test]

@@ -163,6 +163,8 @@ pub struct Shell {
     pub prefs: Mutex<Prefs>,
     /// What the menu bar and the quit confirmation show; None until the runtime is ready.
     pub summary: Mutex<Option<Summary>>,
+    /// The diagnostic bundle saved last, for *Show in Finder*.
+    pub last_bundle: Mutex<Option<PathBuf>>,
 }
 
 impl Shell {
@@ -202,6 +204,12 @@ impl Shell {
 /// `@homerun/client`'s `dataDir` resolves it, so the shell's log lands next to the runtime's data.
 pub fn data_dir() -> PathBuf {
     homerun_shell_core::dirs::this_data_dir()
+}
+
+/// The shell's build for crash reports: the release channel comes from the same variable the
+/// runtime's is baked from (`stage-sidecars.ts`).
+pub fn build(version: &str) -> homerun_shell_core::crash::Build {
+    homerun_shell_core::crash::Build::this(version, option_env!("HOMERUND_CHANNEL"))
 }
 
 /// `homerund` sits next to the shell's executable, in the bundle and in `tauri dev` alike
@@ -254,6 +262,8 @@ fn key_store(test: bool) -> Box<dyn KeyStore> {
 pub fn start(version: &str, test: bool, app: AppHandle) -> Shell {
     let data_dir = data_dir();
     let mut cfg = Config::new(runtime_program(), data_dir.join("logs").join("homerund.log"), version);
+    cfg.status_log = Some(data_dir.join("logs").join("supervisor.jsonl"));
+    cfg.crash_reports = Some((data_dir.join(homerun_shell_core::crash::CRASH_DIR), build(version)));
     // Secrets travel over the launch-token connection only, never the environment (§5.2). The
     // runtime is a compiled Bun program, and Bun reads its own options from the environment
     // (a preload, or running as `bun`): none reach the process the release CLI trusts.
@@ -270,5 +280,5 @@ pub fn start(version: &str, test: bool, app: AppHandle) -> Shell {
     });
     let prefs = prefs::load(&prefs::path(&data_dir));
     let rt = Runtime::start(cfg, host.clone());
-    Shell { rt, host, data_dir, version: version.into(), prefs: Mutex::new(prefs), summary: Mutex::new(None) }
+    Shell { rt, host, data_dir, version: version.into(), prefs: Mutex::new(prefs), summary: Mutex::new(None), last_bundle: Mutex::new(None) }
 }
