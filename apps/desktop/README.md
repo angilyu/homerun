@@ -445,7 +445,7 @@ the desktop shows it (`src/screens/Diagnostics.tsx`).
 
 No crate or npm package was added. The shell enables `objc2-foundation`'s `NSURL` and
 `objc2-app-kit`'s `NSPanel` and `NSSavePanel` features, and `windows`'s `Win32_UI_Shell_Common`
-(`Cargo.lock` is unchanged; §18 row 158).
+(`Cargo.lock` is unchanged; §18 row 150).
 
 ## Dependencies added in milestone 8
 

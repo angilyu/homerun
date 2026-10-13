@@ -379,7 +379,7 @@ local relay (`pnpm --filter @homerun/relay dev`) and issuer.
 
 ## Version gate, crash reports and diagnostics (§11, milestone 11b)
 
-**The version gate** (`src/version/gate.ts`, design.md §18 rows 150–157):
+**The version gate** (`src/version/gate.ts`, design.md §18 rows 142–149):
 
 - The runtime fetches the signed policy from `<relay>/v1/version-policy` over plain HTTPS at
   start and every hour, signed in or not, with a 15-second timeout. It verifies it against
@@ -403,7 +403,7 @@ local relay (`pnpm --filter @homerun/relay dev`) and issuer.
   relay. A release build takes its channel from `HOMERUND_CHANNEL` at build time (default
   `stable`).
 
-**Crash reports** (`src/diagnostics/crash.ts`, `scrub.ts`; rows 158–159):
+**Crash reports** (`src/diagnostics/crash.ts`, `scrub.ts`; rows 150–151):
 
 - Offered only when a DSN is compiled in with `HOMERUND_SENTRY_DSN`
   (`apps/desktop/scripts/stage-sidecars.ts --release` passes it through). A development build
@@ -417,7 +417,7 @@ local relay (`pnpm --filter @homerun/relay dev`) and issuer.
 - When reports are on, the runtime sends those written since the user opted in, as Sentry
   envelopes over `fetch`, at start and hourly. It deletes what it sent.
 
-**The diagnostic bundle** (`src/diagnostics/bundle.ts`; rows 160–161):
+**The diagnostic bundle** (`src/diagnostics/bundle.ts`; rows 152–153):
 
 - `diagnostics.preview` lists the files; `diagnostics.create {path?}` writes the zip. The path
   must be absolute, end `.zip` and not exist. The default is `~/Downloads`, else home.
