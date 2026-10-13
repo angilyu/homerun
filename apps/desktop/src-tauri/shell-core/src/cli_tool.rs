@@ -3,7 +3,11 @@
 //! link is the user's own, and the UI shows how to put `~/.local/bin` on `PATH` rather than
 //! reading anyone's shell profile. It never replaces a file that isn't a link to some Homerun's
 //! CLI, and it won't link to a copy that is about to go away (a disk image or a translocated app).
-//! Windows has no bundled CLI to link yet (§18 row 67): every status there is `Unavailable`.
+//!
+//! Windows has no symlinks to spare (§18 row 137): the installer puts the release CLI at
+//! `<install dir>\bin\homerun.exe`, and installing adds that directory to the user's own `Path`
+//! (HKCU\Environment); removing takes it off, and so does the uninstaller. The list editing is
+//! here, pure; `win.rs` reads and writes the registry.
 
 use serde::Serialize;
 use std::fs;
@@ -61,7 +65,7 @@ impl Place {
     /// The bundled CLI, or why there isn't one to link to.
     pub fn cli(&self) -> Result<PathBuf, String> {
         if cfg!(windows) {
-            return Err("On Windows the command-line tool isn't installed from the app yet.".into());
+            return Err("On Windows the command-line tool is a Path entry; see `win_status`.".into());
         }
         let exe = self.exe.to_string_lossy();
         if !exe.contains(".app/Contents/MacOS/") {
@@ -179,6 +183,99 @@ pub fn remove(p: &Place) -> Result<ToolStatus, ToolError> {
         ToolStatus::NotInstalled { .. } | ToolStatus::Unavailable { .. } => {}
     }
     Ok(status(p))
+}
+
+/// The installed CLI's directory beside the shell's executable, `<install dir>\bin`.
+pub const WIN_BIN_DIR: &str = "bin";
+/// What the installer names the release CLI there, so `homerun` runs it.
+pub const WIN_CLI: &str = "homerun.exe";
+
+/// The Windows status: `Installed` while `bin` is on the user's `Path`, even when this copy has no
+/// CLI (so it can still be taken off); otherwise `NotInstalled`, or `Unavailable` without a CLI.
+pub fn win_status(bin: &Path, cli_present: bool, user_path: &str) -> ToolStatus {
+    let link = bin.to_path_buf();
+    if path_list::has(user_path, &bin.to_string_lossy()) {
+        ToolStatus::Installed { link }
+    } else if cli_present {
+        ToolStatus::NotInstalled { link }
+    } else {
+        ToolStatus::Unavailable { reason: "The command-line tool comes with Homerun's installer; this copy has none.".into() }
+    }
+}
+
+/// A `;`-separated `Path` value, edited the way Windows reads it: entries compare without case,
+/// surrounding space, quotes or a trailing backslash. Everything else is left as it was.
+pub mod path_list {
+    fn norm(e: &str) -> String {
+        e.trim().trim_matches('"').trim_end_matches(['\\', '/']).to_lowercase()
+    }
+
+    pub fn has(path: &str, dir: &str) -> bool {
+        let d = norm(dir);
+        !d.is_empty() && path.split(';').any(|e| norm(e) == d)
+    }
+
+    /// Appends `dir` unless it is there already.
+    pub fn add(path: &str, dir: &str) -> String {
+        if has(path, dir) {
+            return path.to_string();
+        }
+        let base = path.trim_end_matches(';');
+        if base.trim().is_empty() {
+            dir.to_string()
+        } else {
+            format!("{base};{dir}")
+        }
+    }
+
+    /// Drops every entry that is `dir`.
+    pub fn remove(path: &str, dir: &str) -> String {
+        let d = norm(dir);
+        path.split(';').filter(|e| norm(e) != d).collect::<Vec<_>>().join(";")
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::path_list::{add, has, remove};
+    use super::*;
+
+    const BIN: &str = r"C:\Users\Ann\AppData\Local\Programs\Homerun\bin";
+
+    #[test]
+    fn entries_match_without_case_quotes_or_a_trailing_backslash() {
+        assert!(has(r"C:\Windows;c:\users\ann\appdata\local\programs\homerun\BIN\", BIN));
+        assert!(has(&format!("\"{BIN}\""), BIN));
+        assert!(!has(r"C:\Windows;C:\Users\Ann\AppData\Local\Programs\Homerun", BIN));
+        assert!(!has("", BIN));
+        assert!(!has(";;", ""));
+    }
+
+    #[test]
+    fn adding_appends_once_and_keeps_the_rest() {
+        assert_eq!(add("", BIN), BIN);
+        assert_eq!(add(r"%USERPROFILE%\bin;", BIN), format!(r"%USERPROFILE%\bin;{BIN}"));
+        let once = add(r"C:\a", BIN);
+        assert_eq!(add(&once, BIN), once);
+    }
+
+    #[test]
+    fn removing_drops_every_copy_and_nothing_else() {
+        let p = format!(r"C:\a;{BIN};%LOCALAPPDATA%\x;{}\", BIN.to_uppercase());
+        assert_eq!(remove(&p, BIN), r"C:\a;%LOCALAPPDATA%\x");
+        assert_eq!(remove(r"C:\a", BIN), r"C:\a");
+        assert_eq!(remove(BIN, BIN), "");
+    }
+
+    #[test]
+    fn the_windows_status_follows_the_path_entry() {
+        let bin = Path::new(BIN);
+        assert_eq!(win_status(bin, true, r"C:\a"), ToolStatus::NotInstalled { link: bin.into() });
+        assert_eq!(win_status(bin, true, &add(r"C:\a", BIN)), ToolStatus::Installed { link: bin.into() });
+        // No CLI here, but the entry is still ours to take off.
+        assert_eq!(win_status(bin, false, BIN), ToolStatus::Installed { link: bin.into() });
+        assert!(matches!(win_status(bin, false, r"C:\a"), ToolStatus::Unavailable { .. }));
+    }
 }
 
 #[cfg(all(test, unix))]
