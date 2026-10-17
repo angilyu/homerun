@@ -12,19 +12,78 @@ credentials stay on your machine.
 <!-- TODO: add a screenshot of the desktop app (a chat with a pending approval) next to the
      iPhone app answering it. Use a real capture; don't use a mock-up. -->
 
-It runs two kinds of task:
+## Overview
+
+### The problem
+
+An agent is most useful when it does real work for you. That means working in your files and
+repositories, with the tools and logins already on your computer, and on a schedule while you
+are away. These requirements rule out two familiar designs:
+
+- **An agent in the cloud** can't reach your local files or your signed-in browser sessions. To
+  use your accounts, its servers would have to hold your tokens.
+- **An agent that only runs while you sit at a terminal** can't check something every hour. When
+  it needs your decision, it has no way to reach you.
+
+Homerun keeps the agent on your own machine and makes your phone its remote control. The hard
+part is making that reliable and safe. Laptops sleep, processes crash, the agent can run shell
+commands, and the only way to reach a phone is across the internet
+([§1](docs/design.md#1-purpose), [§3.1](docs/design.md#31-local-first-execution),
+[§9.1](docs/design.md#91-requirement-and-constraints)).
+
+### What you can do with it
+
+- **Chat with an agent that works on your machine.** It can read and edit files, run commands,
+  search the web and use MCP integrations. Homerun offers its own Node.js and `uv` as optional
+  downloads, so `npx` and `uvx` MCP servers work even if you have never installed a developer
+  tool. You can save a useful chat as a task and run it again later.
+- **Set up monitors.** A monitor runs on a cron or interval schedule, in its own IANA timezone,
+  and reports only when something changes. Most checks are rule-based: an HTTP value, a feed or
+  a file hash, with no model calls at all. A check that needs judgment makes one call to a cheap
+  model ([§8.3](docs/design.md#83-how-monitors-work)).
+- **Stay in control from anywhere.** When the agent needs an approval or has a question, it
+  pauses and sends a push notification. You can answer from the desktop, the iPhone, the web
+  client or the CLI, each within its own authority, and the first answer wins. On the iPhone you
+  can answer from the lock screen, and destructive actions need Face ID. From your phone you can
+  also read history, chat live, and steer or stop a run. You can queue an instruction for a
+  computer that is asleep, and it runs when the computer wakes, unless more than 12 hours have
+  passed.
+- **Use it without an account.** Agents, schedules, the desktop app and the CLI all work signed
+  out. You need an account only for remote access and push notifications
+  ([§10.10](docs/design.md#1010-signed-out-mode)).
+
+Under the hood these are two kinds of task, with opposite requirements:
 
 | | Session | Monitor |
 |---|---|---|
 | Example | "Research X, write the report, iterate" | "Watch this page and tell me when Y changes" |
 | Started by | You | A schedule |
+| Runs for | Minutes to hours | Seconds; usually nothing has changed |
 | What must not happen | A crash loses hours of work | It silently stops running |
 
 Most of the design follows from serving both kinds with one system
-([design §2](docs/design.md#2-product-model-two-kinds-of-task)).
+([§2](docs/design.md#2-product-model-two-kinds-of-task)).
+
+### Principles
+
+Four commitments run through the whole design, and the decisions below follow from them.
+
+1. **The agent runs on your machine, and the cloud is a blind pipe.** There is one small hosted
+   service. It forwards encrypted frames and delivers push notifications, and it can't read
+   either one.
+2. **Unattended work is either correct or visibly fails.** A crash, a sleeping laptop or an
+   overnight wait never silently loses work, repeats a side effect, or skips a check without
+   telling you.
+3. **No extra authority when nobody is watching.** The runtime enforces the policy, whatever a
+   client asks for. Destructive actions are never auto-approved in an unattended run. Each remote
+   device gets only the authority it can prove it should have.
+4. **Test the risky parts first, and write the decisions down.** The riskiest assumptions were
+   tested on real, signed builds before any product code was written. Every major decision is
+   recorded with its reason.
 
 ## Contents
 
+- [Overview](#overview)
 - [Architecture](#architecture)
 - [Design decisions](#design-decisions)
 - [Security model](#security-model)
@@ -85,7 +144,23 @@ flowchart LR
 
 The full reasoning is in [`docs/design.md`](docs/design.md), and each major choice has a row
 in its [decision log](docs/design.md#18-decision-log) (155 rows so far). Here are the decisions
-that shape the system most, with what each one costs.
+that shape the system most, with what each one costs. They fall into three groups:
+
+- **Where the agent runs, and how you reach it:**
+  [local-first](#local-first-the-agent-runs-on-your-machine),
+  [no public port](#the-desktop-never-listens-on-a-public-port),
+  [the blind relay](#a-blind-relay-and-only-because-it-is-unavoidable) and
+  [device pinning](#device-pinning-not-device-election).
+- **Keeping unattended work correct:**
+  [the Agent SDK behind a narrow interface](#build-on-the-claude-agent-sdk-behind-a-narrow-interface),
+  [crash resume](#crash-resume-that-never-repeats-a-side-effect-blindly) and
+  [deferred approvals](#approvals-that-can-wait-overnight-without-holding-a-process).
+- **Building and shipping it so it can be trusted:**
+  [shared contracts](#shared-contracts-checked-across-languages),
+  [the milestone 0 spike](#prove-the-risky-parts-first) and
+  [signed releases with a kill switch](#ship-safely-signed-builds-signed-updates-and-a-kill-switch).
+
+How the agent itself is kept safe is covered under [Security model](#security-model).
 
 ### Local-first: the agent runs on your machine
 
